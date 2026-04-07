@@ -10,6 +10,10 @@
 *.o
 *.com
 
+# Web transpiler
+web/node_modules/
+web/dist/
+
 # Python
 __pycache__/
 *.pyc

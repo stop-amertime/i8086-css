@@ -189,10 +189,9 @@ with open(INPUT_BIN, "rb") as f:
   for i,b in enumerate(program):
     variables[program_start+i][2] = str(b)
 
-variables_rw = variables[:program_start] + variables[program_start+program_size:]
-variables_ro = variables[program_start:program_start+program_size]
-#variables_rw = variables
-#variables_ro = []
+# All memory is read-write — programs may self-modify (e.g., Zork relocates code)
+variables_rw = variables
+variables_ro = []
 
 # Embedded data files (read-only memory regions)
 # These get @property decls and readMem entries but no write expressions.

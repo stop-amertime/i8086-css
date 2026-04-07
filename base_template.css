@@ -309,11 +309,17 @@ VARS_1
 /* Side channel: SI delta for string instructions (MOVSB/MOVSW/CMPSB/CMPSW) */
 @function --getMoveSI() returns <integer> {
   --df: --bit(var(--__1flags), 10);
+  --nextOp: --readMem(calc(var(--__1IP) + 1));
   result: if(
     style(--instId:176):calc(1 - var(--df) * 2);
     style(--instId:178):calc(1 - var(--df) * 2);
     style(--instId:177):calc(2 - var(--df) * 4);
     style(--instId:179):calc(2 - var(--df) * 4);
+    /* REP MOVSB/MOVSW: SI delta when CX > 0 */
+    style(--instId:265) and style(--nextOp:164) and style(--__1CX:0):0;
+    style(--instId:265) and style(--nextOp:164):calc(1 - var(--df) * 2);
+    style(--instId:265) and style(--nextOp:165) and style(--__1CX:0):0;
+    style(--instId:265) and style(--nextOp:165):calc(2 - var(--df) * 4);
   else:0);
 }
 
@@ -322,9 +328,16 @@ VARS_1
 /* so that destA/destB are free (-100) and addrValA carries the comparison result for flags */
 @function --getMoveDI() returns <integer> {
   --df: --bit(var(--__1flags), 10);
+  --nextOp: --readMem(calc(var(--__1IP) + 1));
   result: if(
     style(--instId:178):calc(1 - var(--df) * 2);
     style(--instId:179):calc(2 - var(--df) * 4);
+    /* REP MOVSB/MOVSW/STOSB/STOSW: DI delta when CX > 0 */
+    style(--instId:265) and style(--__1CX:0):0;
+    style(--instId:265) and style(--nextOp:164):calc(1 - var(--df) * 2);
+    style(--instId:265) and style(--nextOp:165):calc(2 - var(--df) * 4);
+    style(--instId:265) and style(--nextOp:170):calc(1 - var(--df) * 2);
+    style(--instId:265) and style(--nextOp:171):calc(2 - var(--df) * 4);
   else:0);
 }
 
@@ -355,6 +368,12 @@ VARS_1
     style(--instId:257):calc(var(--farSeg) * 16 + var(--instArg1));
     style(--instId:293):var(--instArg1);
     style(--instId:295):var(--instArg1);
+    /* REP: stall IP while CX > 1 (CX was decremented this tick, so check > 1).
+       When CX reaches 1, it becomes 0 this tick and we advance by 2 (REP + op).
+       When CX=0 at entry, skip immediately (advance by 2). */
+    style(--instId:265) and style(--__1CX:0):calc(var(--__1IP) + 2);
+    style(--instId:265) and style(--__1CX:1):calc(var(--__1IP) + 2);
+    style(--instId:265):var(--__1IP);
   else:-1);
 }
 
@@ -1545,12 +1564,52 @@ SUB, ADD
 @function --V-OUT(--w <integer>) returns <integer> { result: -100; }
 
 /* --- REP PREFIXES --- */
-/* REP/REPZ/REPNZ are prefixes that modify the following string instruction. */
-/* In CSS, these can't easily modify the next instruction. Stub as no-ops. */
-/* calcite handles these natively in the evaluator. */
+/* REP/REPZ (F3): repeat next string instruction CX times.
+   Instead of being a no-op prefix, REPZ itself does the work:
+   - Reads the next byte to identify which string op to perform
+   - Slot A: writes the byte/word to memory (MOVSB/STOSB destination)
+   - Slot B: decrements CX (write CX-1 to register -2)
+   - Side channels moveSI/moveDI handle pointer updates
+   - addrJump stalls IP at the REP prefix while CX > 1
+   When CX=0, the whole REP+op is skipped (IP advances by 2). */
 
-@function --D-REPZ(--w <integer>) returns <integer> { result: -100; }
-@function --V-REPZ(--w <integer>) returns <integer> { result: -100; }
+@function --D-REPZ(--w <integer>) returns <integer> {
+  --nextOp: --readMem(calc(var(--__1IP) + 1));
+  --df: --bit(var(--__1flags), 10);
+  result: if(
+    /* CX=0: skip entirely, no writes */
+    style(--__1CX:0):-100;
+    /* Slot A: memory destination for MOVSB/MOVSW/STOSB/STOSW */
+    style(--w:0) and style(--nextOp:164):calc(var(--__1ES) * 16 + var(--__1DI));
+    style(--w:0) and style(--nextOp:165):calc(var(--__1ES) * 16 + var(--__1DI));
+    style(--w:0) and style(--nextOp:170):calc(var(--__1ES) * 16 + var(--__1DI));
+    style(--w:0) and style(--nextOp:171):calc(var(--__1ES) * 16 + var(--__1DI));
+    /* Slot B: write CX-1 to CX register (-2) */
+    style(--w:1) and style(--nextOp:164):-2;
+    style(--w:1) and style(--nextOp:165):-2;
+    style(--w:1) and style(--nextOp:170):-2;
+    style(--w:1) and style(--nextOp:171):-2;
+  else:-100);
+}
+
+@function --V-REPZ(--w <integer>) returns <integer> {
+  --nextOp: --readMem(calc(var(--__1IP) + 1));
+  --df: --bit(var(--__1flags), 10);
+  result: if(
+    style(--__1CX:0):0;
+    /* Slot A: value to write — MOVSB reads from DS:SI, STOSB writes AL */
+    style(--w:0) and style(--nextOp:164):--readMem(calc(var(--__1DS) * 16 + var(--__1SI)));
+    style(--w:0) and style(--nextOp:165):--read2(calc(var(--__1DS) * 16 + var(--__1SI)));
+    style(--w:0) and style(--nextOp:170):var(--AL);
+    style(--w:0) and style(--nextOp:171):var(--__1AX);
+    /* Slot B: CX - 1 */
+    style(--w:1) and style(--nextOp:164):calc(var(--__1CX) - 1);
+    style(--w:1) and style(--nextOp:165):calc(var(--__1CX) - 1);
+    style(--w:1) and style(--nextOp:170):calc(var(--__1CX) - 1);
+    style(--w:1) and style(--nextOp:171):calc(var(--__1CX) - 1);
+  else:0);
+}
+
 @function --D-REPNZ(--w <integer>) returns <integer> { result: -100; }
 @function --V-REPNZ(--w <integer>) returns <integer> { result: -100; }
 

@@ -3,7 +3,7 @@
 A static binary translator for the Intel 8086. Takes 8086 machine code and
 produces CSS custom properties and `@function` definitions that, when evaluated,
 reproduce the CPU's behavior — either in a browser or via
-[calcite](https://github.com/nicholasgasior/calcite), a JIT compiler for
+[calcite](https://github.com/stop-amertime/calcite), a JIT compiler for
 computational CSS.
 
 Forked from [rebane2001/x86css](https://github.com/rebane2001/x86css) with

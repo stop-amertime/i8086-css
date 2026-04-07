@@ -1,6 +1,5 @@
 CPU_CYCLE_MS = 1024
 PROG_OFFSET = 0x100
-MEM_SIZE = 0x600
 
 # unused
 SCREEN_RAM_POS = 0x300
@@ -10,9 +9,31 @@ SCREEN_HEIGHT = 12
 
 import sys
 import os
+import argparse
 
-INPUT_BIN = sys.argv[1] if len(sys.argv) > 1 else "program.bin"
-OUTPUT_HTML = os.path.splitext(os.path.basename(INPUT_BIN))[0] + ".html"
+parser = argparse.ArgumentParser(description='Transpile 8086 binary to CSS')
+parser.add_argument('input', nargs='?', default='program.bin', help='Input binary file')
+parser.add_argument('--mem', type=lambda x: int(x, 0), default=0x600, help='Writable memory size (hex ok, e.g. 0x6000)')
+parser.add_argument('--data', nargs=2, action='append', metavar=('ADDR', 'FILE'),
+                    help='Embed binary file at address (read-only). Can be repeated. e.g. --data 0xC000 zork1.dat')
+parser.add_argument('--html', action='store_true',
+                    help='Output self-contained HTML with visualisation (default: CSS only)')
+args = parser.parse_args()
+
+INPUT_BIN = args.input
+OUTPUT_EXT = ".html" if args.html else ".css"
+OUTPUT_FILE = os.path.splitext(os.path.basename(INPUT_BIN))[0] + OUTPUT_EXT
+MEM_SIZE = args.mem
+
+# Parse --data arguments into list of (address, filepath, bytes)
+embedded_data = []
+if args.data:
+    for addr_str, filepath in args.data:
+        addr = int(addr_str, 0)
+        with open(filepath, 'rb') as df:
+            file_bytes = df.read()
+        embedded_data.append((addr, filepath, file_bytes))
+        print(f"Embedding {filepath} ({len(file_bytes)} bytes) at 0x{addr:X}")
 
 epic_charset = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" + \
 ' !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~' + \
@@ -85,8 +106,11 @@ flags: -14
 
 
 START_FILE = os.path.splitext(INPUT_BIN)[0] + ".start"
-with open(START_FILE, "r") as f:
-  CODE_START = PROG_OFFSET + int(f.read())
+if os.path.exists(START_FILE):
+  with open(START_FILE, "r") as f:
+    CODE_START = PROG_OFFSET + int(f.read())
+else:
+  CODE_START = PROG_OFFSET
 
 variables.append(createSplitRegister(f"AX", -1, True))
 variables.append(createSplitRegister(f"CX", -2, True))
@@ -170,11 +194,24 @@ variables_ro = variables[program_start:program_start+program_size]
 #variables_rw = variables
 #variables_ro = []
 
-with open("base_template.html", "r") as f:
-  HTML_TEMPL = f.read()
+# Embedded data files (read-only memory regions)
+# These get @property decls and readMem entries but no write expressions.
+embedded_vars = []  # [(name, address, byte_value), ...]
+for base_addr, filepath, file_bytes in embedded_data:
+    for offset, byte_val in enumerate(file_bytes):
+        addr = base_addr + offset
+        embedded_vars.append((f"d{addr}", addr, byte_val))
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if args.html:
+  with open(os.path.join(SCRIPT_DIR, "base_template.html"), "r") as f:
+    TEMPL = f.read()
+else:
+  with open(os.path.join(SCRIPT_DIR, "base_template.css"), "r") as f:
+    TEMPL = f.read()
 
 for k,v in EXTFUNS.items():
-  HTML_TEMPL = HTML_TEMPL.replace(f"#{k}", str(v[0]))
+  TEMPL = TEMPL.replace(f"#{k}", str(v[0]))
 
 args_list = [
 None,  # 00
@@ -232,12 +269,14 @@ None,  # 00
 "M",   # 39
 ]
 
-with open(OUTPUT_HTML, "w", encoding="utf-8") as f:
+with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
     vars_1 = "\n".join([f"""@property --{v[0]} {{
   syntax: "<integer>";
   initial-value: {v[2]};
   inherits: true;
 }}""" for v in variables])
+    # Embedded data needs NO @property declarations or vars_2a entries.
+    # Values are inlined directly in readMem dispatch as constants.
     vars_2a = "\n".join([f"--__1{v[0]}: var(--__2{v[0]}, {v[2]});" for v in variables_rw] + [f"--__1{v[0]}: {v[2]};" for v in variables_ro])
     vars_2b = "\n".join([f"--{v[0]}: calc({v[1].replace('&','var(--__1'+v[0]+')')});" for v in variables])
     vars_3 = "\n".join([f"--__2{v[0]}: var(--__0{v[0]}, {v[2]});" for v in variables_rw])
@@ -272,6 +311,9 @@ style(--at:-34):var(--BL);"""
     readmem_1 += ";".join(f"style(--at:{i}):var(--__1m{i})" for i in range(MEM_SIZE))
     readmem_1 += ";" + ";".join(f"style(--at:{i}):var(--__1m{i})" for i in range(EXTERNAL_FUNCTIONS_START,EXTERNAL_FUNCTIONS_END))
     readmem_1 += ";" + ";".join(f"style(--at:{i}):var(--__1m{i})" for i in range(EXTERNAL_IO_START,EXTERNAL_IO_END))
+    # Embedded data: read-only memory regions
+    if embedded_vars:
+        readmem_1 += ";" + ";".join(f"style(--at:{addr}):{byte_val}" for name, addr, byte_val in embedded_vars)
 
     inst_id1 = ";".join(f"style(--inst0:{v['opcode']}){' and style(--modRm_reg:' + str(v['group']) + ')' if v['group'] is not None else ''}:{v['inst_id']}" for v in all_insts)
     #inst_str1 = ";".join(f"style(--inst{v[2]}:{v[1]}):'{v[0]}'" for v in insts_conv)
@@ -282,13 +324,13 @@ style(--at:-34):var(--BL);"""
     inst_flagfun1 = ""
     for v in all_insts:
       fun = f"--D-{v['name'].replace('.','_').replace(':','_')}"
-      if fun + "(" in HTML_TEMPL:
+      if fun + "(" in TEMPL:
         inst_dest1 += f"style(--instId:{v['inst_id']}):{fun}(var(--w));"
       fun = f"--V-{v['name'].replace('.','_').replace(':','_')}"
-      if fun + "(" in HTML_TEMPL:
+      if fun + "(" in TEMPL:
         inst_val1 += f"style(--instId:{v['inst_id']}):{fun}(var(--w));"
       fun = f"--F-{v['name'].replace('.','_').replace(':','_')}"
-      if fun + "(" in HTML_TEMPL:
+      if fun + "(" in TEMPL:
         inst_flagfun1 += f"style(--instId:{v['inst_id']}):{fun}(var(--baseFlags));"
     inst_dest1 = inst_dest1[:-1]
     inst_val1 = inst_val1[:-1]
@@ -339,7 +381,7 @@ style(--at:-34):var(--BL);"""
         box_shadow_scrn += f"{x*8}px {y*8+8}px rgb(var(--m{mem_off}), var(--m{mem_off}), var(--m{mem_off})),"
     box_shadow_scrn = box_shadow_scrn[:-1]
 
-    f.write(HTML_TEMPL\
+    f.write(TEMPL\
 .replace("CPU_CYCLE_MS", str(CPU_CYCLE_MS))\
 .replace("READMEM_1", readmem_1)\
 .replace("INST_STR1", inst_str1)\
@@ -366,4 +408,6 @@ style(--at:-34):var(--BL);"""
 .replace("CHARMAP1", charmap1)\
 .replace("SCREEN_CR", screen_cr)\
 .replace("SCREEN_CC", screen_cc)\
-.replace("SCREEN_RAM_POS", str(SCREEN_RAM_POS)));
+.replace("SCREEN_RAM_POS", str(SCREEN_RAM_POS))\
+.replace("FILE_SIZE_DX", str(sum(len(fb) for _,_,fb in embedded_data) >> 16))\
+.replace("FILE_SIZE_AX", str(sum(len(fb) for _,_,fb in embedded_data) & 0xFFFF)));

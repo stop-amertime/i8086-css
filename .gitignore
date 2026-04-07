@@ -1,6 +1,8 @@
 # Generated output
 *.html
 !base_template.html
+*.css
+!base_template.css
 
 # Compiled binaries
 *.bin

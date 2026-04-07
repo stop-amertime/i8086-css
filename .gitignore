@@ -1,0 +1,22 @@
+# Generated output
+x86css.html
+
+# Compiled binaries
+program.bin
+program.start
+*.o
+*.com
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

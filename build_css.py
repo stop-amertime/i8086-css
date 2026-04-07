@@ -18,6 +18,8 @@ parser.add_argument('--data', nargs=2, action='append', metavar=('ADDR', 'FILE')
                     help='Embed binary file at address (read-only). Can be repeated. e.g. --data 0xC000 zork1.dat')
 parser.add_argument('--html', action='store_true',
                     help='Output self-contained HTML with visualisation (default: CSS only)')
+parser.add_argument('--himem', nargs=2, action='append', metavar=('SEG', 'SIZE'),
+                    help='Allocate writable high memory at segment:0 with SIZE bytes. e.g. --himem 0xF800 0x7000')
 args = parser.parse_args()
 
 INPUT_BIN = args.input
@@ -140,8 +142,20 @@ variables.append([f"flags", f"if(style(--addrDestA:-14):var(--addrValA);style(--
 var_offset = len(variables)
 
 for i in range(MEM_SIZE):
-  variables.append(createChosenMemoryInt(f"m{i}", i, True, 0x90 if i < PROG_OFFSET else 0))
-variables[0x0+var_offset][2] = str(0xCC)
+  # PSP: addresses 0-255. Byte 0 = 0xCD (INT 20h), byte 128 = command line length (0 = empty)
+  if i == 0:
+    init_val = 0xCD
+  elif i == 1:
+    init_val = 0x20
+  elif i == 0x80:
+    init_val = 0  # command line length = 0 (no arguments)
+  elif i == 0x81:
+    init_val = 0x0D  # carriage return (empty command line terminator)
+  elif i < PROG_OFFSET:
+    init_val = 0  # rest of PSP is zeroed
+  else:
+    init_val = 0
+  variables.append(createChosenMemoryInt(f"m{i}", i, True, init_val))
 
 EXTERNAL_FUNCTIONS_START = 0x2000
 EXTERNAL_FUNCTIONS_END = 0x2010
@@ -200,6 +214,34 @@ for base_addr, filepath, file_bytes in embedded_data:
     for offset, byte_val in enumerate(file_bytes):
         addr = base_addr + offset
         embedded_vars.append((f"d{addr}", addr, byte_val))
+
+# High memory regions (writable, segment-addressed)
+# e.g. --himem 0xF800 0x7000 allocates 0x7000 bytes at physical address 0xF800*16
+# e.g. --himem 0xF800 0x7000 zork1.dat pre-loads file data into the region
+himem_ranges = []
+if args.himem:
+    for himem_arg in args.himem:
+        seg_str, size_str = himem_arg[0], himem_arg[1]
+        seg = int(seg_str, 0)
+        size = int(size_str, 0)
+        base_addr = seg * 16
+        himem_ranges.append((base_addr, size))
+        # Check if any embedded data file overlaps with this himem region
+        # and pre-load matching data
+        himem_data = bytearray(size)
+        for embed_base, embed_path, embed_bytes in embedded_data:
+            # If embedded data can serve as initial content for himem,
+            # copy the first 'size' bytes from the first embedded file
+            if len(embed_bytes) > 0:
+                copy_len = min(size, len(embed_bytes))
+                himem_data[:copy_len] = embed_bytes[:copy_len]
+                print(f"High memory: segment 0x{seg:04X} -> {base_addr}-{base_addr+size-1} ({size} bytes, pre-loaded {copy_len} from embedded data)")
+                break
+        else:
+            print(f"High memory: segment 0x{seg:04X} -> addresses {base_addr}-{base_addr+size-1} ({size} bytes)")
+        for i in range(size):
+            addr = base_addr + i
+            variables.append(createChosenMemoryInt(f"m{addr}", addr, True, himem_data[i]))
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if args.html:
@@ -313,6 +355,9 @@ style(--at:-34):var(--BL);"""
     # Embedded data: read-only memory regions
     if embedded_vars:
         readmem_1 += ";" + ";".join(f"style(--at:{addr}):{byte_val}" for name, addr, byte_val in embedded_vars)
+    # High memory: writable regions at segment addresses
+    for base_addr, size in himem_ranges:
+        readmem_1 += ";" + ";".join(f"style(--at:{base_addr+i}):var(--__1m{base_addr+i})" for i in range(size))
 
     inst_id1 = ";".join(f"style(--inst0:{v['opcode']}){' and style(--modRm_reg:' + str(v['group']) + ')' if v['group'] is not None else ''}:{v['inst_id']}" for v in all_insts)
     #inst_str1 = ";".join(f"style(--inst{v[2]}:{v[1]}):'{v[0]}'" for v in insts_conv)

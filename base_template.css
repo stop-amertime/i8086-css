@@ -1093,6 +1093,11 @@ SUB, ADD
     style(--w:0) and style(--instArg1:33) and style(--AH:63):-1;
     style(--w:0) and style(--instArg1:33) and style(--AH:66):-1;
     style(--w:0) and style(--instArg1:33) and style(--AH:76):-9;
+    /* INT 1Ah (26): BIOS timer — AH=0 returns tick count in CX:DX */
+    style(--w:0) and style(--instArg1:26) and style(--AH:0):-3;
+    /* INT 16h (22): Keyboard — AH=0 reads key, AH=1 checks key status */
+    style(--w:0) and style(--instArg1:22) and style(--AH:0):-1;
+    style(--w:0) and style(--instArg1:22) and style(--AH:1):-1;
     /* Slot B (w=1): write flags register for file ops (clear CF) */
     style(--w:1) and style(--instArg1:33) and style(--AH:60):-14;
     style(--w:1) and style(--instArg1:33) and style(--AH:61):-14;
@@ -1101,6 +1106,10 @@ SUB, ADD
     style(--w:1) and style(--instArg1:33) and style(--AH:65):-14;
     /* Slot B for seek: write DX (high word of position) */
     style(--w:1) and style(--instArg1:33) and style(--AH:66):-3;
+    /* INT 1Ah slot B: CX = high word of tick count (always 0) */
+    style(--w:1) and style(--instArg1:26) and style(--AH:0):-2;
+    /* INT 16h AH=1 slot B: flags — set ZF if no key available */
+    style(--w:1) and style(--instArg1:22) and style(--AH:1):-14;
   else:-100);
 }
 
@@ -1131,6 +1140,16 @@ SUB, ADD
     /* AL=2 (from end) returns file size high word; AL=0 returns 0 */
     style(--w:1) and style(--instArg1:33) and style(--AH:66) and style(--AL:2):FILE_SIZE_DX;
     style(--w:1) and style(--instArg1:33) and style(--AH:66):0;
+    /* INT 1Ah AH=0: DX = low word of tick count (frame counter) */
+    style(--w:0) and style(--instArg1:26) and style(--AH:0):var(--__1frame-count);
+    /* INT 1Ah AH=0: CX = high word of tick count (always 0) */
+    style(--w:1) and style(--instArg1:26) and style(--AH:0):0;
+    /* INT 16h AH=0: AX = keyboard scancode (key in AL) */
+    style(--w:0) and style(--instArg1:22) and style(--AH:0):var(--keyboard, 0);
+    /* INT 16h AH=1: AX = keyboard scancode (key in AL, 0 if none) */
+    style(--w:0) and style(--instArg1:22) and style(--AH:1):var(--keyboard, 0);
+    /* INT 16h AH=1: flags — ZF=1 if no key, ZF=0 if key available */
+    style(--w:1) and style(--instArg1:22) and style(--AH:1):if(style(--keyboard:0):calc(var(--__1flags) - --bit(var(--__1flags), 6) + 64);else:calc(var(--__1flags) - --bit(var(--__1flags), 6)));
   else:0);
 }
 
@@ -1555,9 +1574,16 @@ SUB, ADD
 
 /* --- PORT I/O --- */
 
-/* IN: read from port — stub, return 0 for most ports */
+/* IN: read from port — stub returns for known ports:
+   Port 0x3DA (VGA status): toggle bit 3 each read so retrace wait loops pass through
+   Port 0x40 (PIT counter): return frame-count low byte for pseudo-random numbers
+   Port 0x61 (PPI): return 0 (speaker control)
+   Other ports: return 0 */
 @function --D-IN(--w <integer>) returns <integer> { result: if(style(--w:0):-31;else:-100); }
-@function --V-IN(--w <integer>) returns <integer> { result: if(style(--w:0):0;else:-100); }
+@function --V-IN(--w <integer>) returns <integer> {
+  --port: var(--__1DX);
+  result: if(style(--w:0):if(style(--port:986):calc(mod(var(--__1frame-count), 2) * 8);style(--port:64):mod(var(--__1frame-count), 256);else:0);else:-100);
+}
 
 /* OUT: write to port — stub, discard value */
 @function --D-OUT(--w <integer>) returns <integer> { result: -100; }

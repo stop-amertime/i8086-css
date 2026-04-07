@@ -2138,13 +2138,13 @@ SUB, ADD
       style(--__1IP:#writeChar8):var(--__1textBuffer) --i2char(--readMem(var(--strPointer))) --i2char(--readMem(calc(var(--strPointer) + 1))) --i2char(--readMem(calc(var(--strPointer) + 2))) --i2char(--readMem(calc(var(--strPointer) + 3))) --i2char(--readMem(calc(var(--strPointer) + 4))) --i2char(--readMem(calc(var(--strPointer) + 5))) --i2char(--readMem(calc(var(--strPointer) + 6))) --i2char(--readMem(calc(var(--strPointer) + 7)));
 /*      style(--__1IP:#writeStr):var(--__1textBuffer) --readString(--read2(calc(var(--__1SP) + 2)));*/
       /* DOS INT 21h AH=02h: write character in DL */
-      style(--instId:212) and style(--instArg1:33) and style(--AH:2):var(--__1textBuffer) --i2char(var(--DL));
+      style(--instId:213) and style(--instArg1:33) and style(--AH:2):var(--__1textBuffer) --i2char(var(--DL));
       /* DOS INT 21h AH=06h: direct console output (DL != 0xFF) */
-      style(--instId:212) and style(--instArg1:33) and style(--AH:6):var(--__1textBuffer) --i2char(var(--DL));
+      style(--instId:213) and style(--instArg1:33) and style(--AH:6):var(--__1textBuffer) --i2char(var(--DL));
       /* DOS INT 21h AH=09h: write string at DS:DX (first 8 chars per tick) */
-      style(--instId:212) and style(--instArg1:33) and style(--AH:9):var(--__1textBuffer) --readString(calc(var(--__1DS) * 16 + var(--__1DX)));
+      style(--instId:213) and style(--instArg1:33) and style(--AH:9):var(--__1textBuffer) --readString(calc(var(--__1DS) * 16 + var(--__1DX)));
       /* DOS INT 21h AH=01h: echo keyboard input */
-      style(--instId:212) and style(--instArg1:33) and style(--AH:1):var(--__1textBuffer) --i2char(var(--keyboard, 0));
+      style(--instId:213) and style(--instArg1:33) and style(--AH:1):var(--__1textBuffer) --i2char(var(--keyboard, 0));
       else:var(--__1textBuffer)
     );
   --clock2: --int(calc(var(--clock)));

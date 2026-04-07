@@ -225,7 +225,7 @@ None,  # 00
 "M",   # 39
 ]
 
-with open("x86css.html", "w") as f:
+with open("x86css.html", "w", encoding="utf-8") as f:
     vars_1 = "\n".join([f"""@property --{v[0]} {{
   syntax: "<integer>";
   initial-value: {v[2]};

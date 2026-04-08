@@ -216,10 +216,11 @@ export function emitIRET(dispatch) {
   dispatch.addEntry('CS', 0xCF,
     `--read2(calc(${ssBase} + var(--__1SP) + 2))`,
     `IRET pop CS`);
-  // Pop FLAGS from SP+4 (masked + bit 1 set)
-  // Can't nest --and(--read2(...)) — use precomputed --_iretFlags from decode
+  // Pop FLAGS from SP+4 (masked + bit 1 forced on)
+  // Mask 0x0FD5 = 4053 preserves CF,PF,AF,ZF,SF,TF,IF,DF,OF but clears bit 1,3,5,12-15
+  // Then + 2 forces bit 1 (reserved, always 1). Safe because bit 1 was cleared by mask.
   dispatch.addEntry('flags', 0xCF,
-    `calc(--and(var(--_stackWord2), 4055) + 2)`,
+    `calc(--and(var(--_stackWord2), 4053) + 2)`,
     `IRET pop FLAGS`);
   dispatch.addEntry('SP', 0xCF,
     `calc(var(--__1SP) + 6)`,

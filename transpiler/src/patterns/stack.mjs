@@ -133,9 +133,9 @@ export function emitPUSHF(dispatch) {
  * POPF (0x9D): pop flags register (mask to valid bits + bit 1 always set)
  */
 export function emitPOPF(dispatch) {
-  // 0xFD7 = all valid flag bits. Bit 1 always set.
+  // 0xFD5 = valid flag bits with bit 1 cleared. Then + 2 forces bit 1 on.
   dispatch.addEntry('flags', 0x9D,
-    `calc(--and(var(--_stackWord0), 4055) + 2)`,
+    `calc(--and(var(--_stackWord0), 4053) + 2)`,
     `POPF`);
   dispatch.addEntry('SP', 0x9D,
     `calc(var(--__1SP) + 2)`,

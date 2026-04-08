@@ -139,3 +139,92 @@ export function emitMOV_RegRM(dispatch) {
     `MOV r/m8(mem), reg8`);
   dispatch.addEntry('IP', 0x88, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `MOV r/m8, reg8`);
 }
+
+/**
+ * MOV segreg, r/m16 (0x8E) — load segment register from r/m
+ * MOV r/m16, segreg (0x8C) — store segment register to r/m
+ * reg field selects segment: 0=ES, 1=CS, 2=SS, 3=DS
+ */
+export function emitMOV_SegRM(dispatch) {
+  const segs = ['ES', 'CS', 'SS', 'DS'];
+
+  // 0x8E: MOV segreg, r/m16 — reg field selects destination segreg
+  for (let s = 0; s < 4; s++) {
+    dispatch.addEntry(segs[s], 0x8E,
+      `if(style(--reg: ${s}): var(--rmVal16); else: var(--__1${segs[s]}))`,
+      `MOV ${segs[s]}, r/m16`);
+  }
+  dispatch.addEntry('IP', 0x8E, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `MOV segreg, r/m16`);
+
+  // 0x8C: MOV r/m16, segreg — destination is r/m, source is segreg
+  const regOrder16 = ['AX', 'CX', 'DX', 'BX', 'SP', 'BP', 'SI', 'DI'];
+  // If mod=11, rm selects destination register
+  for (let r = 0; r < 8; r++) {
+    const branches = segs.map((seg, s) =>
+      `style(--mod: 3) and style(--rm: ${r}) and style(--reg: ${s}): var(--__1${seg})`
+    );
+    dispatch.addEntry(regOrder16[r], 0x8C,
+      `if(${branches.join('; ')}; else: var(--__1${regOrder16[r]}))`,
+      `MOV r/m16(${regOrder16[r]}), segreg`);
+  }
+  // Memory write: if mod!=3, write segreg value to EA
+  // Uses precomputed --segRegVal from decode.mjs
+  dispatch.addMemWrite(0x8C,
+    `if(style(--mod: 3): -1; else: var(--ea))`,
+    `--lowerBytes(var(--segRegVal), 8)`,
+    `MOV r/m16, segreg → mem lo`);
+  dispatch.addMemWrite(0x8C,
+    `if(style(--mod: 3): -1; else: calc(var(--ea) + 1))`,
+    `--rightShift(var(--segRegVal), 8)`,
+    `MOV r/m16, segreg → mem hi`);
+  dispatch.addEntry('IP', 0x8C, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `MOV r/m16, segreg`);
+}
+
+/**
+ * MOV AL/AX, [mem] (0xA0-0xA1) and MOV [mem], AL/AX (0xA2-0xA3)
+ * Direct memory addressing with 16-bit address at bytes 1-2.
+ */
+export function emitMOV_AccMem(dispatch) {
+  // 0xA0: MOV AL, [addr16] — load byte from DS:addr16 into AL
+  dispatch.addEntry('AX', 0xA0,
+    `--mergelow(var(--__1AX), --readMem(calc(var(--__1DS) * 16 + var(--q1) + var(--q2) * 256)))`,
+    `MOV AL, [mem]`);
+  dispatch.addEntry('IP', 0xA0, `calc(var(--__1IP) + 3)`, `MOV AL, [mem]`);
+
+  // 0xA1: MOV AX, [addr16] — load word from DS:addr16 into AX
+  dispatch.addEntry('AX', 0xA1,
+    `--read2(calc(var(--__1DS) * 16 + var(--q1) + var(--q2) * 256))`,
+    `MOV AX, [mem]`);
+  dispatch.addEntry('IP', 0xA1, `calc(var(--__1IP) + 3)`, `MOV AX, [mem]`);
+
+  // 0xA2: MOV [addr16], AL — store AL to DS:addr16
+  dispatch.addMemWrite(0xA2,
+    `calc(var(--__1DS) * 16 + var(--q1) + var(--q2) * 256)`,
+    `var(--AL)`,
+    `MOV [mem], AL`);
+  dispatch.addEntry('IP', 0xA2, `calc(var(--__1IP) + 3)`, `MOV [mem], AL`);
+
+  // 0xA3: MOV [addr16], AX — store AX to DS:addr16 (word)
+  dispatch.addMemWrite(0xA3,
+    `calc(var(--__1DS) * 16 + var(--q1) + var(--q2) * 256)`,
+    `var(--AL)`,
+    `MOV [mem], AX lo`);
+  dispatch.addMemWrite(0xA3,
+    `calc(var(--__1DS) * 16 + var(--q1) + var(--q2) * 256 + 1)`,
+    `var(--AH)`,
+    `MOV [mem], AX hi`);
+  dispatch.addEntry('IP', 0xA3, `calc(var(--__1IP) + 3)`, `MOV [mem], AX`);
+}
+
+/**
+ * LEA reg16, [mem] (0x8D) — load effective address
+ */
+export function emitLEA(dispatch) {
+  const regOrder16 = ['AX', 'CX', 'DX', 'BX', 'SP', 'BP', 'SI', 'DI'];
+  for (let r = 0; r < 8; r++) {
+    dispatch.addEntry(regOrder16[r], 0x8D,
+      `if(style(--reg: ${r}): var(--eaOff); else: var(--__1${regOrder16[r]}))`,
+      `LEA ${regOrder16[r]}, [mem]`);
+  }
+  dispatch.addEntry('IP', 0x8D, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `LEA`);
+}

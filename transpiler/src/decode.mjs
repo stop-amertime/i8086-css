@@ -216,6 +216,9 @@ export function emitDecodeProperties() {
   /* Pre-computed CX-1 for LOOP instruction (avoids nested function call) */
   --_loopCX: --lowerBytes(calc(var(--__1CX) - 1 + 65536), 16);
 
+  /* Pre-computed segment register value by reg field (for MOV r/m16, segreg) */
+  --segRegVal: --getSegReg(var(--reg), var(--__1ES), var(--__1CS), var(--__1SS), var(--__1DS));
+
   /* Pre-computed stack word reads for POP/IRET (avoids nested --and(--read2(...))) */
   --_stackBase: calc(var(--__1SS) * 16 + var(--__1SP));
   --_stackWord0: --read2(var(--_stackBase));

@@ -23,6 +23,7 @@ import { emitAllControl } from './patterns/control.mjs';
 import { emitAllStack } from './patterns/stack.mjs';
 import { emitAllMisc } from './patterns/misc.mjs';
 import { emitAllGroups } from './patterns/group.mjs';
+import { emitAllShifts, emitShiftFlagFunctions } from './patterns/shift.mjs';
 
 /**
  * Dispatch table builder. Collects per-register entries keyed by opcode.
@@ -150,8 +151,9 @@ export function emitCSS(opts) {
   emitAllALU(dispatch);       // ADD/SUB/CMP/AND/OR/XOR/ADC/SBB/TEST/INC/DEC
   emitAllControl(dispatch);   // JMP/Jcc/CALL/RET/INT/IRET/LOOP
   emitAllStack(dispatch);     // PUSH/POP/PUSHF/POPF
-  emitAllMisc(dispatch);      // HLT/NOP/LODSB/MOV r/m imm/flag manip/CBW/CWD
-  emitAllGroups(dispatch);    // Group FE/F7/F6
+  emitAllMisc(dispatch);      // HLT/NOP/LODSB/STOSB/MOV r/m imm/flag manip/CBW/CWD/XCHG
+  emitAllGroups(dispatch);    // Group FE/F7/F6/80-83
+  emitAllShifts(dispatch);    // SHL/SHR/SAR/ROL/ROR (D0-D1)
 
   // Assemble CSS
   const sections = [];
@@ -170,7 +172,7 @@ export function emitCSS(opts) {
 
   // 4. Flag computation @functions
   sections.push(emitFlagFunctions());
-  // incFlags8/decFlags8 are now in emitFlagFunctions()
+  sections.push(emitShiftFlagFunctions());
 
   // 5. readMem @function
   sections.push('/* ===== MEMORY READ ===== */');

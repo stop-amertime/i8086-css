@@ -156,13 +156,60 @@ export function emitCBW_CWD(dispatch) {
 }
 
 /**
+ * STOSB (0xAA): store AL at ES:DI, adjust DI.
+ * STOSW (0xAB): store AX at ES:DI, adjust DI.
+ */
+export function emitSTOS(dispatch) {
+  // STOSB: mem[ES:DI] = AL, DI += (DF ? -1 : 1)
+  dispatch.addMemWrite(0xAA,
+    `calc(var(--__1ES) * 16 + var(--__1DI))`,
+    `var(--AL)`,
+    `STOSB`);
+  dispatch.addEntry('DI', 0xAA,
+    `--lowerBytes(calc(var(--__1DI) + 1 - --bit(var(--__1flags), 10) * 2), 16)`,
+    `STOSB DI adjust`);
+  dispatch.addEntry('IP', 0xAA, `calc(var(--__1IP) + 1)`, `STOSB`);
+
+  // STOSW: mem[ES:DI] = AX (word), DI += (DF ? -2 : 2)
+  dispatch.addMemWrite(0xAB,
+    `calc(var(--__1ES) * 16 + var(--__1DI))`,
+    `var(--AL)`,
+    `STOSW lo`);
+  dispatch.addMemWrite(0xAB,
+    `calc(var(--__1ES) * 16 + var(--__1DI) + 1)`,
+    `var(--AH)`,
+    `STOSW hi`);
+  dispatch.addEntry('DI', 0xAB,
+    `--lowerBytes(calc(var(--__1DI) + 2 - --bit(var(--__1flags), 10) * 4), 16)`,
+    `STOSW DI adjust`);
+  dispatch.addEntry('IP', 0xAB, `calc(var(--__1IP) + 1)`, `STOSW`);
+}
+
+/**
+ * XCHG AX, reg16 (0x91-0x97) — exchange AX with another register.
+ */
+export function emitXCHG_AXreg(dispatch) {
+  const REG16 = ['AX', 'CX', 'DX', 'BX', 'SP', 'BP', 'SI', 'DI'];
+  for (let r = 1; r < 8; r++) { // 0x91-0x97 (skip 0x90=NOP)
+    const opcode = 0x90 + r;
+    // AX gets the other register's value
+    dispatch.addEntry('AX', opcode, `var(--__1${REG16[r]})`, `XCHG AX, ${REG16[r]}`);
+    // The other register gets AX's value
+    dispatch.addEntry(REG16[r], opcode, `var(--__1AX)`, `XCHG AX, ${REG16[r]}`);
+    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1)`, `XCHG AX, ${REG16[r]}`);
+  }
+}
+
+/**
  * Register all misc opcodes.
  */
 export function emitAllMisc(dispatch) {
   emitHLT(dispatch);
   emitNOP(dispatch);
   emitLODS(dispatch);
+  emitSTOS(dispatch);
   emitMOV_RMimm(dispatch);
   emitFlagManip(dispatch);
   emitCBW_CWD(dispatch);
+  emitXCHG_AXreg(dispatch);
 }

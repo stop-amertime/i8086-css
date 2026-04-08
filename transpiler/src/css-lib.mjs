@@ -61,6 +61,25 @@ ${emitBitwiseOr()}
 
 ${emitBitwiseNot()}
 
+/* ===== 8-BIT BITWISE WRAPPERS ===== */
+/* Chrome can't nest function calls as arguments, so these provide
+   pre-composed 8-bit variants of the bitwise ops. */
+
+@function --or8(--a <integer>, --b <integer>) returns <integer> {
+  --full: --or(var(--a), var(--b));
+  result: --lowerBytes(var(--full), 8);
+}
+
+@function --and8(--a <integer>, --b <integer>) returns <integer> {
+  --full: --and(var(--a), var(--b));
+  result: --lowerBytes(var(--full), 8);
+}
+
+@function --xor8(--a <integer>, --b <integer>) returns <integer> {
+  --full: --xor(var(--a), var(--b));
+  result: --lowerBytes(var(--full), 8);
+}
+
 /* ===== BYTE MERGE @FUNCTIONS ===== */
 
 @function --mergelow(--old <integer>, --new <integer>) returns <integer> {

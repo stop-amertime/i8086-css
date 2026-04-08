@@ -206,5 +206,8 @@ export function emitDecodeProperties() {
   /* Immediate value at opcode+1 (for MOV reg,imm and other non-ModR/M immediates) */
   --imm8: var(--q1);
   --imm16: calc(var(--q1) + var(--q2) * 256);
+
+  /* Carry flag extracted for ADC/SBB (avoids nested --bit() in dispatch expressions) */
+  --_cf: --bit(var(--__1flags), 0);
 `;
 }

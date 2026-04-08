@@ -18,7 +18,9 @@ import { emitFlagFunctions } from './patterns/flags.mjs';
 
 // Opcode emitters
 import { emitMOV_RegImm16, emitMOV_RegImm8, emitMOV_RegRM } from './patterns/mov.mjs';
-import { emitADD_01, emitADD_AXimm16, emitADD_ALimm8 } from './patterns/alu.mjs';
+import { emitAllALU } from './patterns/alu.mjs';
+import { emitAllControl } from './patterns/control.mjs';
+import { emitAllStack } from './patterns/stack.mjs';
 import { emitHLT, emitNOP } from './patterns/misc.mjs';
 
 /**
@@ -140,9 +142,9 @@ export function emitCSS(opts) {
   emitMOV_RegImm16(dispatch);
   emitMOV_RegImm8(dispatch);
   emitMOV_RegRM(dispatch);
-  emitADD_01(dispatch);
-  emitADD_AXimm16(dispatch);
-  emitADD_ALimm8(dispatch);
+  emitAllALU(dispatch);       // ADD/SUB/CMP/AND/OR/XOR/ADC/SBB/TEST/INC/DEC
+  emitAllControl(dispatch);   // JMP/Jcc/CALL/RET
+  emitAllStack(dispatch);     // PUSH/POP/PUSHF/POPF
   emitHLT(dispatch);
   emitNOP(dispatch);
 

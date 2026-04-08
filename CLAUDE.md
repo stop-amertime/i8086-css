@@ -56,6 +56,38 @@ This means:
 - **Never suggest CSS changes to help calcite.** That's backwards.
 - **If calcite disagrees with Chrome, calcite is wrong.**
 
+### When Chrome stops being a practical source of truth
+
+Chrome has limitations that make it impractical as the sole test oracle at
+scale:
+
+- **Speed:** Chrome evaluates ~200 ticks in ~78 seconds. Calcite does 3500
+  ticks in ~0.15 seconds (~500x faster). Testing programs that need thousands
+  of ticks is only feasible through Calcite.
+- **@function nesting depth:** Chrome silently fails when `@function` calls
+  are nested too deeply (e.g., a function whose body calls `--xor` which
+  decomposes into 33 local variables). There is no error — the property
+  just evaluates to the initial value. This was hit with OF flag helpers
+  that called `--xor` internally.
+- **@function local variable limit:** Chrome silently fails with >7 local
+  variables in a single `@function`. Again, no error, just wrong values.
+- **Argument restrictions:** Chrome `@function` arguments cannot themselves
+  be `@function` calls (e.g., `--foo(--bar(x))` fails). Native CSS math
+  functions like `calc()`, `mod()`, `min()`, `max()`, `round()`, `pow()`
+  are fine as arguments since they are part of the CSS math grammar.
+
+In practice, this means:
+- **Simple instructions** (MOV, ADD, JMP, etc.) can be validated in Chrome.
+- **Complex instructions** (IMUL with signed conversion, multi-step flag
+  computations) may exceed Chrome's nesting/complexity limits and can only
+  be validated through Calcite + reference emulator comparison.
+- **The reference JS emulator (`tools/js8086.js`) becomes the primary source
+  of truth** for instruction correctness, with Calcite as the execution
+  engine. Chrome remains the source of truth for CSS *semantics* (how
+  `calc()`, `mod()`, `if()`, `@function` etc. should behave) but not for
+  whether a particular deeply-nested expression actually evaluates in
+  Chrome's implementation.
+
 ## The two approaches
 
 ### v1: JSON instruction database (legacy/)
@@ -130,6 +162,17 @@ CSS file it's given and evaluates it. The only shared interface is the CSS forma
 Calcite has pattern recognition for dispatch tables, broadcast writes, and
 bitwise operations. The transpiler should emit CSS that naturally falls into
 these patterns (e.g., `if(style(--opcode: N))` chains become dispatch tables).
+
+## Tools
+
+**NASM** (assembler): installed at `C:\Users\AdmT9N0CX01V65438A\AppData\Local\bin\NASM\nasm.exe`.
+Not in PATH — use the full path or set a variable. Used to assemble `.asm` files
+(BIOS, test programs) into flat binaries.
+
+**Playwright MCP**: available for browser automation if you need to run the
+generated HTML/CSS in Chrome and extract register state. Prefer other approaches
+(Calcite traces, reference emulator comparison) when possible — Playwright is
+slow and should be a last resort for debugging CSS execution issues.
 
 ## Relationship to the original x86css
 

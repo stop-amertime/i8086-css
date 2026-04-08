@@ -7,13 +7,9 @@ import { emitDecodeFunction, emitDecodeProperties } from './decode.mjs';
 import {
   emitPropertyDecls, emitBufferReads, emitRegisterAliases,
   emitStoreKeyframe, emitExecuteKeyframe, emitClockKeyframes,
-  emitClockAndCpuBase, emitDebugDisplay, emitHTML,
+  emitClockAndCpuBase, emitDebugDisplay, emitHTMLHeader, emitHTMLFooter,
 } from './template.mjs';
-import {
-  emitReadMem, emitMemoryProperties, emitMemoryWriteRules,
-  emitMemoryBufferReads, emitMemoryStoreKeyframe,
-  emitMemoryExecuteKeyframe, emitWriteSlotProperties,
-} from './memory.mjs';
+import { emitWriteSlotProperties, buildInitialMemory } from './memory.mjs';
 import { emitFlagFunctions } from './patterns/flags.mjs';
 
 // Opcode emitters
@@ -23,7 +19,7 @@ import { emitAllControl } from './patterns/control.mjs';
 import { emitAllStack } from './patterns/stack.mjs';
 import { emitAllMisc } from './patterns/misc.mjs';
 import { emitAllGroups } from './patterns/group.mjs';
-import { emitAllShifts, emitShiftFlagFunctions } from './patterns/shift.mjs';
+import { emitAllShifts, emitShiftFlagFunctions, emitShiftByNFlagFunctions } from './patterns/shift.mjs';
 
 /**
  * Dispatch table builder. Collects per-register entries keyed by opcode.
@@ -60,6 +56,10 @@ class DispatchTable {
   /**
    * Emit the dispatch table for one register as a CSS if() expression.
    * Returns the full property declaration for inside .cpu.
+   *
+   * For IP: wraps the entire dispatch in calc(... + var(--prefixLen)) so that
+   * all instruction IP calculations automatically account for prefix bytes
+   * (segment overrides, REP) without changing each individual emitter.
    */
   emitRegisterDispatch(reg, defaultExpr) {
     const entries = this.regEntries.get(reg);
@@ -68,7 +68,16 @@ class DispatchTable {
     }
 
     const lines = [];
-    lines.push(`  --${reg}: if(`);
+
+    // For IP, wrap dispatch in calc(... + prefixLen) so every instruction
+    // automatically advances past any prefix bytes.
+    const wrapIP = (reg === 'IP');
+
+    if (wrapIP) {
+      lines.push(`  --${reg}: calc(if(`);
+    } else {
+      lines.push(`  --${reg}: if(`);
+    }
 
     // Sort by opcode for readability
     const sorted = [...entries.entries()].sort(([a], [b]) => a - b);
@@ -78,7 +87,11 @@ class DispatchTable {
       lines.push(`    style(--opcode: ${opcode}): ${expr};${commentStr}`);
     }
 
-    lines.push(`  else: ${defaultExpr});`);
+    if (wrapIP) {
+      lines.push(`  else: ${defaultExpr}) + var(--prefixLen));`);
+    } else {
+      lines.push(`  else: ${defaultExpr});`);
+    }
     return lines.join('\n');
   }
 
@@ -131,8 +144,9 @@ class DispatchTable {
 
 /**
  * Main CSS generation entry point.
+ * Writes to a writable stream to avoid V8 string size limits with 1MB memory.
  */
-export function emitCSS(opts) {
+export function emitCSS(opts, writeStream) {
   const { programBytes, biosBytes, memSize, embeddedData, htmlMode, programOffset } = opts;
 
   const memOpts = { memSize, programBytes, biosBytes, embeddedData, programOffset };
@@ -157,94 +171,177 @@ export function emitCSS(opts) {
   emitAllGroups(dispatch);    // Group FE/F7/F6/80-83
   emitAllShifts(dispatch);    // SHL/SHR/SAR/ROL/ROR (D0-D1)
 
-  // Assemble CSS
-  const sections = [];
+  const w = (s) => writeStream.write(s + '\n\n');
+
+  if (htmlMode) {
+    writeStream.write(emitHTMLHeader());
+  }
 
   // 1. @property declarations
-  sections.push('/* ===== PROPERTY DECLARATIONS ===== */');
-  sections.push(emitPropertyDecls(templateOpts));
-  sections.push(emitMemoryProperties(memOpts));
-  sections.push(emitWriteSlotProperties());
+  w('/* ===== PROPERTY DECLARATIONS ===== */');
+  w(emitPropertyDecls(templateOpts));
+  // Memory properties — emit in chunks to avoid huge strings
+  emitMemoryPropertiesStreaming(memOpts, writeStream);
+  w(emitWriteSlotProperties());
 
   // 2. Utility @functions
-  sections.push(emitCSSLib());
+  w(emitCSSLib());
 
   // 3. Decode @functions
-  sections.push(emitDecodeFunction());
+  w(emitDecodeFunction());
 
   // 4. Flag computation @functions
-  sections.push(emitFlagFunctions());
-  sections.push(emitShiftFlagFunctions());
+  w(emitFlagFunctions());
+  w(emitShiftFlagFunctions());
+  w(emitShiftByNFlagFunctions());
 
   // 5. readMem @function
-  sections.push('/* ===== MEMORY READ ===== */');
-  sections.push(emitReadMem(memOpts));
+  w('/* ===== MEMORY READ ===== */');
+  emitReadMemStreaming(memOpts, writeStream);
 
   // 6. Clock and CPU base
-  sections.push('/* ===== EXECUTION ENGINE ===== */');
-  sections.push(emitClockAndCpuBase({ htmlMode }));
+  w('/* ===== EXECUTION ENGINE ===== */');
+  w(emitClockAndCpuBase({ htmlMode }));
 
   // 7. .cpu rule body — buffer reads, aliases, decode, dispatch, write rules
-  const cpuBody = [];
-  cpuBody.push('  /* Double-buffer reads */');
-  cpuBody.push(emitBufferReads(templateOpts));
-  cpuBody.push(emitMemoryBufferReads(memOpts));
-  cpuBody.push('');
-  cpuBody.push('  /* Register aliases (8-bit halves) */');
-  cpuBody.push(emitRegisterAliases());
-  cpuBody.push('');
-  cpuBody.push(emitDecodeProperties());
-  cpuBody.push('');
+  writeStream.write('  /* Double-buffer reads */\n');
+  w(emitBufferReads(templateOpts));
+  emitMemoryBufferReadsStreaming(memOpts, writeStream);
+  writeStream.write('\n');
+  writeStream.write('  /* Register aliases (8-bit halves) */\n');
+  w(emitRegisterAliases());
+  w(emitDecodeProperties());
 
   // Per-register dispatch tables
-  cpuBody.push('  /* ===== REGISTER DISPATCH TABLES ===== */');
+  writeStream.write('  /* ===== REGISTER DISPATCH TABLES ===== */\n');
   const regOrder = ['AX', 'CX', 'DX', 'BX', 'SP', 'BP', 'SI', 'DI',
                     'CS', 'DS', 'ES', 'SS', 'IP', 'flags', 'halt'];
   for (const reg of regOrder) {
     const defaultExpr = `var(--__1${reg})`;
-    cpuBody.push(dispatch.emitRegisterDispatch(reg, defaultExpr));
+    writeStream.write(dispatch.emitRegisterDispatch(reg, defaultExpr) + '\n');
   }
-  cpuBody.push('');
+  writeStream.write('\n');
 
   // Memory write slots
-  cpuBody.push('  /* ===== MEMORY WRITE SLOTS ===== */');
-  cpuBody.push(dispatch.emitMemoryWriteSlots());
-  cpuBody.push('');
+  writeStream.write('  /* ===== MEMORY WRITE SLOTS ===== */\n');
+  writeStream.write(dispatch.emitMemoryWriteSlots() + '\n\n');
 
   // Per-byte memory write rules
-  cpuBody.push('  /* ===== MEMORY WRITE RULES ===== */');
-  cpuBody.push(emitMemoryWriteRules(memOpts));
-
-  sections.push(cpuBody.join('\n'));
+  writeStream.write('  /* ===== MEMORY WRITE RULES ===== */\n');
+  emitMemoryWriteRulesStreaming(memOpts, writeStream);
 
   // Close .cpu rule
-  sections.push('}');
+  w('}');
 
   // 8. Debug display
-  sections.push(emitDebugDisplay(templateOpts));
+  w(emitDebugDisplay(templateOpts));
 
-  // 9. Keyframes
-  // Store keyframe needs both register and memory entries
+  // 9. Keyframes — store
   const storeKf = emitStoreKeyframe(templateOpts);
-  const storeKfWithMem = storeKf.replace(
-    '  }\n}',
-    emitMemoryStoreKeyframe(memOpts) + '\n  }\n}'
-  );
-  sections.push(storeKfWithMem);
+  const storeKfOpen = storeKf.replace('  }\n}', '');
+  writeStream.write(storeKfOpen);
+  emitMemoryStoreKeyframeStreaming(memOpts, writeStream);
+  writeStream.write('  }\n}\n\n');
 
+  // Execute keyframe
   const execKf = emitExecuteKeyframe(templateOpts);
-  const execKfWithMem = execKf.replace(
-    '  }\n}',
-    emitMemoryExecuteKeyframe(memOpts) + '\n  }\n}'
-  );
-  sections.push(execKfWithMem);
+  const execKfOpen = execKf.replace('  }\n}', '');
+  writeStream.write(execKfOpen);
+  emitMemoryExecuteKeyframeStreaming(memOpts, writeStream);
+  writeStream.write('  }\n}\n\n');
 
-  sections.push(emitClockKeyframes());
-
-  const css = sections.join('\n\n');
+  w(emitClockKeyframes());
 
   if (htmlMode) {
-    return emitHTML(css);
+    writeStream.write(emitHTMLFooter());
   }
-  return css;
+}
+
+// --- Streaming memory emitters (write directly, avoid building huge strings) ---
+
+const CHUNK = 8192; // lines per write() call
+
+function emitMemoryPropertiesStreaming(opts, ws) {
+  const { memSize } = opts;
+  const initMem = buildInitialMemory(opts);
+  let buf = '';
+  for (let addr = 0; addr < memSize; addr++) {
+    const init = initMem.get(addr) || 0;
+    buf += `@property --m${addr} {\n  syntax: '<integer>';\n  inherits: true;\n  initial-value: ${init};\n}\n\n`;
+    if (addr % CHUNK === CHUNK - 1) { ws.write(buf); buf = ''; }
+  }
+  if (buf) ws.write(buf);
+}
+
+function emitReadMemStreaming(opts, ws) {
+  const { memSize, biosBytes } = opts;
+  ws.write(`@function --readMem(--at <integer>) returns <integer> {\n  result: if(\n`);
+  let buf = '';
+  // Writable memory region
+  for (let addr = 0; addr < memSize; addr++) {
+    buf += `    style(--at: ${addr}): var(--__1m${addr});\n`;
+    if (addr % CHUNK === CHUNK - 1) { ws.write(buf); buf = ''; }
+  }
+  // BIOS region (read-only constants) — always included regardless of memSize
+  if (biosBytes && biosBytes.length > 0) {
+    for (let i = 0; i < biosBytes.length; i++) {
+      if (biosBytes[i] !== 0) {
+        buf += `    style(--at: ${0xF0000 + i}): ${biosBytes[i]};\n`;
+        if (buf.length > 8192) { ws.write(buf); buf = ''; }
+      }
+    }
+  }
+  if (buf) ws.write(buf);
+  ws.write(`  else: 0);\n}\n\n`);
+}
+
+function emitMemoryBufferReadsStreaming(opts, ws) {
+  const { memSize } = opts;
+  const initMem = buildInitialMemory(opts);
+  let buf = '';
+  for (let addr = 0; addr < memSize; addr++) {
+    const init = initMem.get(addr) || 0;
+    buf += `  --__1m${addr}: var(--__2m${addr}, ${init});\n`;
+    if (addr % CHUNK === CHUNK - 1) { ws.write(buf); buf = ''; }
+  }
+  if (buf) ws.write(buf);
+}
+
+function emitMemoryWriteRulesStreaming(opts, ws) {
+  const { memSize } = opts;
+  let buf = '';
+  for (let addr = 0; addr < memSize; addr++) {
+    buf += `  --m${addr}: if(
+    style(--memAddr0: ${addr}): var(--memVal0);
+    style(--memAddr1: ${addr}): var(--memVal1);
+    style(--memAddr2: ${addr}): var(--memVal2);
+    style(--memAddr3: ${addr}): var(--memVal3);
+    style(--memAddr4: ${addr}): var(--memVal4);
+    style(--memAddr5: ${addr}): var(--memVal5);
+  else: var(--__1m${addr}));\n`;
+    if (addr % CHUNK === CHUNK - 1) { ws.write(buf); buf = ''; }
+  }
+  if (buf) ws.write(buf);
+}
+
+function emitMemoryStoreKeyframeStreaming(opts, ws) {
+  const { memSize } = opts;
+  const initMem = buildInitialMemory(opts);
+  let buf = '';
+  for (let addr = 0; addr < memSize; addr++) {
+    const init = initMem.get(addr) || 0;
+    buf += `    --__2m${addr}: var(--__0m${addr}, ${init});\n`;
+    if (addr % CHUNK === CHUNK - 1) { ws.write(buf); buf = ''; }
+  }
+  if (buf) ws.write(buf);
+}
+
+function emitMemoryExecuteKeyframeStreaming(opts, ws) {
+  const { memSize } = opts;
+  let buf = '';
+  for (let addr = 0; addr < memSize; addr++) {
+    buf += `    --__0m${addr}: var(--m${addr});\n`;
+    if (addr % CHUNK === CHUNK - 1) { ws.write(buf); buf = ''; }
+  }
+  if (buf) ws.write(buf);
 }

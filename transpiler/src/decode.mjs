@@ -136,25 +136,97 @@ export function emitDecodeFunction() {
 /**
  * Emit the computed decode properties inside .cpu.
  * These extract opcode, ModR/M fields, EA, and operands.
+ *
+ * Prefix handling:
+ *   Up to 2 prefix bytes are detected before the opcode:
+ *   - Segment overrides: 0x26 (ES), 0x2E (CS), 0x36 (SS), 0x3E (DS)
+ *   - REP prefixes: 0xF2 (REPNE), 0xF3 (REP/REPE)
+ *   The instruction queue (q0-q5) is shifted to always start at the opcode,
+ *   so existing dispatch emitters work unchanged. The IP dispatch is wrapped
+ *   in calc(... + prefixLen) by the DispatchTable to account for prefix bytes.
  */
 export function emitDecodeProperties() {
-  // The instruction bytes are fetched relative to IP in the code segment.
-  // queue[0] = opcode, queue[1] = ModR/M byte, queue[2..5] = subsequent bytes.
-  //
-  // For Phase 1 we handle the simple non-prefixed case.
-  // Prefix handling (segment overrides, REP) will be added in Phase 3.
   return `
   /* ===== INSTRUCTION FETCH & DECODE ===== */
 
-  /* Fetch instruction bytes from CS:IP */
+  /* Raw fetch: up to 8 bytes from CS:IP (enough for 2 prefix + 6-byte instruction) */
   --csBase: calc(var(--__1CS) * 16);
   --ipAddr: calc(var(--csBase) + var(--__1IP));
-  --q0: --readMem(var(--ipAddr));
-  --q1: --readMem(calc(var(--ipAddr) + 1));
-  --q2: --readMem(calc(var(--ipAddr) + 2));
-  --q3: --readMem(calc(var(--ipAddr) + 3));
-  --q4: --readMem(calc(var(--ipAddr) + 4));
-  --q5: --readMem(calc(var(--ipAddr) + 5));
+  --raw0: --readMem(var(--ipAddr));
+  --raw1: --readMem(calc(var(--ipAddr) + 1));
+  --raw2: --readMem(calc(var(--ipAddr) + 2));
+  --raw3: --readMem(calc(var(--ipAddr) + 3));
+  --raw4: --readMem(calc(var(--ipAddr) + 4));
+  --raw5: --readMem(calc(var(--ipAddr) + 5));
+  --raw6: --readMem(calc(var(--ipAddr) + 6));
+  --raw7: --readMem(calc(var(--ipAddr) + 7));
+
+  /* ===== PREFIX DETECTION ===== */
+  /* A byte is a prefix if it's one of: 0x26(ES) 0x2E(CS) 0x36(SS) 0x3E(DS) 0xF2(REPNE) 0xF3(REP)
+     We detect whether raw0 and raw1 are prefixes to compute prefixLen (0, 1, or 2). */
+  --isPrefix0: if(
+    style(--raw0: 38): 1;
+    style(--raw0: 46): 1;
+    style(--raw0: 54): 1;
+    style(--raw0: 62): 1;
+    style(--raw0: 242): 1;
+    style(--raw0: 243): 1;
+  else: 0);
+  --isPrefix1: if(
+    style(--isPrefix0: 0): 0;
+    style(--raw1: 38): 1;
+    style(--raw1: 46): 1;
+    style(--raw1: 54): 1;
+    style(--raw1: 62): 1;
+    style(--raw1: 242): 1;
+    style(--raw1: 243): 1;
+  else: 0);
+  --prefixLen: calc(var(--isPrefix0) + var(--isPrefix1));
+
+  /* Segment override: check prefix bytes for 0x26/0x2E/0x36/0x3E.
+     Value is the segment register * 16, or 0 for "no override".
+     Check raw0 first, then raw1 (later prefix wins, matching 8086 behavior). */
+  --segOverride: if(
+    style(--isPrefix1: 1) and style(--raw1: 38): calc(var(--__1ES) * 16);
+    style(--isPrefix1: 1) and style(--raw1: 46): calc(var(--__1CS) * 16);
+    style(--isPrefix1: 1) and style(--raw1: 54): calc(var(--__1SS) * 16);
+    style(--isPrefix1: 1) and style(--raw1: 62): calc(var(--__1DS) * 16);
+    style(--isPrefix0: 1) and style(--raw0: 38): calc(var(--__1ES) * 16);
+    style(--isPrefix0: 1) and style(--raw0: 46): calc(var(--__1CS) * 16);
+    style(--isPrefix0: 1) and style(--raw0: 54): calc(var(--__1SS) * 16);
+    style(--isPrefix0: 1) and style(--raw0: 62): calc(var(--__1DS) * 16);
+  else: 0);
+  /* Flag: 1 if a segment override prefix is active */
+  --hasSegOverride: if(
+    style(--isPrefix0: 1) and style(--raw0: 38): 1;
+    style(--isPrefix0: 1) and style(--raw0: 46): 1;
+    style(--isPrefix0: 1) and style(--raw0: 54): 1;
+    style(--isPrefix0: 1) and style(--raw0: 62): 1;
+    style(--isPrefix1: 1) and style(--raw1: 38): 1;
+    style(--isPrefix1: 1) and style(--raw1: 46): 1;
+    style(--isPrefix1: 1) and style(--raw1: 54): 1;
+    style(--isPrefix1: 1) and style(--raw1: 62): 1;
+  else: 0);
+
+  /* REP prefix: 0=none, 1=REP/REPE (0xF3), 2=REPNE (0xF2).
+     Check raw0 first, then raw1 (later wins). */
+  --repType: if(
+    style(--isPrefix1: 1) and style(--raw1: 243): 1;
+    style(--isPrefix1: 1) and style(--raw1: 242): 2;
+    style(--isPrefix0: 1) and style(--raw0: 243): 1;
+    style(--isPrefix0: 1) and style(--raw0: 242): 2;
+  else: 0);
+  --hasREP: min(1, var(--repType));
+
+  /* ===== PREFIX-ADJUSTED INSTRUCTION QUEUE ===== */
+  /* q0 = opcode (at IP + prefixLen), q1 = ModR/M byte, q2-q5 = subsequent bytes.
+     This shifting means all existing dispatch emitters work without modification. */
+  --q0: if(style(--prefixLen: 0): var(--raw0); style(--prefixLen: 1): var(--raw1); else: var(--raw2));
+  --q1: if(style(--prefixLen: 0): var(--raw1); style(--prefixLen: 1): var(--raw2); else: var(--raw3));
+  --q2: if(style(--prefixLen: 0): var(--raw2); style(--prefixLen: 1): var(--raw3); else: var(--raw4));
+  --q3: if(style(--prefixLen: 0): var(--raw3); style(--prefixLen: 1): var(--raw4); else: var(--raw5));
+  --q4: if(style(--prefixLen: 0): var(--raw4); style(--prefixLen: 1): var(--raw5); else: var(--raw6));
+  --q5: if(style(--prefixLen: 0): var(--raw5); style(--prefixLen: 1): var(--raw6); else: var(--raw7));
 
   /* Opcode (first non-prefix byte) */
   --opcode: var(--q0);
@@ -176,16 +248,18 @@ export function emitDecodeProperties() {
   --disp8: --u2s1(var(--q2));
   --disp16: calc(var(--q2) + var(--q3) * 256);
 
-  /* Effective address computation */
-  --eaSeg: --defaultSeg(var(--mod), var(--rm), var(--__1DS), var(--__1SS));
+  /* Effective address computation.
+     If a segment override prefix is active, use the override segment instead of default. */
+  --eaSegDefault: --defaultSeg(var(--mod), var(--rm), var(--__1DS), var(--__1SS));
+  --eaSeg: if(style(--hasSegOverride: 1): var(--segOverride); else: var(--eaSegDefault));
   --eaOff: --eaOffset(var(--mod), var(--rm),
     var(--__1BX), var(--__1SI), var(--__1DI), var(--__1BP),
     var(--disp8), var(--disp16));
   --ea: calc(var(--eaSeg) + var(--eaOff));
 
-  /* Immediate values after ModR/M (position depends on modrmExtra) */
-  /* immOff = 2 + modrmExtra (offset from opcode to first immediate byte) */
-  --immOff: calc(2 + var(--modrmExtra));
+  /* Immediate values after ModR/M (position depends on modrmExtra).
+     immOff = prefixLen + 2 + modrmExtra (offset from raw ipAddr). */
+  --immOff: calc(var(--prefixLen) + 2 + var(--modrmExtra));
   --immByte: --readMem(calc(var(--ipAddr) + var(--immOff)));
   --immWord: calc(--readMem(calc(var(--ipAddr) + var(--immOff))) + --readMem(calc(var(--ipAddr) + var(--immOff) + 1)) * 256);
 
@@ -223,5 +297,51 @@ export function emitDecodeProperties() {
   --_stackBase: calc(var(--__1SS) * 16 + var(--__1SP));
   --_stackWord0: --read2(var(--_stackBase));
   --_stackWord2: --read2(calc(var(--_stackBase) + 4));
+
+  /* Pre-computed signed operands for IMUL (avoids deep nesting in dispatch) */
+  --_sAX: calc(var(--__1AX) - --bit(var(--__1AX), 15) * 65536);
+  --_sRM16: calc(var(--rmVal16) - --bit(var(--rmVal16), 15) * 65536);
+  --_imulProd16: calc(var(--_sAX) * var(--_sRM16));
+  --_sAL: calc(var(--AL) - --bit(var(--AL), 7) * 256);
+  --_sRM8: calc(var(--rmVal8) - --bit(var(--rmVal8), 7) * 256);
+  --_imulProd8: calc(var(--_sAL) * var(--_sRM8));
+
+  /* REP execution state:
+     --_repActive: 1 when hasREP=1 AND CX>0 (should execute string op this tick)
+     --_repContinue: 1 when hasREP=1 AND CX>1 (should re-execute next tick)
+     When hasREP=1 and CX=0, the string op is skipped entirely. */
+  --_repActive: calc(var(--hasREP) * min(1, var(--__1CX)));
+  --_repContinue: calc(var(--hasREP) * min(1, max(0, calc(var(--__1CX) - 1))));
+
+  /* Pre-computed ZF for REPE/REPNE with comparison string ops.
+     This is needed because IP and flags are computed in parallel — IP can't read
+     the new ZF from the flags dispatch. Instead, we compute whether the comparison
+     result is zero (operands equal) directly from the source operands.
+     CMPSB (0xA6=166): mem[DS:SI] - mem[ES:DI]
+     CMPSW (0xA7=167): word[DS:SI] - word[ES:DI]
+     SCASB (0xAE=174): AL - mem[ES:DI]
+     SCASW (0xAF=175): AX - word[ES:DI]
+     --_repZF = 1 when the comparison result would be zero (ZF=1). */
+  --_cmpDiff: if(
+    style(--opcode: 166): calc(--readMem(calc(var(--_strSrcSeg) + var(--__1SI))) - --readMem(calc(var(--__1ES) * 16 + var(--__1DI))));
+    style(--opcode: 167): calc(--read2(calc(var(--_strSrcSeg) + var(--__1SI))) - --read2(calc(var(--__1ES) * 16 + var(--__1DI))));
+    style(--opcode: 174): calc(var(--AL) - --readMem(calc(var(--__1ES) * 16 + var(--__1DI))));
+    style(--opcode: 175): calc(var(--__1AX) - --read2(calc(var(--__1ES) * 16 + var(--__1DI))));
+  else: 1);
+  --_repZF: if(style(--_cmpDiff: 0): 1; else: 0);
+
+  /* Source segment for string operations (DS:SI).
+     Segment override affects the source segment but NOT the destination (ES:DI). */
+  --_strSrcSeg: if(style(--hasSegOverride: 1): var(--segOverride); else: calc(var(--__1DS) * 16));
+
+  /* Pre-computed CL shift count for D2/D3 (shift by CL) */
+  --_clMasked: --lowerBytes(var(--CL), 5);
+  --_pow2CL: --pow2(var(--_clMasked));
+  /* pow2(width - CL) for rotates: pow2(16 - cl) and pow2(8 - cl) */
+  --_pow2inv16: --pow2(calc(16 - var(--_clMasked)));
+  --_pow2inv8: --pow2(calc(8 - var(--_clMasked)));
+  /* CF bit index for SHL: bit (width - CL) of original value */
+  --_shlCFidx16: max(0, calc(16 - var(--_clMasked)));
+  --_shlCFidx8: max(0, calc(8 - var(--_clMasked)));
 `;
 }

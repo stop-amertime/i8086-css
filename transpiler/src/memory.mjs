@@ -16,69 +16,27 @@ const IVT_HANDLERS = {
 
 /**
  * Emit the --readMem @function.
- * Writable memory bytes are read from var(--mN), embedded/BIOS bytes are constants.
+ * All memory bytes are writable CSS properties, read from var(--__1mN).
  */
 export function emitReadMem(opts) {
-  const { memSize, programBytes, biosBytes, embeddedData, programOffset } = opts;
-
-  // Build address → value map for constant (embedded) data
-  const constants = new Map();
-
-  // Program binary at programOffset
-  for (let i = 0; i < programBytes.length; i++) {
-    constants.set(programOffset + i, programBytes[i]);
-  }
-
-  // BIOS at F000:0000 (linear 0xF0000)
-  for (let i = 0; i < biosBytes.length; i++) {
-    constants.set(BIOS_LINEAR + i, biosBytes[i]);
-  }
-
-  // Extra embedded data
-  for (const { addr, bytes } of embeddedData) {
-    for (let i = 0; i < bytes.length; i++) {
-      constants.set(addr + i, bytes[i]);
-    }
-  }
-
-  // IVT: addresses 0x0000-0x03FF
-  // Each entry is 4 bytes: offset (word), segment (word)
-  const ivt = new Uint8Array(0x400);
-  for (const [intNum, handlerOff] of Object.entries(IVT_HANDLERS)) {
-    const addr = Number(intNum) * 4;
-    ivt[addr] = handlerOff & 0xFF;
-    ivt[addr + 1] = (handlerOff >> 8) & 0xFF;
-    ivt[addr + 2] = BIOS_SEG & 0xFF;
-    ivt[addr + 3] = (BIOS_SEG >> 8) & 0xFF;
-  }
-  for (let i = 0; i < 0x400; i++) {
-    if (ivt[i] !== 0) constants.set(i, ivt[i]);
-  }
-
-  // Collect all addresses that appear in readMem
-  // Writable memory: 0..memSize-1 (read from --mN variables)
-  // Constants: everything in the constants map
-  // Addresses that are both writable AND have a constant initial value
-  // use the --mN variable (initialized to the constant).
+  const { memSize, biosBytes } = opts;
 
   const lines = [];
   lines.push(`@function --readMem(--at <integer>) returns <integer> {`);
   lines.push(`  result: if(`);
 
-  // Writable memory region: addresses 0..memSize-1
-  // Read from --__1mN (previous tick's value) not --mN (current tick's write rule)
-  // to avoid circular dependency: readMem → mN → memAddr → opcode → q0 → readMem
+  // Writable memory region: read from --__1mN (previous tick's value)
   for (let addr = 0; addr < memSize; addr++) {
     lines.push(`    style(--at: ${addr}): var(--__1m${addr});`);
   }
 
-  // Constant regions (program, BIOS, embedded data) — only addresses outside writable range
-  const sortedConst = [...constants.entries()]
-    .filter(([addr]) => addr >= memSize)
-    .sort(([a], [b]) => a - b);
-
-  for (const [addr, val] of sortedConst) {
-    lines.push(`    style(--at: ${addr}): ${val};`);
+  // BIOS region (read-only constants) — always included regardless of memSize
+  if (biosBytes && biosBytes.length > 0) {
+    for (let i = 0; i < biosBytes.length; i++) {
+      if (biosBytes[i] !== 0) {
+        lines.push(`    style(--at: ${BIOS_LINEAR + i}): ${biosBytes[i]};`);
+      }
+    }
   }
 
   lines.push(`  else: 0);`);
@@ -112,6 +70,24 @@ export function buildInitialMemory(opts) {
     const addr = programOffset + i;
     if (addr < memSize && programBytes[i] !== 0) {
       initMem.set(addr, programBytes[i]);
+    }
+  }
+
+  // BIOS at F000:0000 (linear 0xF0000)
+  for (let i = 0; i < biosBytes.length; i++) {
+    const addr = BIOS_LINEAR + i;
+    if (addr < memSize && biosBytes[i] !== 0) {
+      initMem.set(addr, biosBytes[i]);
+    }
+  }
+
+  // Extra embedded data
+  for (const { addr: base, bytes } of (embeddedData || [])) {
+    for (let i = 0; i < bytes.length; i++) {
+      const addr = base + i;
+      if (addr < memSize && bytes[i] !== 0) {
+        initMem.set(addr, bytes[i]);
+      }
     }
   }
 

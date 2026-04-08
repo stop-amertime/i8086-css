@@ -64,12 +64,8 @@ export function emitGroup_F7(dispatch) {
   // NOT (reg=2): r/m = ~r/m, no flag change
   // TEST (reg=0): r/m & imm16, flags only
 
-  // IMUL helpers: signed operands
-  // signed_ax = AX - bit(AX,15) * 65536
-  // signed_rm = rmVal16 - bit(rmVal16,15) * 65536
-  const sAX16 = `calc(var(--__1AX) - --bit(var(--__1AX), 15) * 65536)`;
-  const sRM16 = `calc(var(--rmVal16) - --bit(var(--rmVal16), 15) * 65536)`;
-  const imulProd16 = `calc(${sAX16} * ${sRM16})`;
+  // IMUL uses pre-computed decode properties: --_imulProd16, --_sAX, --_sRM16
+  const imulProd16 = `var(--_imulProd16)`;
 
   // AX: DIV writes quotient, MUL writes low product, IMUL writes low product, NEG/NOT may write if rm=0
   dispatch.addEntry('AX', 0xF7,
@@ -87,7 +83,7 @@ export function emitGroup_F7(dispatch) {
     `if(` +
     `style(--reg: 6): mod(calc(var(--__1DX) * 65536 + var(--__1AX)), max(1, var(--rmVal16))); ` +
     `style(--reg: 4): --lowerBytes(--rightShift(calc(var(--__1AX) * var(--rmVal16)), 16), 16); ` +
-    `style(--reg: 5): --lowerBytes(round(down, ${imulProd16} / 65536), 16); ` +
+    `style(--reg: 5): --lowerBytes(--rightShift(${imulProd16}, 16), 16); ` +
     `style(--reg: 3) and style(--mod: 3) and style(--rm: 2): --lowerBytes(calc(0 - var(--rmVal16) + 65536), 16); ` +
     `style(--reg: 2) and style(--mod: 3) and style(--rm: 2): --not(var(--rmVal16)); ` +
     `else: var(--__1DX))`,
@@ -143,10 +139,8 @@ export function emitGroup_F7(dispatch) {
  * reg=6: DIV r/m8 (AL = AX / r/m8, AH = AX % r/m8)
  */
 export function emitGroup_F6(dispatch) {
-  // IMUL byte helpers: signed operands
-  const sAL = `calc(var(--AL) - --bit(var(--AL), 7) * 256)`;
-  const sRM8 = `calc(var(--rmVal8) - --bit(var(--rmVal8), 7) * 256)`;
-  const imulProd8 = `calc(${sAL} * ${sRM8})`;
+  // IMUL byte uses pre-computed decode property: --_imulProd8
+  const imulProd8 = `var(--_imulProd8)`;
 
   // AX gets written for MUL, IMUL, and DIV
   dispatch.addEntry('AX', 0xF6,

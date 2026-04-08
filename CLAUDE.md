@@ -4,6 +4,8 @@ A complete Intel 8086 PC implemented in pure CSS. The CSS runs in Chrome —
 no JavaScript, no WebAssembly. [Calcite](../calcite) is a JIT compiler that
 makes it fast enough to be usable.
 
+IMPORTANT: WHEN DEBUGGING, DO NOT RUSH TO CONCLUSIONS. Take a measured approach, gather information, and don't apply speculative fixes. Your biggest failure mode in debugging is jumping to conclusions and making assumptions. Prefer to create good debugging infrastructure so you can inspect what is happening clearly, rather than chasing individual bugs around. 
+
 ## Current status
 
 **Architecture pivot in progress.** We are replacing the v1 JSON instruction

@@ -110,11 +110,19 @@ console.log(`  bios_init offset: 0x${biosInitOffset.toString(16)}`);
 console.log('Building FAT12 disk image...');
 const diskImgPath = resolve(projectRoot, 'dos', 'disk.img');
 
-// Write a CONFIG.SYS that runs the program
-const configContent = `SHELL=\\${programName83}\n`;
+// Write a CONFIG.SYS that runs the program (or COMMAND.COM for shell mode)
+const COMMAND_COM = resolve(projectRoot, 'dos', 'bin', 'command.com');
+const isShellMode = programName83 === 'SHELL.COM';
+const shellProgram = isShellMode ? 'COMMAND.COM' : programName83;
+const configContent = `SHELL=\\${shellProgram}\n`;
 writeFileSync(CONFIG_SYS, configContent);
 
-let mkfatCmd = `node "${MKFAT12}" -o "${diskImgPath}" --file KERNEL.SYS "${KERNEL_SYS}" --file CONFIG.SYS "${CONFIG_SYS}" --file ${programName83} "${resolve(inputFile)}"`;
+let mkfatCmd = `node "${MKFAT12}" -o "${diskImgPath}" --file KERNEL.SYS "${KERNEL_SYS}" --file CONFIG.SYS "${CONFIG_SYS}"`;
+if (isShellMode) {
+  mkfatCmd += ` --file COMMAND.COM "${COMMAND_COM}"`;
+} else {
+  mkfatCmd += ` --file ${programName83} "${resolve(inputFile)}"`;
+}
 for (const df of dataFiles) {
   const name83 = df.name.toUpperCase();
   mkfatCmd += ` --file ${name83} "${resolve(df.path)}"`;

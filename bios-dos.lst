@@ -818,220 +818,212 @@
    818                                      ; --- Initialize BDA ---
    819 0000042A B84000                      mov ax, BDA_SEG
    820 0000042D 8ED8                        mov ds, ax
-   821 0000042F C70610002100                mov word [0x0010], 0x0021   ; equipment flags: floppy + 80x25 color
-   822 00000435 C70613008002                mov word [0x0013], 640      ; memory size in KB
-   823 0000043B C7061A001E00                mov word [0x001A], 0x001E   ; keyboard buffer head offset
-   824 00000441 C7061C001E00                mov word [0x001C], 0x001E   ; keyboard buffer tail offset (empty)
-   825 00000447 C606490003                  mov byte [0x0049], 0x03     ; video mode = 3 (80x25 text)
-   826 0000044C C7064A005000                mov word [0x004A], 80       ; columns per row
-   827 00000452 C7064C000010                mov word [0x004C], 0x1000   ; regen buffer size (4096 for 80x25)
-   828 00000458 C7064E000000                mov word [0x004E], 0x0000   ; current video page offset
-   829 0000045E C606500000                  mov byte [0x0050], 0        ; cursor col page 0
-   830 00000463 C606510000                  mov byte [0x0051], 0        ; cursor row page 0
-   831 00000468 C606600007                  mov byte [0x0060], 0x07     ; cursor end scan line
-   832 0000046D C606610006                  mov byte [0x0061], 0x06     ; cursor start scan line
-   833 00000472 C606620000                  mov byte [0x0062], 0x00     ; active display page
-   834 00000477 C7066300D403                mov word [0x0063], 0x03D4   ; CRT controller base port (color)
-   835 0000047D C606650029                  mov byte [0x0065], 0x29     ; CRT mode control register
-   836 00000482 C70680001E00                mov word [0x0080], 0x001E   ; keyboard buffer start offset
-   837 00000488 C70682003E00                mov word [0x0082], 0x003E   ; keyboard buffer end offset
-   838 0000048E C606840018                  mov byte [0x0084], 24       ; screen rows - 1
-   839 00000493 C70685001000                mov word [0x0085], 16       ; character matrix height (points)
-   840                                  
-   841                                      ; --- BIOS splash screen ---
-   842                                      ; Write directly to VGA memory at B800:0000
-   843 00000499 B800B8                      mov ax, VGA_SEG
-   844 0000049C 8ED8                        mov ds, ax
-   845                                      ; First clear screen
-   846 0000049E 31FF                        xor di, di
-   847 000004A0 B9D007                      mov cx, 2000
-   848 000004A3 B82007                      mov ax, 0x0720         ; space + gray on black
-   849                                  .splash_clr:
-   850 000004A6 8905                        mov [di], ax
-   851 000004A8 83C702                      add di, 2
-   852 000004AB 49                          dec cx
-   853 000004AC 75F8                        jnz .splash_clr
-   854                                  
-   855                                      ; Write "Gossamer BIOS v1.0" at row 1, col 30 (centered-ish)
-   856                                      ; Offset = (1*80+30)*2 = 220
-   857 000004AE BFDC00                      mov di, 220
-   858 000004B1 B40F                        mov ah, 0x0F           ; white on black attribute
-   859 000004B3 B047                        mov al, 'G'
-   860 000004B5 8905                        mov [di], ax
-   861 000004B7 83C702                      add di, 2
-   862 000004BA B06F                        mov al, 'o'
-   863 000004BC 8905                        mov [di], ax
-   864 000004BE 83C702                      add di, 2
-   865 000004C1 B073                        mov al, 's'
-   866 000004C3 8905                        mov [di], ax
-   867 000004C5 83C702                      add di, 2
-   868 000004C8 B073                        mov al, 's'
-   869 000004CA 8905                        mov [di], ax
-   870 000004CC 83C702                      add di, 2
-   871 000004CF B061                        mov al, 'a'
-   872 000004D1 8905                        mov [di], ax
-   873 000004D3 83C702                      add di, 2
-   874 000004D6 B06D                        mov al, 'm'
-   875 000004D8 8905                        mov [di], ax
-   876 000004DA 83C702                      add di, 2
-   877 000004DD B065                        mov al, 'e'
-   878 000004DF 8905                        mov [di], ax
-   879 000004E1 83C702                      add di, 2
-   880 000004E4 B072                        mov al, 'r'
-   881 000004E6 8905                        mov [di], ax
-   882 000004E8 83C702                      add di, 2
-   883 000004EB B020                        mov al, ' '
-   884 000004ED 8905                        mov [di], ax
-   885 000004EF 83C702                      add di, 2
-   886 000004F2 B042                        mov al, 'B'
-   887 000004F4 8905                        mov [di], ax
-   888 000004F6 83C702                      add di, 2
-   889 000004F9 B049                        mov al, 'I'
-   890 000004FB 8905                        mov [di], ax
-   891 000004FD 83C702                      add di, 2
-   892 00000500 B04F                        mov al, 'O'
-   893 00000502 8905                        mov [di], ax
-   894 00000504 83C702                      add di, 2
-   895 00000507 B053                        mov al, 'S'
-   896 00000509 8905                        mov [di], ax
-   897 0000050B 83C702                      add di, 2
-   898 0000050E B020                        mov al, ' '
-   899 00000510 8905                        mov [di], ax
-   900 00000512 83C702                      add di, 2
-   901 00000515 B076                        mov al, 'v'
-   902 00000517 8905                        mov [di], ax
-   903 00000519 83C702                      add di, 2
-   904 0000051C B031                        mov al, '1'
-   905 0000051E 8905                        mov [di], ax
-   906 00000520 83C702                      add di, 2
-   907 00000523 B02E                        mov al, '.'
-   908 00000525 8905                        mov [di], ax
-   909 00000527 83C702                      add di, 2
-   910 0000052A B030                        mov al, '0'
-   911 0000052C 8905                        mov [di], ax
-   912                                  
-   913                                      ; "640K conventional memory" at row 3, col 28
-   914 0000052E BF1802                      mov di, 536            ; (3*80+28)*2
-   915 00000531 B036                        mov al, '6'
-   916 00000533 8905                        mov [di], ax
-   917 00000535 83C702                      add di, 2
-   918 00000538 B034                        mov al, '4'
-   919 0000053A 8905                        mov [di], ax
-   920 0000053C 83C702                      add di, 2
-   921 0000053F B030                        mov al, '0'
-   922 00000541 8905                        mov [di], ax
-   923 00000543 83C702                      add di, 2
-   924 00000546 B04B                        mov al, 'K'
-   925 00000548 8905                        mov [di], ax
-   926 0000054A 83C702                      add di, 2
-   927 0000054D B020                        mov al, ' '
-   928 0000054F 8905                        mov [di], ax
-   929 00000551 83C702                      add di, 2
-   930 00000554 B063                        mov al, 'c'
-   931 00000556 8905                        mov [di], ax
-   932 00000558 83C702                      add di, 2
-   933 0000055B B06F                        mov al, 'o'
-   934 0000055D 8905                        mov [di], ax
-   935 0000055F 83C702                      add di, 2
-   936 00000562 B06E                        mov al, 'n'
-   937 00000564 8905                        mov [di], ax
-   938 00000566 83C702                      add di, 2
-   939 00000569 B076                        mov al, 'v'
-   940 0000056B 8905                        mov [di], ax
-   941 0000056D 83C702                      add di, 2
-   942 00000570 B065                        mov al, 'e'
-   943 00000572 8905                        mov [di], ax
-   944 00000574 83C702                      add di, 2
-   945 00000577 B06E                        mov al, 'n'
-   946 00000579 8905                        mov [di], ax
-   947 0000057B 83C702                      add di, 2
-   948 0000057E B074                        mov al, 't'
-   949 00000580 8905                        mov [di], ax
-   950 00000582 83C702                      add di, 2
-   951 00000585 B069                        mov al, 'i'
-   952 00000587 8905                        mov [di], ax
-   953 00000589 83C702                      add di, 2
-   954 0000058C B06F                        mov al, 'o'
-   955 0000058E 8905                        mov [di], ax
-   956 00000590 83C702                      add di, 2
-   957 00000593 B06E                        mov al, 'n'
-   958 00000595 8905                        mov [di], ax
-   959 00000597 83C702                      add di, 2
-   960 0000059A B061                        mov al, 'a'
-   961 0000059C 8905                        mov [di], ax
-   962 0000059E 83C702                      add di, 2
-   963 000005A1 B06C                        mov al, 'l'
-   964 000005A3 8905                        mov [di], ax
-   965 000005A5 83C702                      add di, 2
-   966 000005A8 B020                        mov al, ' '
-   967 000005AA 8905                        mov [di], ax
-   968 000005AC 83C702                      add di, 2
-   969 000005AF B06D                        mov al, 'm'
-   970 000005B1 8905                        mov [di], ax
-   971 000005B3 83C702                      add di, 2
-   972 000005B6 B065                        mov al, 'e'
-   973 000005B8 8905                        mov [di], ax
-   974 000005BA 83C702                      add di, 2
-   975 000005BD B06D                        mov al, 'm'
-   976 000005BF 8905                        mov [di], ax
-   977 000005C1 83C702                      add di, 2
-   978 000005C4 B06F                        mov al, 'o'
-   979 000005C6 8905                        mov [di], ax
-   980 000005C8 83C702                      add di, 2
-   981 000005CB B072                        mov al, 'r'
-   982 000005CD 8905                        mov [di], ax
-   983 000005CF 83C702                      add di, 2
-   984 000005D2 B079                        mov al, 'y'
-   985 000005D4 8905                        mov [di], ax
-   986                                  
-   987                                      ; Update cursor position in BDA to row 5 (below splash)
-   988 000005D6 B84000                      mov ax, BDA_SEG
-   989 000005D9 8ED8                        mov ds, ax
-   990 000005DB C606500000                  mov byte [0x0050], 0   ; col
-   991 000005E0 C606510005                  mov byte [0x0051], 5   ; row
-   992                                  
-   993                                      ; --- Boot status messages via INT 10h ---
-   994 000005E5 FB                          sti                        ; enable interrupts for INT calls
-   995 000005E6 BE[1606]                    mov si, msg_ivt
-   996 000005E9 E81100                      call bios_print
-   997 000005EC BE[1F06]                    mov si, msg_boot
-   998 000005EF E80B00                      call bios_print
+   821 0000042F C606490003                  mov byte [0x0049], 0x03     ; video mode = 3 (80x25 text)
+   822 00000434 C7064A005000                mov word [0x004A], 80       ; columns per row
+   823 0000043A C606500000                  mov byte [0x0050], 0        ; cursor col
+   824 0000043F C606510000                  mov byte [0x0051], 0        ; cursor row
+   825 00000444 C70613008002                mov word [0x0013], 640      ; memory size in KB (also at 40:13)
+   826                                      ; --- Additional BDA fields the kernel needs ---
+   827 0000044A C70610002100                mov word [0x0010], 0x0021   ; equipment flags: floppy + 80x25 color
+   828 00000450 C7064C000010                mov word [0x004C], 0x1000   ; regen buffer size (4096 for 80x25)
+   829 00000456 C7066300D403                mov word [0x0063], 0x03D4   ; CRT controller base port (color)
+   830 0000045C C606840018                  mov byte [0x0084], 24       ; screen rows - 1
+   831 00000461 C70685001000                mov word [0x0085], 16       ; character matrix height (points)
+   832                                  
+   833                                      ; --- BIOS splash screen ---
+   834                                      ; Write directly to VGA memory at B800:0000
+   835 00000467 B800B8                      mov ax, VGA_SEG
+   836 0000046A 8ED8                        mov ds, ax
+   837                                      ; First clear screen
+   838 0000046C 31FF                        xor di, di
+   839 0000046E B9D007                      mov cx, 2000
+   840 00000471 B82007                      mov ax, 0x0720         ; space + gray on black
+   841                                  .splash_clr:
+   842 00000474 8905                        mov [di], ax
+   843 00000476 83C702                      add di, 2
+   844 00000479 49                          dec cx
+   845 0000047A 75F8                        jnz .splash_clr
+   846                                  
+   847                                      ; Write "Gossamer BIOS v1.0" at row 1, col 30 (centered-ish)
+   848                                      ; Offset = (1*80+30)*2 = 220
+   849 0000047C BFDC00                      mov di, 220
+   850 0000047F B40F                        mov ah, 0x0F           ; white on black attribute
+   851 00000481 B047                        mov al, 'G'
+   852 00000483 8905                        mov [di], ax
+   853 00000485 83C702                      add di, 2
+   854 00000488 B06F                        mov al, 'o'
+   855 0000048A 8905                        mov [di], ax
+   856 0000048C 83C702                      add di, 2
+   857 0000048F B073                        mov al, 's'
+   858 00000491 8905                        mov [di], ax
+   859 00000493 83C702                      add di, 2
+   860 00000496 B073                        mov al, 's'
+   861 00000498 8905                        mov [di], ax
+   862 0000049A 83C702                      add di, 2
+   863 0000049D B061                        mov al, 'a'
+   864 0000049F 8905                        mov [di], ax
+   865 000004A1 83C702                      add di, 2
+   866 000004A4 B06D                        mov al, 'm'
+   867 000004A6 8905                        mov [di], ax
+   868 000004A8 83C702                      add di, 2
+   869 000004AB B065                        mov al, 'e'
+   870 000004AD 8905                        mov [di], ax
+   871 000004AF 83C702                      add di, 2
+   872 000004B2 B072                        mov al, 'r'
+   873 000004B4 8905                        mov [di], ax
+   874 000004B6 83C702                      add di, 2
+   875 000004B9 B020                        mov al, ' '
+   876 000004BB 8905                        mov [di], ax
+   877 000004BD 83C702                      add di, 2
+   878 000004C0 B042                        mov al, 'B'
+   879 000004C2 8905                        mov [di], ax
+   880 000004C4 83C702                      add di, 2
+   881 000004C7 B049                        mov al, 'I'
+   882 000004C9 8905                        mov [di], ax
+   883 000004CB 83C702                      add di, 2
+   884 000004CE B04F                        mov al, 'O'
+   885 000004D0 8905                        mov [di], ax
+   886 000004D2 83C702                      add di, 2
+   887 000004D5 B053                        mov al, 'S'
+   888 000004D7 8905                        mov [di], ax
+   889 000004D9 83C702                      add di, 2
+   890 000004DC B020                        mov al, ' '
+   891 000004DE 8905                        mov [di], ax
+   892 000004E0 83C702                      add di, 2
+   893 000004E3 B076                        mov al, 'v'
+   894 000004E5 8905                        mov [di], ax
+   895 000004E7 83C702                      add di, 2
+   896 000004EA B031                        mov al, '1'
+   897 000004EC 8905                        mov [di], ax
+   898 000004EE 83C702                      add di, 2
+   899 000004F1 B02E                        mov al, '.'
+   900 000004F3 8905                        mov [di], ax
+   901 000004F5 83C702                      add di, 2
+   902 000004F8 B030                        mov al, '0'
+   903 000004FA 8905                        mov [di], ax
+   904                                  
+   905                                      ; "640K conventional memory" at row 3, col 28
+   906 000004FC BF1802                      mov di, 536            ; (3*80+28)*2
+   907 000004FF B036                        mov al, '6'
+   908 00000501 8905                        mov [di], ax
+   909 00000503 83C702                      add di, 2
+   910 00000506 B034                        mov al, '4'
+   911 00000508 8905                        mov [di], ax
+   912 0000050A 83C702                      add di, 2
+   913 0000050D B030                        mov al, '0'
+   914 0000050F 8905                        mov [di], ax
+   915 00000511 83C702                      add di, 2
+   916 00000514 B04B                        mov al, 'K'
+   917 00000516 8905                        mov [di], ax
+   918 00000518 83C702                      add di, 2
+   919 0000051B B020                        mov al, ' '
+   920 0000051D 8905                        mov [di], ax
+   921 0000051F 83C702                      add di, 2
+   922 00000522 B063                        mov al, 'c'
+   923 00000524 8905                        mov [di], ax
+   924 00000526 83C702                      add di, 2
+   925 00000529 B06F                        mov al, 'o'
+   926 0000052B 8905                        mov [di], ax
+   927 0000052D 83C702                      add di, 2
+   928 00000530 B06E                        mov al, 'n'
+   929 00000532 8905                        mov [di], ax
+   930 00000534 83C702                      add di, 2
+   931 00000537 B076                        mov al, 'v'
+   932 00000539 8905                        mov [di], ax
+   933 0000053B 83C702                      add di, 2
+   934 0000053E B065                        mov al, 'e'
+   935 00000540 8905                        mov [di], ax
+   936 00000542 83C702                      add di, 2
+   937 00000545 B06E                        mov al, 'n'
+   938 00000547 8905                        mov [di], ax
+   939 00000549 83C702                      add di, 2
+   940 0000054C B074                        mov al, 't'
+   941 0000054E 8905                        mov [di], ax
+   942 00000550 83C702                      add di, 2
+   943 00000553 B069                        mov al, 'i'
+   944 00000555 8905                        mov [di], ax
+   945 00000557 83C702                      add di, 2
+   946 0000055A B06F                        mov al, 'o'
+   947 0000055C 8905                        mov [di], ax
+   948 0000055E 83C702                      add di, 2
+   949 00000561 B06E                        mov al, 'n'
+   950 00000563 8905                        mov [di], ax
+   951 00000565 83C702                      add di, 2
+   952 00000568 B061                        mov al, 'a'
+   953 0000056A 8905                        mov [di], ax
+   954 0000056C 83C702                      add di, 2
+   955 0000056F B06C                        mov al, 'l'
+   956 00000571 8905                        mov [di], ax
+   957 00000573 83C702                      add di, 2
+   958 00000576 B020                        mov al, ' '
+   959 00000578 8905                        mov [di], ax
+   960 0000057A 83C702                      add di, 2
+   961 0000057D B06D                        mov al, 'm'
+   962 0000057F 8905                        mov [di], ax
+   963 00000581 83C702                      add di, 2
+   964 00000584 B065                        mov al, 'e'
+   965 00000586 8905                        mov [di], ax
+   966 00000588 83C702                      add di, 2
+   967 0000058B B06D                        mov al, 'm'
+   968 0000058D 8905                        mov [di], ax
+   969 0000058F 83C702                      add di, 2
+   970 00000592 B06F                        mov al, 'o'
+   971 00000594 8905                        mov [di], ax
+   972 00000596 83C702                      add di, 2
+   973 00000599 B072                        mov al, 'r'
+   974 0000059B 8905                        mov [di], ax
+   975 0000059D 83C702                      add di, 2
+   976 000005A0 B079                        mov al, 'y'
+   977 000005A2 8905                        mov [di], ax
+   978                                  
+   979                                      ; Update cursor position in BDA to row 5 (below splash)
+   980 000005A4 B84000                      mov ax, BDA_SEG
+   981 000005A7 8ED8                        mov ds, ax
+   982 000005A9 C606500000                  mov byte [0x0050], 0   ; col
+   983 000005AE C606510005                  mov byte [0x0051], 5   ; row
+   984                                  
+   985                                      ; --- Boot status messages via INT 10h ---
+   986 000005B3 FB                          sti                        ; enable interrupts for INT calls
+   987 000005B4 BE[E405]                    mov si, msg_ivt
+   988 000005B7 E81100                      call bios_print
+   989 000005BA BE[ED05]                    mov si, msg_boot
+   990 000005BD E80B00                      call bios_print
+   991                                  
+   992                                      ; --- Jump to DOS kernel ---
+   993                                      ; KERNEL.SYS is pre-loaded at 0060:0000 by the transpiler.
+   994                                      ; Kernel expects BL = boot drive (0x00 = A:)
+   995 000005C0 31C0                        xor ax, ax
+   996 000005C2 8ED8                        mov ds, ax             ; DS = 0 (kernel expects this)
+   997 000005C4 B300                        mov bl, 0x00
+   998 000005C6 EA00006000                  jmp 0x0060:0x0000
    999                                  
-  1000                                      ; --- Jump to DOS kernel ---
-  1001                                      ; KERNEL.SYS is pre-loaded at 0060:0000 by the transpiler.
-  1002                                      ; Kernel expects BL = boot drive (0x00 = A:)
-  1003 000005F2 31C0                        xor ax, ax
-  1004 000005F4 8ED8                        mov ds, ax             ; DS = 0 (kernel expects this)
-  1005 000005F6 B300                        mov bl, 0x00
-  1006 000005F8 EA00006000                  jmp 0x0060:0x0000
-  1007                                  
-  1008                                  ; --- BIOS print: print null-terminated string at CS:SI via INT 10h ---
-  1009                                  bios_print:
-  1010 000005FD 50                          push ax
-  1011 000005FE 53                          push bx
-  1012                                  .bp_loop:
-  1013                                      ; Read byte from CS:SI (BIOS ROM segment)
-  1014                                      ; We need CS: prefix but can't use segment overrides easily.
-  1015                                      ; Instead, set DS=CS temporarily.
-  1016 000005FF 1E                          push ds
-  1017 00000600 0E                          push cs
-  1018 00000601 1F                          pop ds
-  1019 00000602 8A04                        mov al, [si]
-  1020 00000604 1F                          pop ds
-  1021 00000605 84C0                        test al, al
-  1022 00000607 740A                        jz .bp_done
-  1023 00000609 B40E                        mov ah, 0x0E
-  1024 0000060B BB0700                      mov bx, 0x0007         ; page 0, light gray
-  1025 0000060E CD10                        int 0x10
-  1026 00000610 46                          inc si
-  1027 00000611 EBEC                        jmp short .bp_loop
-  1028                                  .bp_done:
-  1029 00000613 5B                          pop bx
-  1030 00000614 58                          pop ax
-  1031 00000615 C3                          ret
-  1032                                  
-  1033 00000616 495654204F4B0D0A00      msg_ivt:    db 'IVT OK', 13, 10, 0
-  1034 0000061F 426F6F74696E672044-     msg_boot:   db 'Booting DOS...', 13, 10, 0
-  1034 00000628 4F532E2E2E0D0A00   
-  1035                                  
-  1036                                  bios_end:
+  1000                                  ; --- BIOS print: print null-terminated string at CS:SI via INT 10h ---
+  1001                                  bios_print:
+  1002 000005CB 50                          push ax
+  1003 000005CC 53                          push bx
+  1004                                  .bp_loop:
+  1005                                      ; Read byte from CS:SI (BIOS ROM segment)
+  1006                                      ; We need CS: prefix but can't use segment overrides easily.
+  1007                                      ; Instead, set DS=CS temporarily.
+  1008 000005CD 1E                          push ds
+  1009 000005CE 0E                          push cs
+  1010 000005CF 1F                          pop ds
+  1011 000005D0 8A04                        mov al, [si]
+  1012 000005D2 1F                          pop ds
+  1013 000005D3 84C0                        test al, al
+  1014 000005D5 740A                        jz .bp_done
+  1015 000005D7 B40E                        mov ah, 0x0E
+  1016 000005D9 BB0700                      mov bx, 0x0007         ; page 0, light gray
+  1017 000005DC CD10                        int 0x10
+  1018 000005DE 46                          inc si
+  1019 000005DF EBEC                        jmp short .bp_loop
+  1020                                  .bp_done:
+  1021 000005E1 5B                          pop bx
+  1022 000005E2 58                          pop ax
+  1023 000005E3 C3                          ret
+  1024                                  
+  1025 000005E4 495654204F4B0D0A00      msg_ivt:    db 'IVT OK', 13, 10, 0
+  1026 000005ED 426F6F74696E672044-     msg_boot:   db 'Booting DOS...', 13, 10, 0
+  1026 000005F6 4F532E2E2E0D0A00   
+  1027                                  
+  1028                                  bios_end:

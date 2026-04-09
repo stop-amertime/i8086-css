@@ -818,23 +818,15 @@ bios_init:
     ; --- Initialize BDA ---
     mov ax, BDA_SEG
     mov ds, ax
-    mov word [0x0010], 0x0021   ; equipment flags: floppy + 80x25 color
-    mov word [0x0013], 640      ; memory size in KB
-    mov word [0x001A], 0x001E   ; keyboard buffer head offset
-    mov word [0x001C], 0x001E   ; keyboard buffer tail offset (empty)
     mov byte [0x0049], 0x03     ; video mode = 3 (80x25 text)
     mov word [0x004A], 80       ; columns per row
+    mov byte [0x0050], 0        ; cursor col
+    mov byte [0x0051], 0        ; cursor row
+    mov word [0x0013], 640      ; memory size in KB (also at 40:13)
+    ; --- Additional BDA fields the kernel needs ---
+    mov word [0x0010], 0x0021   ; equipment flags: floppy + 80x25 color
     mov word [0x004C], 0x1000   ; regen buffer size (4096 for 80x25)
-    mov word [0x004E], 0x0000   ; current video page offset
-    mov byte [0x0050], 0        ; cursor col page 0
-    mov byte [0x0051], 0        ; cursor row page 0
-    mov byte [0x0060], 0x07     ; cursor end scan line
-    mov byte [0x0061], 0x06     ; cursor start scan line
-    mov byte [0x0062], 0x00     ; active display page
     mov word [0x0063], 0x03D4   ; CRT controller base port (color)
-    mov byte [0x0065], 0x29     ; CRT mode control register
-    mov word [0x0080], 0x001E   ; keyboard buffer start offset
-    mov word [0x0082], 0x003E   ; keyboard buffer end offset
     mov byte [0x0084], 24       ; screen rows - 1
     mov word [0x0085], 16       ; character matrix height (points)
 

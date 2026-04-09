@@ -15,7 +15,7 @@ plan.
 - `legacy/` — the old approach (preserved for reference, not actively developed)
 - `transpiler/` — the new approach (**not yet started**, this is the next work item)
 - `tools/` — conformance testing infrastructure (reference emulator + comparison tools)
-- `bios.asm` / `bios.bin` — minimal BIOS/DOS stub (still active, used by both approaches)
+- `gossamer.asm` / `gossamer.bin` — Gossamer BIOS (still active, used by both approaches)
 - `examples/` — test programs (fib.asm, etc.)
 
 ## Project layout
@@ -27,9 +27,9 @@ tools/               Conformance testing
   js8086.js          Vendored reference 8086 emulator (~2700 lines JS)
   ref-emu.mjs        Runs reference emulator, outputs register trace
   compare.mjs        Tick-by-tick comparison against calcite output
-bios.asm             Minimal BIOS: INT 10h, 16h, 1Ah, 20h, 21h handlers
-bios.bin             Compiled BIOS binary (loaded at F000:0000)
-bios.lst             NASM listing for bios.asm
+gossamer.asm         Gossamer BIOS: INT 10h, 16h, 1Ah, 20h, 21h handlers
+gossamer.bin         Compiled BIOS binary (loaded at F000:0000)
+gossamer.lst         NASM listing for gossamer.asm
 examples/            Test binaries
   fib.asm / fib.com  Fibonacci (simplest test case)
 tests/               Test output artifacts
@@ -121,20 +121,20 @@ Read `transpiler/README.md` for detailed architecture and implementation plan.
 C:\Users\AdmT9N0CX01V65438A\AppData\Local\bin\NASM\nasm.exe -f bin -o tests/prog.com tests/prog.asm
 
 # 2. Generate CSS — NOTE: only ONE positional arg (the .com file).
-#    bios.bin is auto-loaded from the project root. Do NOT pass bios.bin as an arg.
+#    gossamer.bin is auto-loaded from the project root. Do NOT pass gossamer.bin as an arg.
 node transpiler/generate.mjs tests/prog.com --mem 1536 -o tests/prog.css
 
-# 3. Run conformance comparison — takes THREE positional args: .com, bios.bin, .css
-node tools/compare.mjs tests/prog.com bios.bin tests/prog.css --ticks=500
+# 3. Run conformance comparison — takes THREE positional args: .com, gossamer.bin, .css
+node tools/compare.mjs tests/prog.com gossamer.bin tests/prog.css --ticks=500
 ```
 
 The compare tool runs both the reference JS emulator and calcite, then finds the
 first tick where registers diverge. It handles REP-prefixed instructions
 (which take 1 tick in the reference but N ticks in CSS) via IP-aligned comparison.
 
-## BIOS
+## Gossamer BIOS
 
-`bios.asm` is a minimal BIOS stub compiled with NASM. It provides:
+`gossamer.asm` is the Gossamer BIOS, compiled with NASM. It provides:
 
 | Interrupt | Function |
 |-----------|----------|
@@ -147,9 +147,9 @@ first tick where registers diverge. It handles REP-prefixed instructions
 The BIOS is loaded at segment F000:0000 and the IVT (interrupt vector table)
 at addresses 0x0000-0x03FF is pre-populated to point to these handlers.
 
-To rebuild after editing bios.asm:
+To rebuild after editing gossamer.asm:
 ```sh
-nasm -f bin -o bios.bin bios.asm -l bios.lst
+nasm -f bin -o gossamer.bin gossamer.asm -l gossamer.lst
 ```
 
 ## Relationship to calcite

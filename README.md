@@ -28,7 +28,7 @@ full roadmap.
 What exists today:
 - Reference 8086 emulator (`tools/js8086.js`) — the source of truth
 - Conformance testing tools (`tools/`) — tick-by-tick comparison infrastructure
-- Minimal BIOS (`bios.asm`) — INT 10h/16h/1Ah/20h/21h handlers
+- Gossamer BIOS (`gossamer.asm`) — INT 10h/16h/1Ah/20h/21h handlers
 - Test programs (`examples/fib.asm`)
 - Legacy v1 transpiler (`legacy/`) — works but has synchronization bugs
 
@@ -59,7 +59,7 @@ node tools/ref-emu.mjs examples/fib.com > ref-trace.json
 ```
 transpiler/     JS→CSS transpiler (not yet built — the main work item)
 tools/          Conformance testing (reference emulator + comparison)
-bios.asm        Minimal BIOS/DOS stub (NASM source)
+gossamer.asm    Gossamer BIOS (NASM source)
 examples/       Test programs (.asm, .com)
 legacy/         v1 approach (JSON database → parallel dispatch CSS)
 ```

@@ -12,7 +12,7 @@ const evalSource = js8086Source.replace("'use strict';", '').replace('let CPU_18
 const Intel8086 = new Function(evalSource + '\nreturn Intel8086;')();
 
 const comBin = readFileSync(resolve(root, 'examples/fib.com'));
-const biosBin = readFileSync(resolve(root, 'bios.bin'));
+const biosBin = readFileSync(resolve(root, 'gossamer.bin'));
 
 const memory = new Uint8Array(1024 * 1024);
 for (let i = 0; i < comBin.length; i++) memory[0x100 + i] = comBin[i];

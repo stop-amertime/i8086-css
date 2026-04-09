@@ -160,7 +160,7 @@ export function emitHTMLHeader() {
 <html>
 <head>
 <meta charset="utf-8">
-<title>i8086-css</title>
+<title>CSS-DOS</title>
 <style>
 `;
 }

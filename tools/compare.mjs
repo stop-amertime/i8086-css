@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Conformance comparison: reference 8086 emulator vs calcite
 //
-// Usage: node tools/compare.mjs <program.com> <bios.bin> <program.css> [--ticks=N] [--dump-slots]
+// Usage: node tools/compare.mjs <program.com> <gossamer.bin> <program.css> [--ticks=N] [--dump-slots]
 //
 // Runs both emulators, finds the first tick where registers diverge,
 // and outputs a diagnostic report.
@@ -28,7 +28,7 @@ const flags = Object.fromEntries(
 );
 
 if (positional.length < 3) {
-  console.error('Usage: node tools/compare.mjs <program.com> <bios.bin> <program.css> [--ticks=N] [--dump-slots]');
+  console.error('Usage: node tools/compare.mjs <program.com> <gossamer.bin> <program.css> [--ticks=N] [--dump-slots]');
   process.exit(1);
 }
 

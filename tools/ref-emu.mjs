@@ -2,7 +2,7 @@
 // Reference 8086 emulator for conformance testing against calcite.
 // Uses emu8's js8086.js CPU core.
 //
-// Usage: node tools/ref-emu.mjs <program.com> <bios.bin> <ticks> [--json]
+// Usage: node tools/ref-emu.mjs <program.com> <gossamer.bin> <ticks> [--json]
 //
 // Outputs register state after each instruction (tick) in a format
 // that can be compared against calcite's verbose output.
@@ -27,7 +27,7 @@ const Intel8086 = new Function(evalSource + '\nreturn Intel8086;')();
 // --- Setup ---
 const args = process.argv.slice(2);
 if (args.length < 3) {
-  console.error('Usage: node ref-emu.mjs <program.com> <bios.bin> <ticks> [--json]');
+  console.error('Usage: node ref-emu.mjs <program.com> <gossamer.bin> <ticks> [--json]');
   process.exit(1);
 }
 
@@ -85,7 +85,7 @@ function m_write(addr, val) {
 // Create CPU
 const cpu = Intel8086(m_write, m_read);
 
-// Set initial registers (matching i8086-css .COM setup)
+// Set initial registers (matching CSS-DOS .COM setup)
 cpu.reset();
 cpu.setRegs({
   cs: 0,

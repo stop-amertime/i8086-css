@@ -37,11 +37,11 @@ if args.data:
         embedded_data.append((addr, filepath, file_bytes))
         print(f"Embedding {filepath} ({len(file_bytes)} bytes) at 0x{addr:X}")
 
-# Auto-detect bios.bin next to this script
+# Auto-detect gossamer.bin next to this script
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BIOS_SEG = 0xF000
 BIOS_ADDR = BIOS_SEG * 16  # 0xF0000
-BIOS_FILE = os.path.join(SCRIPT_DIR, "bios.bin")
+BIOS_FILE = os.path.join(SCRIPT_DIR, "gossamer.bin")
 bios_loaded = False
 if os.path.exists(BIOS_FILE):
     with open(BIOS_FILE, 'rb') as bf:
@@ -176,7 +176,7 @@ var_offset = len(variables)
 # Each IVT entry is 4 bytes at INT_NUM * 4: IP_lo, IP_hi, CS_lo, CS_hi
 ivt_bytes = {}
 if bios_loaded:
-    # Handler offsets within bios.bin (from bios.lst)
+    # Handler offsets within gossamer.bin (from gossamer.lst)
     ivt_entries = {
         0x10: 0x0000,  # INT 10h — Video Services
         0x16: 0x0155,  # INT 16h — Keyboard

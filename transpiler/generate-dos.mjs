@@ -8,7 +8,7 @@
 //
 // This script:
 // 1. Builds a FAT12 disk image containing KERNEL.SYS, CONFIG.SYS, and the program
-// 2. Assembles the DOS BIOS (bios-dos.asm)
+// 2. Assembles the DOS BIOS (gossamer-dos.asm)
 // 3. Calls the transpiler with the kernel, disk image, and BIOS embedded in memory
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -24,9 +24,9 @@ const projectRoot = resolve(__dirname, '..');
 
 // --- Paths ---
 const NASM = 'C:/Users/AdmT9N0CX01V65438A/AppData/Local/bin/NASM/nasm.exe';
-const BIOS_ASM = resolve(projectRoot, 'bios-dos.asm');
-const BIOS_BIN = resolve(projectRoot, 'bios-dos.bin');
-const BIOS_LST = resolve(projectRoot, 'bios-dos.lst');
+const BIOS_ASM = resolve(projectRoot, 'gossamer-dos.asm');
+const BIOS_BIN = resolve(projectRoot, 'gossamer-dos.bin');
+const BIOS_LST = resolve(projectRoot, 'gossamer-dos.lst');
 const KERNEL_SYS = resolve(projectRoot, 'dos', 'bin', 'kernel.sys');
 const MKFAT12 = resolve(projectRoot, 'tools', 'mkfat12.mjs');
 const CONFIG_SYS = resolve(projectRoot, 'dos', 'config.sys');

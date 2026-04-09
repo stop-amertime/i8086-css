@@ -1,4 +1,4 @@
-; bios-dos.asm — Minimal BIOS for booting DOS on CSS-DOS
+; gossamer-dos.asm — Gossamer BIOS (DOS variant) for CSS-DOS
 ; Loaded at F000:0000 (linear 0xF0000)
 ;
 ; Provides the BIOS services the DOS kernel needs to boot:

@@ -26,8 +26,8 @@ const flags = Object.fromEntries(
 const maxTicks = parseInt(flags.ticks || '10000');
 
 // --- Paths ---
-const biosPath = resolve(projectRoot, 'bios-dos.bin');
-const biosLstPath = resolve(projectRoot, 'bios-dos.lst');
+const biosPath = resolve(projectRoot, 'gossamer-dos.bin');
+const biosLstPath = resolve(projectRoot, 'gossamer-dos.lst');
 const kernelPath = resolve(projectRoot, 'dos', 'bin', 'kernel.sys');
 const diskPath = resolve(projectRoot, 'dos', 'disk.img');
 const cssPath = resolve(projectRoot, flags.css || 'shell-dos.css'); // --css=file.css to override

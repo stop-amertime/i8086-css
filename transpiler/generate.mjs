@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// JS→CSS transpiler for i8086-css
+// JS→CSS transpiler for CSS-DOS
 // Generates a CSS file containing a complete 8086 CPU from a .COM binary.
 //
 // Usage: node transpiler/generate.mjs program.com -o program.css [--mem SIZE] [--html]
@@ -57,12 +57,12 @@ const programBytes = [...readFileSync(resolve(inputFile))];
 const programOffset = 0x100; // .COM files load at offset 0x100
 
 // Read BIOS
-const biosPath = resolve(__dirname, '..', 'bios.bin');
+const biosPath = resolve(__dirname, '..', 'gossamer.bin');
 let biosBytes;
 try {
   biosBytes = [...readFileSync(biosPath)];
 } catch {
-  console.error(`Warning: bios.bin not found at ${biosPath}, proceeding without BIOS`);
+  console.error(`Warning: gossamer.bin not found at ${biosPath}, proceeding without BIOS`);
   biosBytes = [];
 }
 

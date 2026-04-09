@@ -1,4 +1,4 @@
-; bios.asm — Minimal BIOS/DOS stub for i8086-css
+; gossamer.asm — Gossamer BIOS for CSS-DOS
 ; Loaded at F000:0000 (linear 0xF0000)
 ;
 ; CONSTRAINTS:

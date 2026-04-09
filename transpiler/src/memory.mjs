@@ -7,7 +7,7 @@
 const BIOS_LINEAR = 0xF0000; // F000:0000
 const BIOS_SEG = 0xF000;
 
-// Standard IVT entries for bios.asm (must match handler offsets in bios.lst / ref-emu.mjs)
+// Standard IVT entries for gossamer.asm (must match handler offsets in gossamer.lst / ref-emu.mjs)
 const BIOS_IVT_HANDLERS = {
   0x10: 0x0000,  // INT 10h - Video services
   0x16: 0x0155,  // INT 16h - Keyboard

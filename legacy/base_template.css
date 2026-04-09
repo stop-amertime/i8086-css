@@ -11,7 +11,7 @@
   initial-value: "";
 }
 
-/* Cursor position and scrolling are handled by the BIOS code (bios.asm).
+/* Cursor position and scrolling are handled by the Gossamer BIOS (gossamer.asm).
    No CSS-level cursor tracking needed. */
 VARS_1
 

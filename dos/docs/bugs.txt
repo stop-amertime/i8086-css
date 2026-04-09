@@ -1,0 +1,15 @@
+Please report kernel bugs / issues on GitHub at 
+
+  https://github.com/FDOS/kernel/issues
+
+
+For support (or if you don't wish to use GitHub) then
+please use the FreeDOS developer and/or user mailing list.
+
+The former bug database is available on the web at
+
+ http://sourceforge.net/tracker/?group_id=5109&atid=105109
+
+(All bugs reported there are reviewed, but not updated!)
+
+Thanks!

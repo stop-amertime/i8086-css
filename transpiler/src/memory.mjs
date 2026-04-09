@@ -62,13 +62,41 @@ export function comMemoryZones(programBytes, programOffset, memBytes) {
 
 /**
  * Standard memory zones for DOS boot mode.
- * --mem controls the conventional memory area size.
+ * memBytes = total conventional memory size (default 640KB = 0xA0000).
+ *
+ * The EDRDOS kernel always relocates its code and data structures to the
+ * top ~160KB of conventional memory, regardless of what program runs.
+ * The middle area (between the kernel image and DOS high area) is where
+ * user programs load — its size depends on the program.
+ *
+ * Layout (640KB):
+ *   0x00000-0x00600  IVT + BDA + free area (always needed)
+ *   0x00600-0x1A000  Kernel binary + decompressed code/data (~105 KB)
+ *   0x1A000-0x30000  Kernel init workspace + temp relocation (~88 KB)
+ *   0x30000-0x86000  User program area (grows with program size)
+ *   0x86000-0xA0000  DOS data/code segments, relocated BIOS, CONFIG,
+ *                    COMMAND.COM, system MCBs (~104 KB, always needed)
+ *
+ * To reduce CSS size for small programs, pass a smaller --mem value.
+ * The kernel high area (top 104KB) is always included regardless of --mem.
  */
 export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedData) {
-  const zones = [
-    [0x0000, memBytes],                // IVT + BDA + kernel + conventional memory
-    [0xB8000, 0xB8FA0],               // VGA text mode
-  ];
+  // The kernel high area always starts at memBytes - 0x1A000 (104 KB from top)
+  const highAreaStart = memBytes - 0x1A000;
+  // The kernel low area covers IVT + BDA + kernel image + init workspace
+  const lowAreaEnd = 0x30000;
+
+  const zones = [];
+  if (highAreaStart <= lowAreaEnd) {
+    // Small memBytes — just use one contiguous block
+    zones.push([0x0000, memBytes]);
+  } else {
+    // Split into low area + high area, skipping the unused middle
+    zones.push([0x0000, lowAreaEnd]);       // IVT + BDA + kernel + init workspace
+    zones.push([highAreaStart, memBytes]);   // DOS high area + program heap top
+  }
+  zones.push([0xB8000, 0xB8FA0]);           // VGA text mode
+
   // Include embedded data regions (e.g., disk image at 0xD0000)
   for (const { addr, bytes } of (embeddedData || [])) {
     zones.push([addr, addr + bytes.length]);

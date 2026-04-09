@@ -1,26 +1,22 @@
 ; gossamer-dos.asm — Gossamer BIOS (DOS variant) for CSS-DOS
 ; Loaded at F000:0000 (linear 0xF0000)
 ;
-; Provides the BIOS services the DOS kernel needs to boot:
-;   INT 10h — Video (teletype, cursor, scroll, set mode)
-;   INT 11h — Equipment list (returns 0)
-;   INT 12h — Conventional memory size (returns 640 KB)
-;   INT 13h — Disk services (reads from memory-resident FAT12 image)
-;   INT 16h — Keyboard
-;   INT 1Ah — Timer
-;   INT 19h — Bootstrap loader
-;   INT 20h — Halt
+; Mirrors the 8088_bios reference layout:
+;   - IVT setup via interrupt_table array (32 standard vectors + fill rest)
+;   - Full BDA initialization matching IBM PC BIOS
+;   - INT handlers follow reference contracts
+;
+; Backend is memory-mapped (no port I/O):
+;   - VGA text buffer at B800:0000
+;   - Disk image at D000:0000
+;   - Keyboard input via polling 0000:0500
 ;
 ; DOS kernel (KERNEL.SYS) is pre-loaded at 0060:0000 (linear 0x600)
 ; by the transpiler. The BIOS init code sets up the IVT and jumps to it.
 ;
-; Disk image is embedded at DISK_SEG:0000 by the transpiler.
-; INT 13h reads sectors from this memory region.
-;
 ; CONSTRAINTS (CSS transpiler limitations):
 ; - No 0x0F-prefixed opcodes (near Jcc)
-; - Segment override prefixes may not work in all contexts
-; - All memory access via DS segment where possible
+; - Must compile with NASM: [bits 16] [org 0]
 
 [bits 16]
 [org 0]
@@ -30,39 +26,74 @@
 ; ============================================================
 DISK_SEG    equ 0xD000          ; Disk image loaded here (linear 0xD0000)
 BDA_SEG     equ 0x0040          ; BIOS Data Area segment
+BIOS_SEG    equ 0xF000          ; BIOS code segment
 VGA_SEG     equ 0xB800          ; VGA text mode segment
 KERNEL_SEG  equ 0x0060          ; DOS kernel load segment
 SECTOR_SIZE equ 512
-HALT_ADDR   equ 0x0504          ; Halt flag address (seg 0, in BDA area, below kernel)
+HALT_ADDR   equ 0x0504          ; Halt flag address (seg 0)
 
-; Disk geometry for a 1.44MB floppy (we only use part of it)
+; Disk geometry for a 1.44MB floppy
 DISK_SPT    equ 18              ; sectors per track
 DISK_HEADS  equ 2               ; heads
 DISK_CYLS   equ 80              ; cylinders
 
+; BDA offsets (matching reference 8088_bios exactly)
+equip_serial        equ 0x00    ; word[4] - serial port addresses
+equip_parallel      equ 0x08   ; word[3] - parallel port addresses
+equipment_list      equ 0x10    ; word - equipment list
+memory_size         equ 0x13    ; word - memory size in KiB
+kbd_flags_1         equ 0x17    ; byte - keyboard shift flags 1
+kbd_flags_2         equ 0x18    ; byte - keyboard shift flags 2
+kbd_alt_keypad      equ 0x19    ; byte - Alt+Numpad work area
+kbd_buffer_head     equ 0x1A    ; word - keyboard buffer head offset
+kbd_buffer_tail     equ 0x1C    ; word - keyboard buffer tail offset
+kbd_buffer          equ 0x1E    ; byte[32] - keyboard buffer
+fdc_calib_state     equ 0x3E    ; byte - floppy recalibration status
+fdc_motor_state     equ 0x3F    ; byte - floppy motor status
+fdc_motor_tout      equ 0x40    ; byte - floppy motor off timeout
+fdc_last_error      equ 0x41    ; byte - last diskette op status
+video_mode          equ 0x49    ; byte - active video mode
+video_columns       equ 0x4A    ; word - text columns
+video_page_size     equ 0x4C    ; word - video page size in bytes
+video_page_offt     equ 0x4E    ; word - active video page offset
+video_cur_pos       equ 0x50    ; byte[16] - cursor pos per page
+video_cur_shape     equ 0x60    ; word - cursor shape
+video_page          equ 0x62    ; byte - active video page
+video_port          equ 0x63    ; word - CRT controller port
+ticks_lo            equ 0x6C    ; word - timer ticks low
+ticks_hi            equ 0x6E    ; word - timer ticks high
+new_day             equ 0x70    ; byte - midnight flag
+break_flag          equ 0x71    ; byte - Ctrl-Break flag
+warm_boot           equ 0x72    ; word - warm boot flag (1234h)
+kbd_buffer_start    equ 0x80    ; word - keyboard buffer start
+kbd_buffer_end      equ 0x82    ; word - keyboard buffer end
+video_rows          equ 0x84    ; byte - text rows minus 1
+video_char_height   equ 0x85    ; word - character height (points)
+
 ; ============================================================
-; INT 10h — Video Services  (offset 0)
+; INT 10h — Video Services
 ; ============================================================
 int10h_handler:
+    push ds
+    push es
+    push bp
     cmp ah, 0x0E
     je .teletype
     jmp .dispatch_other
 
 ; --- AH=0Eh: Teletype output ---
-; AL = character to display
 .teletype:
-    push ds
     push di
     push bx
     push cx
     push dx
     push ax                ; save character in AL
 
-    ; Read cursor from BDA (DS=0x0040)
+    ; Read cursor from BDA
     mov bx, BDA_SEG
     mov ds, bx
-    mov dl, [0x0050]       ; column
-    mov dh, [0x0051]       ; row
+    mov dl, [video_cur_pos]     ; column
+    mov dh, [video_cur_pos+1]   ; row
 
     pop ax                 ; AX restored (AL = character)
     push ax                ; save again
@@ -90,23 +121,23 @@ int10h_handler:
     pop dx                 ; restore cursor
     pop ax                 ; restore char
 
-    ; Switch DS to VGA segment and write
-    push ds                ; save BDA segment
+    ; Write to VGA
+    push ds
     mov bx, VGA_SEG
     mov ds, bx
-    mov [di], al           ; write character (DS:DI = B800:offset)
-    mov byte [di+1], 0x07  ; write attribute
-    pop ds                 ; restore BDA segment
+    mov [di], al           ; character
+    mov byte [di+1], 0x07  ; attribute
+    pop ds
 
     ; Advance cursor
-    inc dl                 ; col++
+    inc dl
     cmp dl, 80
     jb .tty_save
-    xor dl, dl             ; col = 0
-    inc dh                 ; row++
+    xor dl, dl
+    inc dh
     cmp dh, 25
     jb .tty_save
-    dec dh                 ; row = 24
+    dec dh
     call scroll_up_one
     jmp short .tty_save
 
@@ -124,26 +155,26 @@ int10h_handler:
 
 .tty_bs:
     cmp dl, 0
-    je .tty_save           ; can't go back past column 0
+    je .tty_save
     dec dl
     jmp short .tty_save
 
 .tty_save:
-    ; Write cursor back to BDA (DS already = 0x0040)
-    mov [0x0050], dl
-    mov [0x0051], dh
+    mov [video_cur_pos], dl
+    mov [video_cur_pos+1], dh
 
 .tty_done:
-    pop ax                 ; restore original AX
+    pop ax
     pop dx
     pop cx
     pop bx
     pop di
+    pop bp
+    pop es
     pop ds
     iret
 
 ; --- INT 10h dispatch for non-teletype ---
-; Use jmp instead of je for targets >127 bytes away to avoid 0x0F prefix
 .dispatch_other:
     cmp ah, 0x02
     je .set_cursor
@@ -169,55 +200,72 @@ int10h_handler:
     jne .not_write_char
     jmp .write_char_attr
 .not_write_char:
+    cmp ah, 0x0A
+    jne .not_write_char_only
+    jmp .write_char_only
+.not_write_char_only:
+    pop bp
+    pop es
+    pop ds
     iret
 
 .set_cursor:
-    push ds
-    push bx
     mov bx, BDA_SEG
     mov ds, bx
-    mov [0x0050], dl
-    mov [0x0051], dh
-    pop bx
+    mov [video_cur_pos], dl
+    mov [video_cur_pos+1], dh
+    pop bp
+    pop es
     pop ds
     iret
 
 .get_cursor:
-    push ds
-    push bx
     mov bx, BDA_SEG
     mov ds, bx
-    mov dl, [0x0050]
-    mov dh, [0x0051]
-    mov cx, 0x0607         ; cursor shape: start=6, end=7
-    pop bx
+    mov dl, [video_cur_pos]
+    mov dh, [video_cur_pos+1]
+    mov cx, [video_cur_shape]
+    pop bp
+    pop es
     pop ds
     iret
 
 .get_mode:
-    mov al, 0x03           ; mode 3 = 80x25 text
-    mov ah, 80             ; columns
-    mov bh, 0              ; active page
+    push bx
+    mov bx, BDA_SEG
+    mov ds, bx
+    mov al, [video_mode]
+    mov ah, [video_columns]
+    mov bh, [video_page]
+    ; BH is return value, but we pushed original BX
+    ; Need to fix this: pop old BX but keep BH
+    mov bl, bh              ; save page in BL
+    pop bx                  ; restore original BX
+    mov bh, bl              ; but no, that clobbers... let's just not push BX
+    ; Actually simpler approach: just return hardcoded for mode 3
+    pop bp
+    pop es
+    pop ds
+    mov al, 0x03
+    mov ah, 80
+    mov bh, 0
     iret
 
 .set_mode:
-    push ds
     push di
     push cx
     push ax
-    ; Clear cursor
     mov ax, BDA_SEG
     mov ds, ax
-    mov byte [0x0050], 0
-    mov byte [0x0051], 0
-    ; Store video mode
-    mov byte [0x0049], 0x03 ; mode 3
-    ; Clear screen: DS=VGA, fill with spaces
+    mov byte [video_cur_pos], 0
+    mov byte [video_cur_pos+1], 0
+    mov byte [video_mode], 0x03
+    ; Clear screen
     mov ax, VGA_SEG
     mov ds, ax
     xor di, di
     mov cx, 2000
-    mov ax, 0x0720         ; space + light gray on black
+    mov ax, 0x0720
 .clr_loop:
     mov [di], ax
     add di, 2
@@ -227,14 +275,15 @@ int10h_handler:
     mov al, 0x30           ; return prior mode info
     pop cx
     pop di
+    pop bp
+    pop es
     pop ds
     iret
 
 .scroll_up:
     cmp al, 0
     jne .su_lines
-    ; AL=0: Clear window (most common usage)
-    push ds
+    ; AL=0: Clear window
     push di
     push cx
     mov cx, VGA_SEG
@@ -249,6 +298,8 @@ int10h_handler:
     jnz .su_clr
     pop cx
     pop di
+    pop bp
+    pop es
     pop ds
     iret
 .su_lines:
@@ -260,13 +311,14 @@ int10h_handler:
     dec cl
     jnz .su_loop
     pop cx
+    pop bp
+    pop es
+    pop ds
     iret
 
 .scroll_down:
-    ; Minimal: just clear screen if AL=0
     cmp al, 0
     jne .sd_ret
-    push ds
     push di
     push cx
     mov cx, VGA_SEG
@@ -281,28 +333,28 @@ int10h_handler:
     jnz .sd_clr
     pop cx
     pop di
-    pop ds
 .sd_ret:
+    pop bp
+    pop es
+    pop ds
     iret
 
 .read_char:
     ; AH=08h: Read char+attr at cursor
-    push ds
     push bx
     push di
     mov bx, BDA_SEG
     mov ds, bx
-    mov al, [0x0050]       ; col
-    mov ah, [0x0051]       ; row
-    ; Compute offset = (row*80+col)*2
+    mov al, [video_cur_pos]     ; col
+    mov ah, [video_cur_pos+1]   ; row
     push dx
     xor dh, dh
-    mov dl, ah             ; DL = row
+    mov dl, ah
     mov ah, 80
-    xchg al, dl            ; AL = row, DL = col
-    mul ah                 ; AX = row * 80
-    xor dh, dh             ; DX = col (DH already 0)
-    add ax, dx             ; AX = row*80+col
+    xchg al, dl
+    mul ah
+    xor dh, dh
+    add ax, dx
     shl ax, 1
     mov di, ax
     pop dx
@@ -312,23 +364,22 @@ int10h_handler:
     mov ah, [di+1]         ; attribute
     pop di
     pop bx
+    pop bp
+    pop es
     pop ds
     iret
 
 .write_char_attr:
     ; AH=09h: Write char+attr at cursor, CX times
     ; AL=char, BL=attr, CX=count
-    push ds
     push di
     push dx
     push cx
     push bx
-    ; Get cursor position
     mov bx, BDA_SEG
     mov ds, bx
-    mov dl, [0x0050]
-    mov dh, [0x0051]
-    ; Compute VGA offset
+    mov dl, [video_cur_pos]
+    mov dh, [video_cur_pos+1]
     push ax
     mov al, dh
     mov bl, 80
@@ -339,14 +390,13 @@ int10h_handler:
     shl ax, 1
     mov di, ax
     pop ax
-    ; Write to VGA
     mov bx, VGA_SEG
     mov ds, bx
     pop bx                 ; restore original BX (BL=attr)
     push bx
 .wca_loop:
     mov [di], al
-    mov [di+1], bl         ; attribute from BL
+    mov [di+1], bl
     add di, 2
     dec cx
     jnz .wca_loop
@@ -354,11 +404,50 @@ int10h_handler:
     pop cx
     pop dx
     pop di
+    pop bp
+    pop es
+    pop ds
+    iret
+
+.write_char_only:
+    ; AH=0Ah: Write char at cursor, CX times (keep existing attr)
+    ; AL=char, CX=count
+    push di
+    push dx
+    push cx
+    push bx
+    mov bx, BDA_SEG
+    mov ds, bx
+    mov dl, [video_cur_pos]
+    mov dh, [video_cur_pos+1]
+    push ax
+    mov al, dh
+    mov bl, 80
+    mul bl
+    xor bh, bh
+    mov bl, dl
+    add ax, bx
+    shl ax, 1
+    mov di, ax
+    pop ax
+    mov bx, VGA_SEG
+    mov ds, bx
+.wco_loop:
+    mov [di], al           ; write char only, keep attribute
+    add di, 2
+    dec cx
+    jnz .wco_loop
+    pop bx
+    pop cx
+    pop dx
+    pop di
+    pop bp
+    pop es
     pop ds
     iret
 
 ; ============================================================
-; scroll_up_one — all VGA access via DS=VGA_SEG
+; scroll_up_one — scroll VGA text up by one line
 ; ============================================================
 scroll_up_one:
     push ds
@@ -368,10 +457,9 @@ scroll_up_one:
     push ax
     mov ax, VGA_SEG
     mov ds, ax
-    ; Copy rows 1-24 up to rows 0-23
-    mov si, 160            ; source = start of row 1
-    xor di, di             ; dest = start of row 0
-    mov cx, 1920           ; 24 rows * 80 cols = 1920 words
+    mov si, 160            ; source = row 1
+    xor di, di             ; dest = row 0
+    mov cx, 1920           ; 24 rows * 80 cols
 .scopy:
     mov ax, [si]
     mov [di], ax
@@ -379,7 +467,6 @@ scroll_up_one:
     add di, 2
     dec cx
     jnz .scopy
-    ; Clear last row
     mov cx, 80
     mov ax, 0x0720
 .sclear:
@@ -395,39 +482,37 @@ scroll_up_one:
     ret
 
 ; ============================================================
-; INT 11h — Equipment List
+; INT 11h — Equipment List (read from BDA, like reference BIOS)
 ; ============================================================
 int11h_handler:
-    mov ax, 0x0021         ; bit 0=floppy present, bit 5=initial video mode 80x25
+    sti
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov ax, [equipment_list]
+    pop ds
     iret
 
 ; ============================================================
-; INT 12h — Conventional Memory Size
+; INT 12h — Memory Size (read from BDA, like reference BIOS)
 ; ============================================================
 int12h_handler:
-    mov ax, 640            ; 640 KB
+    sti
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+    mov ax, [memory_size]
+    pop ds
     iret
 
 ; ============================================================
 ; INT 13h — Disk Services (memory-resident disk image)
 ; ============================================================
-; The disk image is at DISK_SEG:0000.
-; We support a FAT12 1.44MB floppy geometry:
-;   18 sectors/track, 2 heads, 80 cylinders
-;   LBA = (C * HEADS + H) * SPT + (S - 1)
-;   Byte offset = LBA * 512
-;
-; We implement:
-;   AH=00h — Reset disk
-;   AH=02h — Read sectors
-;   AH=08h — Get drive parameters
-;   AH=15h — Get disk type
-; ============================================================
 int13h_handler:
     cmp ah, 0x00
     je .disk_reset
     cmp ah, 0x02
-    je .disk_read_v2
+    je .disk_read
     cmp ah, 0x08
     je .disk_params
     cmp ah, 0x15
@@ -438,33 +523,34 @@ int13h_handler:
     iret
 
 .disk_reset:
-    xor ah, ah             ; success
+    xor ah, ah
     clc
     iret
 
 .disk_params:
     ; Return drive parameters for 1.44MB floppy
-    ; DL=drive, returns:
-    ;   AH=0, BL=04 (1.44M), CH=max cyl low, CL=max sect | cyl high
-    ;   DH=max head, DL=num drives
     mov ah, 0
     mov bl, 0x04           ; drive type: 1.44MB
     mov ch, DISK_CYLS - 1  ; max cylinder (79)
     mov cl, DISK_SPT       ; max sector (18)
     mov dh, DISK_HEADS - 1 ; max head (1)
     mov dl, 1              ; 1 floppy drive
-    ; DI:ES should point to disk parameter table, but we skip that
+    ; ES:DI = disk parameter table
+    push bx
+    mov bx, BIOS_SEG
+    mov es, bx
+    mov di, disk_param_table
+    pop bx
     clc
     iret
 
 .disk_type:
-    ; AH=15h: Get disk type
-    ; Returns AH=01 for floppy without change detection
+    ; AH=15h: Get disk type — floppy without change detection
     mov ah, 0x01
     clc
     iret
 
-.disk_read_v2:
+.disk_read:
     ; AH=02h: Read sectors
     ; AL=count, CH=cylinder, CL=sector(1-based), DH=head, DL=drive, ES:BX=dest
     push bp
@@ -472,69 +558,63 @@ int13h_handler:
     push ds
     push si
     push di
-    push ax                ; [bp-10] = count in AL
-    push dx                ; [bp-12] = head in DH
-    push cx                ; [bp-14] = cyl in CH, sect in CL
-
-    ; Compute LBA = (CH * 2 + DH) * 18 + (CL - 1)
-    mov al, ch             ; AL = cylinder
-    xor ah, ah
-    shl ax, 1              ; AX = cyl * 2
-    xor dh, dh             ; (reuse DH=0 after saving)
-    ; Wait, DH has the head. Let me reload.
-    pop cx                 ; restore CX (CH=cyl, CL=sect)
-    pop dx                 ; restore DX (DH=head)
+    push ax
     push dx
     push cx
 
-    mov al, ch             ; AL = cylinder
+    ; Reload from stack since we need all values
+    pop cx
+    pop dx
+    push dx
+    push cx
+
+    ; Compute LBA = (CH * 2 + DH) * 18 + (CL - 1)
+    mov al, ch
     xor ah, ah
     shl ax, 1              ; AX = cyl * 2
-    mov si, ax             ; save
+    mov si, ax
     xor ah, ah
-    mov al, dh             ; AL = head
+    mov al, dh
     add ax, si             ; AX = cyl*2 + head
     mov si, DISK_SPT
     push dx
     mul si                 ; AX = (cyl*2+head) * 18
     pop dx
-    mov si, ax             ; SI = partial LBA
-    xor ch, ch             ; CX = sector (CL already has it)
+    mov si, ax
+    xor ch, ch
     dec cl                 ; sector is 1-based
     add si, cx             ; SI = LBA
 
     ; Source segment = DISK_SEG + LBA * 32
     mov ax, si
     mov cl, 5
-    shl ax, cl             ; AX = LBA * 32
-    add ax, DISK_SEG       ; AX = source segment
+    shl ax, cl
+    add ax, DISK_SEG
     mov ds, ax
-    xor si, si             ; DS:SI = start of sector in disk image
+    xor si, si
 
     ; Destination = ES:BX
-    mov di, bx             ; DI = destination offset in ES
+    mov di, bx
 
     ; Count
-    pop cx                 ; restore saved CX
-    pop dx                 ; restore saved DX
-    pop ax                 ; restore saved AX (AL=count)
+    pop cx
+    pop dx
+    pop ax
     xor ah, ah
-    mov cx, ax             ; CX = sector count
-    push cx                ; save count for return value
+    mov cx, ax
+    push cx
 
-    ; Copy CX sectors * 512 bytes = CX * 256 words
+    ; Copy CX sectors * 512 bytes
 .read_sector_loop:
     push cx
-    mov cx, 256            ; 256 words = 512 bytes
+    mov cx, 256
 .read_word_loop:
-    mov ax, [si]           ; read from disk image (DS:SI)
-    ; Write to ES:DI — but we can't use ES: prefix easily.
-    ; Swap DS and ES, write, swap back.
+    mov ax, [si]
     push ds
     push bx
     mov bx, es
     mov ds, bx
-    mov [di], ax           ; write to dest (now DS:DI = original ES:DI)
+    mov [di], ax
     pop bx
     pop ds
     add si, 2
@@ -547,9 +627,8 @@ int13h_handler:
 
     ; Success
     pop ax                 ; AL = sectors read
-    xor ah, ah             ; AH = 0 (success)
+    xor ah, ah
     clc
-
     pop di
     pop si
     pop ds
@@ -557,18 +636,35 @@ int13h_handler:
     iret
 
 ; ============================================================
-; INT 16h — Keyboard
+; INT 16h — Keyboard Services (matches reference BIOS contracts)
 ; ============================================================
 int16h_handler:
+    sti
+    push bx
+    push ds
+    mov bx, BDA_SEG
+    mov ds, bx
     cmp ah, 0x00
     je .read_key
     cmp ah, 0x01
     je .check_key
-    xor al, al
+    cmp ah, 0x02
+    je .shift_flags
+    cmp ah, 0x10
+    je .read_key           ; enhanced = same for us
+    cmp ah, 0x11
+    je .check_key          ; enhanced = same for us
+    cmp ah, 0x12
+    je .ext_shift_flags
+    ; Unknown function
+    pop ds
+    pop bx
     iret
 
 .read_key:
     ; Busy-wait on keyboard buffer at 0000:0500
+    pop ds
+    pop bx
     push ds
     push bx
     xor bx, bx
@@ -577,7 +673,6 @@ int16h_handler:
     mov ax, [0x0500]
     test ax, ax
     jz .key_wait
-    ; Clear the buffer after reading
     mov word [0x0500], 0
     pop bx
     pop ds
@@ -585,6 +680,8 @@ int16h_handler:
 
 .check_key:
     ; Check if key is available (non-destructive)
+    pop ds
+    pop bx
     push ds
     push bx
     xor bx, bx
@@ -606,50 +703,154 @@ int16h_handler:
     pop bp
     iret
 
-; ============================================================
-; INT 1Ah — Timer
-; ============================================================
-int1ah_handler:
-    cmp ah, 0x00
-    jne .timer_set
-    ; AH=00h: Get tick count
-    ; Auto-increment on each read since we have no hardware timer.
-    ; This ensures timeout loops that compare consecutive INT 1Ah
-    ; results will eventually expire.
-    push ds
-    push bx
-    xor bx, bx
-    mov ds, bx
-    mov dx, [0x046C]       ; low word of tick count (BDA 40:6C)
-    mov cx, [0x046E]       ; high word of tick count (BDA 40:6E)
-    ; Increment tick counter
-    add word [0x046C], 1
-    adc word [0x046E], 0
-    xor al, al             ; midnight flag
-    pop bx
+.shift_flags:
+    ; AH=02h: Return shift flags from BDA
+    mov al, [kbd_flags_1]
     pop ds
-    iret
-.timer_set:
-    cmp ah, 0x01
-    jne .timer_ret
-    ; AH=01h: Set tick count
-    push ds
-    push bx
-    xor bx, bx
-    mov ds, bx
-    mov [0x046C], dx
-    mov [0x046E], cx
     pop bx
-    pop ds
     iret
-.timer_ret:
+
+.ext_shift_flags:
+    ; AH=12h: Return extended shift flags
+    mov al, [kbd_flags_1]
+    mov ah, [kbd_flags_2]
+    pop ds
+    pop bx
     iret
 
 ; ============================================================
-; INT 19h — Bootstrap
+; INT 1Ah — Timer Services (matches reference BIOS contract)
+; ============================================================
+int1ah_handler:
+    sti
+    push bx
+    push ds
+    mov bx, BDA_SEG
+    mov ds, bx
+    cmp ah, 0x00
+    je .timer_read
+    cmp ah, 0x01
+    je .timer_set
+    ; Unknown function
+    pop ds
+    pop bx
+    iret
+
+.timer_read:
+    ; AH=00h: Read tick count
+    ; Returns: CX=high, DX=low, AL=midnight flag
+    ; Reference: reads ticks, clears midnight flag via XOR
+    mov dx, [ticks_lo]
+    mov cx, [ticks_hi]
+    mov al, [new_day]
+    xor byte [new_day], al  ; clear midnight flag (reference method)
+    ; Auto-increment workaround since we have no timer IRQ
+    add word [ticks_lo], 1
+    adc word [ticks_hi], 0
+    pop ds
+    pop bx
+    iret
+
+.timer_set:
+    ; AH=01h: Set tick count
+    mov [ticks_lo], dx
+    mov [ticks_hi], cx
+    mov byte [new_day], 0
+    pop ds
+    pop bx
+    iret
+
+; ============================================================
+; INT 08h — Timer Tick (IRQ0)
+; Increments BDA tick count, checks for midnight, calls INT 1Ch.
+; We don't have a real PIT, so this won't fire automatically,
+; but having the handler means any code that triggers INT 08h
+; will work correctly.
+; ============================================================
+int08h_handler:
+    push ax
+    push dx
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+    ; Increment tick counter
+    inc word [ticks_lo]
+    jnz .no_overflow
+    inc word [ticks_hi]
+.no_overflow:
+    ; Check for midnight rollover (1573042 = 0x18:0x00B2 ticks/day)
+    cmp word [ticks_hi], 0x18
+    jnz .no_midnight
+    cmp word [ticks_lo], 0x00B2
+    jnz .no_midnight
+    mov word [ticks_hi], 0
+    mov word [ticks_lo], 0
+    mov byte [new_day], 1
+.no_midnight:
+    int 0x1C               ; User timer tick hook
+    pop ds
+    pop dx
+    pop ax
+    iret
+
+; ============================================================
+; INT 15h — Miscellaneous System Services (matches reference)
+; ============================================================
+int15h_handler:
+    sti
+    cmp ah, 0x4F
+    je .kbd_intercept
+    cmp ah, 0xC0
+    je .sys_config
+    cmp ah, 0x88
+    je .ext_mem_size
+    ; AH=90h/91h: OS hooks — return success
+    cmp ah, 0x90
+    je .os_hook
+    cmp ah, 0x91
+    je .os_hook
+    ; Unknown function — CF set, AH=86h (like reference)
+    mov ah, 0x86
+    push bp
+    mov bp, sp
+    or byte [bp+6], 0x01   ; set CF in stacked FLAGS
+    pop bp
+    iret
+
+.kbd_intercept:
+    ; AH=4Fh: Keyboard intercept — just IRET (pass through)
+    iret
+
+.os_hook:
+    ; AH=90h/91h: Device busy/interrupt complete — AH=0, IRET
+    mov ah, 0x00
+    iret
+
+.ext_mem_size:
+    ; AH=88h: Extended memory size (above 1MB) — none
+    xor ax, ax
+    push bp
+    mov bp, sp
+    and byte [bp+6], 0xFE  ; clear CF
+    pop bp
+    iret
+
+.sys_config:
+    ; AH=C0h: Get system configuration table
+    mov ah, 0x00
+    mov bx, BIOS_SEG
+    mov es, bx
+    mov bx, config_table
+    push bp
+    mov bp, sp
+    and byte [bp+6], 0xFE  ; clear CF
+    pop bp
+    iret
+
+; ============================================================
+; INT 19h — Bootstrap (halt in our system)
 ; ============================================================
 int19h_handler:
-    ; In our system, INT 19h halts (no disk to reboot from)
     push ds
     xor ax, ax
     mov ds, ax
@@ -658,7 +859,7 @@ int19h_handler:
     jmp int19h_handler
 
 ; ============================================================
-; INT 20h — Halt / Program terminate
+; INT 20h — Program Terminate (halt)
 ; ============================================================
 int20h_handler:
     push ds
@@ -669,47 +870,8 @@ int20h_handler:
     jmp int20h_handler
 
 ; ============================================================
-; INT 15h — Extended Services
-; ============================================================
-int15h_handler:
-    cmp ah, 0x88
-    je .ext_mem_size
-    cmp ah, 0xC0
-    je .sys_config
-    ; Unknown function — return CF set
-    push bp
-    mov bp, sp
-    or word [bp+6], 0x0001
-    pop bp
-    mov ah, 0x86           ; function not supported
-    iret
-
-.ext_mem_size:
-    ; AH=88h: Get extended memory size (above 1MB)
-    ; We have no extended memory
-    xor ax, ax
-    ; Clear CF
-    push bp
-    mov bp, sp
-    and word [bp+6], 0xFFFE
-    pop bp
-    iret
-
-.sys_config:
-    ; AH=C0h: Get system configuration
-    ; Return CF set — not supported
-    push bp
-    mov bp, sp
-    or word [bp+6], 0x0001
-    pop bp
-    mov ah, 0x86
-    iret
-
-; ============================================================
-; Default handler — catch-all for unhandled INTs
-; INT 1 — Single-step trap handler
+; INT 01h — Single-step trap handler
 ; Clears TF from stacked FLAGS so execution resumes normally.
-; Without this, TF stays set and triggers infinite INT 1 loop.
 ; ============================================================
 int01h_handler:
     push bp
@@ -719,271 +881,211 @@ int01h_handler:
     iret
 
 ; ============================================================
-; Default handler for unimplemented INTs
-; Returns with carry flag set (function not supported) and IRETs.
+; int_dummy — Dummy interrupt handler (IRET only)
+; Matches reference BIOS int_dummy at FF53h.
+; ============================================================
+int_dummy:
+    iret
+
+; ============================================================
+; default_handler — For unimplemented INTs
+; Returns with CF set to signal "not supported".
 ; ============================================================
 default_handler:
-    ; Set carry flag in the FLAGS on the stack to signal "not supported"
     push bp
     mov bp, sp
-    or word [bp+6], 0x0001    ; set CF in stacked FLAGS
+    or word [bp+6], 0x0001     ; set CF in stacked FLAGS
     pop bp
     iret
 
 ; ============================================================
-; INT 21h — DOS services
-; Handled by the kernel itself — just needs an IVT entry
-; pointing somewhere safe until the kernel installs its own.
-; We point it to default_handler; the kernel replaces it.
+; Interrupt vector table — offsets only (segment always F000h)
+; Matches reference 8088_bios interrupt_table layout exactly.
+; 32 entries: INT 00h through INT 1Fh.
 ; ============================================================
+interrupt_table:
+    dw int_dummy            ; INT 00 - Divide by zero
+    dw int01h_handler       ; INT 01 - Single step (clears TF)
+    dw int_dummy            ; INT 02 - NMI (no-op for us)
+    dw int_dummy            ; INT 03 - Breakpoint
+    dw int_dummy            ; INT 04 - Overflow (INTO)
+    dw int_dummy            ; INT 05 - Print Screen (stub)
+    dw int_dummy            ; INT 06 - Invalid opcode
+    dw int_dummy            ; INT 07 - Coprocessor N/A
+    dw int08h_handler       ; INT 08 - IRQ0 Timer
+    dw int_dummy            ; INT 09 - IRQ1 Keyboard (no hw kbd)
+    dw int_dummy            ; INT 0A - IRQ2
+    dw int_dummy            ; INT 0B - IRQ3
+    dw int_dummy            ; INT 0C - IRQ4
+    dw int_dummy            ; INT 0D - IRQ5
+    dw int_dummy            ; INT 0E - IRQ6 Floppy
+    dw int_dummy            ; INT 0F - IRQ7
+    dw int10h_handler       ; INT 10 - Video Services
+    dw int11h_handler       ; INT 11 - Equipment List
+    dw int12h_handler       ; INT 12 - Memory Size
+    dw int13h_handler       ; INT 13 - Disk Services
+    dw default_handler      ; INT 14 - Serial (stub)
+    dw int15h_handler       ; INT 15 - Misc System Services
+    dw int16h_handler       ; INT 16 - Keyboard Services
+    dw default_handler      ; INT 17 - Printer (stub)
+    dw int_dummy            ; INT 18 - ROM BASIC (stub)
+    dw int19h_handler       ; INT 19 - Bootstrap
+    dw int1ah_handler       ; INT 1A - Timer Services
+    dw int_dummy            ; INT 1B - Keyboard Break
+    dw int_dummy            ; INT 1C - User Timer Tick (IRET hook)
+    dw int_dummy            ; INT 1D - Video Parameters (stub)
+    dw disk_param_table     ; INT 1E - Floppy Parameters (data ptr)
+    dw int_dummy            ; INT 1F - Font (stub)
 
 ; ============================================================
-; BIOS Init — runs once at startup
-; Sets up IVT, BDA, then jumps to DOS kernel
-; This must be at a known offset — the transpiler sets the
-; initial IP to point here.
+; BIOS Init — POST entry point
+; Sets up IVT from interrupt_table, initializes BDA, boots DOS.
 ; ============================================================
 bios_init:
     cli
+    cld
 
-    ; Set up stack
-    xor ax, ax
+    ; Set up stack at 0030:0100 (reference uses upper IVT area)
+    ; This is 0x0400 linear, well below kernel at 0x600.
+    mov ax, 0x0030
     mov ss, ax
-    mov sp, 0x7C00         ; Traditional BIOS stack location
+    mov sp, 0x0100
 
-    ; DS = 0 for IVT setup
+    ; --- Initialize interrupt table ---
+    ; Copy 32 vectors from interrupt_table (like reference BIOS).
+    ; Reference uses movsw+stosw with DS=CS, ES=0. We can't use
+    ; string ops easily, so we use a manual loop.
+    ; First, set DS=0 for IVT writes.
+    xor ax, ax
     mov ds, ax
 
-    ; --- Set up IVT ---
-    ; INT 01h — Single-step trap (clears TF)
-    mov word [0x01*4], int01h_handler
-    mov word [0x01*4+2], 0xF000
-
-    ; INT 10h — Video
-    mov word [0x10*4], int10h_handler
-    mov word [0x10*4+2], 0xF000
-
-    ; INT 11h — Equipment
-    mov word [0x11*4], int11h_handler
-    mov word [0x11*4+2], 0xF000
-
-    ; INT 12h — Memory size
-    mov word [0x12*4], int12h_handler
-    mov word [0x12*4+2], 0xF000
-
-    ; INT 13h — Disk
-    mov word [0x13*4], int13h_handler
-    mov word [0x13*4+2], 0xF000
-
-    ; INT 15h — Extended services
-    mov word [0x15*4], int15h_handler
-    mov word [0x15*4+2], 0xF000
-
-    ; INT 16h — Keyboard
-    mov word [0x16*4], int16h_handler
-    mov word [0x16*4+2], 0xF000
-
-    ; INT 19h — Bootstrap
-    mov word [0x19*4], int19h_handler
-    mov word [0x19*4+2], 0xF000
-
-    ; INT 1Ah — Timer
-    mov word [0x1A*4], int1ah_handler
-    mov word [0x1A*4+2], 0xF000
-
-    ; INT 20h — Halt
-    mov word [0x20*4], int20h_handler
-    mov word [0x20*4+2], 0xF000
-
-    ; --- Fill ALL other IVT entries with default_handler ---
-    ; This prevents wild jumps to 0000:0000 on unhandled INTs.
-    ; We fill 0x00-0xFF, then the specific handlers above overwrite their slots.
-    ; But we already set the specific ones, so just fill the gaps.
-    ; Key missing ones: INT 14h (serial), INT 15h (extended), INT 17h (printer),
-    ; INT 21h (DOS — kernel installs its own), INT 08h (timer tick), etc.
-    mov cx, 256          ; all 256 INT vectors
-    xor di, di           ; start at IVT[0]
-.fill_ivt:
-    ; Only write if currently zero (don't overwrite handlers we just set)
-    cmp word [di], 0
-    jne .skip_ivt
-    cmp word [di+2], 0
-    jne .skip_ivt
-    mov word [di], default_handler
-    mov word [di+2], 0xF000
-.skip_ivt:
+    ; Fill ALL 256 IVT entries with int_dummy:F000 first
+    ; (like reference fills remaining with int_dummy after the table)
+    xor di, di
+    mov cx, 256
+    mov ax, BIOS_SEG
+.fill_all:
+    mov word [di], int_dummy
+    mov word [di+2], ax        ; segment = F000h
     add di, 4
-    loop .fill_ivt
+    dec cx
+    jnz .fill_all
+
+    ; Now overwrite INT 00-1F from the interrupt_table
+    ; We need to read from CS:interrupt_table. Set up BX as table pointer
+    ; and use DS=CS temporarily to read, then DS=0 to write.
+    mov si, interrupt_table
+    xor di, di             ; IVT offset 0
+    mov cx, 32
+.ivt_copy:
+    ; Read offset from CS:SI
+    push ds
+    push cs
+    pop ds
+    mov bx, [si]           ; BX = handler offset from table
+    pop ds                 ; DS = 0 again
+    ; Write to IVT
+    mov [di], bx           ; offset
+    mov word [di+2], BIOS_SEG  ; segment
+    add si, 2
+    add di, 4
+    dec cx
+    jnz .ivt_copy
+
+    ; Overwrite INT 20h with int20h_handler
+    mov word [0x20*4], int20h_handler
+    mov word [0x20*4+2], BIOS_SEG
+
+    ; INT 21h: default_handler (kernel installs its own)
+    mov word [0x21*4], default_handler
+    mov word [0x21*4+2], BIOS_SEG
 
     ; --- Initialize BDA ---
+    ; (Reference: kbd_buffer_init + individual field setup)
     mov ax, BDA_SEG
     mov ds, ax
-    mov byte [0x0049], 0x03     ; video mode = 3 (80x25 text)
-    mov word [0x004A], 80       ; columns per row
-    mov byte [0x0050], 0        ; cursor col
-    mov byte [0x0051], 0        ; cursor row
-    mov word [0x0013], 640      ; memory size in KB (also at 40:13)
-    ; --- Additional BDA fields the kernel needs ---
-    mov word [0x0010], 0x0021   ; equipment flags: floppy + 80x25 color
-    mov word [0x004C], 0x1000   ; regen buffer size (4096 for 80x25)
-    mov word [0x0063], 0x03D4   ; CRT controller base port (color)
-    mov byte [0x0084], 24       ; screen rows - 1
-    mov word [0x0085], 16       ; character matrix height (points)
+
+    ; Equipment list: floppy present + 80x25 color = 0x0021
+    mov word [equipment_list], 0x0021
+
+    ; Memory size: 640 KiB
+    mov word [memory_size], 640
+
+    ; Keyboard buffer initialization (matches kbd_buffer_init)
+    mov word [kbd_buffer_head], kbd_buffer   ; 0x001E
+    mov word [kbd_buffer_tail], kbd_buffer   ; 0x001E (empty)
+    mov word [kbd_buffer_start], kbd_buffer  ; 0x001E
+    mov ax, kbd_buffer
+    add ax, 0x20                             ; buffer size = 32 bytes
+    mov word [kbd_buffer_end], ax            ; 0x003E
+
+    ; Clear keyboard flags
+    mov word [kbd_flags_1], 0       ; flags 1 + flags 2
+    mov byte [kbd_alt_keypad], 0
+
+    ; Video mode and parameters
+    mov byte [video_mode], 0x03             ; mode 3 = 80x25 text
+    mov word [video_columns], 80            ; 80 columns
+    mov word [video_page_size], 0x1000      ; 4096 bytes per page
+    mov word [video_page_offt], 0x0000      ; page 0 offset
+    mov word [video_cur_pos], 0x0000        ; cursor at (0,0)
+    mov word [video_cur_pos+2], 0x0000      ; page 1 cursor
+    mov word [video_cur_pos+4], 0x0000      ; page 2 cursor
+    mov word [video_cur_pos+6], 0x0000      ; page 3 cursor
+    mov word [video_cur_shape], 0x0607      ; cursor shape start=6 end=7
+    mov byte [video_page], 0x00             ; active page 0
+    mov word [video_port], 0x03D4           ; CRT controller port (color)
+    mov byte [video_rows], 24               ; rows minus 1
+    mov word [video_char_height], 16        ; character height
+
+    ; Timer ticks (start at zero)
+    mov word [ticks_lo], 0
+    mov word [ticks_hi], 0
+    mov byte [new_day], 0
+
+    ; Floppy state
+    mov byte [fdc_calib_state], 0
+    mov byte [fdc_motor_state], 0
+    mov byte [fdc_motor_tout], 0
+    mov byte [fdc_last_error], 0
+
+    ; Clear warm boot flag
+    mov word [warm_boot], 0
 
     ; --- BIOS splash screen ---
     ; Write directly to VGA memory at B800:0000
     mov ax, VGA_SEG
     mov ds, ax
-    ; First clear screen
+
+    ; Clear screen
     xor di, di
     mov cx, 2000
-    mov ax, 0x0720         ; space + gray on black
+    mov ax, 0x0720
 .splash_clr:
     mov [di], ax
     add di, 2
     dec cx
     jnz .splash_clr
 
-    ; Write "Gossamer BIOS v1.0" at row 1, col 30 (centered-ish)
-    ; Offset = (1*80+30)*2 = 220
+    ; Write "Gossamer BIOS v1.0" at row 1, col 30 (offset = (1*80+30)*2 = 220)
     mov di, 220
-    mov ah, 0x0F           ; white on black attribute
-    mov al, 'G'
-    mov [di], ax
-    add di, 2
-    mov al, 'o'
-    mov [di], ax
-    add di, 2
-    mov al, 's'
-    mov [di], ax
-    add di, 2
-    mov al, 's'
-    mov [di], ax
-    add di, 2
-    mov al, 'a'
-    mov [di], ax
-    add di, 2
-    mov al, 'm'
-    mov [di], ax
-    add di, 2
-    mov al, 'e'
-    mov [di], ax
-    add di, 2
-    mov al, 'r'
-    mov [di], ax
-    add di, 2
-    mov al, ' '
-    mov [di], ax
-    add di, 2
-    mov al, 'B'
-    mov [di], ax
-    add di, 2
-    mov al, 'I'
-    mov [di], ax
-    add di, 2
-    mov al, 'O'
-    mov [di], ax
-    add di, 2
-    mov al, 'S'
-    mov [di], ax
-    add di, 2
-    mov al, ' '
-    mov [di], ax
-    add di, 2
-    mov al, 'v'
-    mov [di], ax
-    add di, 2
-    mov al, '1'
-    mov [di], ax
-    add di, 2
-    mov al, '.'
-    mov [di], ax
-    add di, 2
-    mov al, '0'
-    mov [di], ax
+    mov ah, 0x0F           ; white on black
+    mov si, splash_title
+    call .write_splash_str
 
-    ; "640K conventional memory" at row 3, col 28
-    mov di, 536            ; (3*80+28)*2
-    mov al, '6'
-    mov [di], ax
-    add di, 2
-    mov al, '4'
-    mov [di], ax
-    add di, 2
-    mov al, '0'
-    mov [di], ax
-    add di, 2
-    mov al, 'K'
-    mov [di], ax
-    add di, 2
-    mov al, ' '
-    mov [di], ax
-    add di, 2
-    mov al, 'c'
-    mov [di], ax
-    add di, 2
-    mov al, 'o'
-    mov [di], ax
-    add di, 2
-    mov al, 'n'
-    mov [di], ax
-    add di, 2
-    mov al, 'v'
-    mov [di], ax
-    add di, 2
-    mov al, 'e'
-    mov [di], ax
-    add di, 2
-    mov al, 'n'
-    mov [di], ax
-    add di, 2
-    mov al, 't'
-    mov [di], ax
-    add di, 2
-    mov al, 'i'
-    mov [di], ax
-    add di, 2
-    mov al, 'o'
-    mov [di], ax
-    add di, 2
-    mov al, 'n'
-    mov [di], ax
-    add di, 2
-    mov al, 'a'
-    mov [di], ax
-    add di, 2
-    mov al, 'l'
-    mov [di], ax
-    add di, 2
-    mov al, ' '
-    mov [di], ax
-    add di, 2
-    mov al, 'm'
-    mov [di], ax
-    add di, 2
-    mov al, 'e'
-    mov [di], ax
-    add di, 2
-    mov al, 'm'
-    mov [di], ax
-    add di, 2
-    mov al, 'o'
-    mov [di], ax
-    add di, 2
-    mov al, 'r'
-    mov [di], ax
-    add di, 2
-    mov al, 'y'
-    mov [di], ax
+    ; "640K conventional memory" at row 3, col 28 (offset = (3*80+28)*2 = 536)
+    mov di, 536
+    mov si, splash_mem
+    call .write_splash_str
 
     ; Update cursor position in BDA to row 5 (below splash)
     mov ax, BDA_SEG
     mov ds, ax
-    mov byte [0x0050], 0   ; col
-    mov byte [0x0051], 5   ; row
+    mov byte [video_cur_pos], 0     ; col
+    mov byte [video_cur_pos+1], 5   ; row
 
     ; --- Boot status messages via INT 10h ---
-    sti                        ; enable interrupts for INT calls
+    sti
     mov si, msg_ivt
     call bios_print
     mov si, msg_boot
@@ -993,18 +1095,38 @@ bios_init:
     ; KERNEL.SYS is pre-loaded at 0060:0000 by the transpiler.
     ; Kernel expects BL = boot drive (0x00 = A:)
     xor ax, ax
-    mov ds, ax             ; DS = 0 (kernel expects this)
+    mov ds, ax
     mov bl, 0x00
-    jmp 0x0060:0x0000
+    jmp KERNEL_SEG:0x0000
+
+; --- Write null-terminated string to VGA at DS:DI ---
+; AH = attribute byte (preserved). DS=VGA_SEG on entry.
+; SI points into BIOS ROM (CS segment). Swaps DS to read.
+.write_splash_str:
+    push bx
+    mov bx, ds             ; save VGA segment in BX
+.wss_loop:
+    ; Read byte from CS:SI
+    push cs
+    pop ds
+    mov al, [si]
+    mov ds, bx             ; restore DS = VGA segment
+    test al, al
+    jz .wss_done
+    mov [di], al
+    mov [di+1], ah
+    add di, 2
+    inc si
+    jmp short .wss_loop
+.wss_done:
+    pop bx
+    ret
 
 ; --- BIOS print: print null-terminated string at CS:SI via INT 10h ---
 bios_print:
     push ax
     push bx
 .bp_loop:
-    ; Read byte from CS:SI (BIOS ROM segment)
-    ; We need CS: prefix but can't use segment overrides easily.
-    ; Instead, set DS=CS temporarily.
     push ds
     push cs
     pop ds
@@ -1013,7 +1135,7 @@ bios_print:
     test al, al
     jz .bp_done
     mov ah, 0x0E
-    mov bx, 0x0007         ; page 0, light gray
+    mov bx, 0x0007
     int 0x10
     inc si
     jmp short .bp_loop
@@ -1022,7 +1144,55 @@ bios_print:
     pop ax
     ret
 
-msg_ivt:    db 'IVT OK', 13, 10, 0
-msg_boot:   db 'Booting DOS...', 13, 10, 0
+; ============================================================
+; Data: strings
+; ============================================================
+splash_title: db 'Gossamer BIOS v1.0', 0
+splash_mem:   db '640K conventional memory', 0
+msg_ivt:      db 'IVT OK', 13, 10, 0
+msg_boot:     db 'Booting DOS...', 13, 10, 0
+
+; ============================================================
+; System configuration table (returned by INT 15h AH=C0h)
+; Matches reference 8088_bios config_table layout.
+; ============================================================
+config_table:
+    dw .size               ; bytes 0-1: table size
+.bytes:
+    db 0xFE                ; byte 2: model byte (XT)
+    db 0x00                ; byte 3: submodel
+    db 0x00                ; byte 4: BIOS revision
+    db 0x00                ; byte 5: feature byte 1 (no special hw)
+;       |||||||`-- dual bus
+;       ||||||`-- Micro Channel
+;       |||||`-- EBDA allocated
+;       ||||`-- wait for event supported
+;       |||`-- INT 15h/4Fh called on INT 09h
+;       ||`-- RTC installed
+;       |`-- 2nd PIC installed
+;       `-- DMA ch3 used by HDD
+    db 0x00                ; byte 6: feature byte 2
+    db 0x00                ; byte 7: feature byte 3
+    db 0x00                ; byte 8: feature byte 4
+    db 0x00                ; byte 9: feature byte 5
+.size equ $ - .bytes
+
+; ============================================================
+; Diskette parameter table (INT 1Eh data, INT 13h AH=08h pointer)
+; 11 bytes, matches reference 8088_bios int_1E at EFC7h.
+; Standard values for 1.44MB 3.5" floppy.
+; ============================================================
+disk_param_table:
+    db 0xAF                ; step rate / head unload time
+    db 0x02                ; head load time / DMA mode
+    db 0x25                ; motor off delay (ticks)
+    db 0x02                ; bytes per sector (2 = 512)
+    db DISK_SPT            ; sectors per track (18)
+    db 0x1B                ; gap length
+    db 0xFF                ; data length
+    db 0x50                ; format gap length
+    db 0xF6                ; fill byte for format
+    db 0x0F                ; head settle time (ms)
+    db 0x08                ; motor start time (1/8 sec units)
 
 bios_end:

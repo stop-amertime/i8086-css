@@ -145,9 +145,10 @@ if (!outputFile) {
 // --- Step 6: Generate CSS ---
 console.log('Generating CSS...');
 
-// DOS needs more conventional memory than a simple .COM — the kernel uses
-// heap, FCBs, MCBs etc. Default to 64KB (0x10000) which covers most DOS programs.
-const defaultMem = 0x10000;
+// DOS conventional memory size. The kernel relocates its own code and data
+// structures to the top of conventional memory (up to 0xA0000 = 640KB),
+// so we always need the full 640KB. Use --mem to override if needed.
+const defaultMem = 0xA0000;
 const memBytes = memOverride != null ? memOverride : defaultMem;
 
 const embData = [{ addr: DISK_LINEAR, bytes: diskBytes }];

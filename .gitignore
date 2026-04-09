@@ -34,3 +34,23 @@ examples/Zork_I_-_The_Great_Underground_Empire_1980/
 
 # Playwright debug artifacts
 .playwright-mcp/
+
+# Trace/conformance artifacts
+*.json
+!package.json
+!package-lock.json
+!legacy/*.json
+tests/*-raw.txt
+tests/*-stderr.txt
+calcite_stderr.txt
+.compare-trace.json
+ref-trace.json
+tests/dos-ref-*.log
+
+# Disk images and archives
+dos/disk.img
+*.img
+*.zip
+
+# Windows artifacts
+nul

@@ -10,6 +10,7 @@
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { loadIvtHandlers, writeIvtTo } from './lib/bios-symbols.mjs';
 
 // Load the 8086 CPU core
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -53,23 +54,14 @@ for (let i = 0; i < biosBin.length; i++) {
   memory[BIOS_BASE + i] = biosBin[i];
 }
 
-// Set up IVT entries (same as build-cli.mjs)
+// Set up IVT entries. The hack path skips bios_init, so we write the IVT
+// from outside the emulator — reading handler offsets from gossamer.lst
+// so we never drift from the BIOS binary. The .lst is assumed to live
+// next to the .bin argument (build/gossamer.bin → build/gossamer.lst).
 const BIOS_SEG = 0xF000;
-const handlers = {
-  0x10: 0x0000,  // INT 10h - Video
-  0x16: 0x0155,  // INT 16h - Keyboard
-  0x1A: 0x0190,  // INT 1Ah - Timer
-  0x20: 0x023D,  // INT 20h - Program terminate
-  0x21: 0x01A9,  // INT 21h - DOS
-};
-
-for (const [intNum, handlerOff] of Object.entries(handlers)) {
-  const ivtAddr = parseInt(intNum) * 4;
-  memory[ivtAddr]     = handlerOff & 0xFF;        // IP low
-  memory[ivtAddr + 1] = (handlerOff >> 8) & 0xFF; // IP high
-  memory[ivtAddr + 2] = BIOS_SEG & 0xFF;          // CS low
-  memory[ivtAddr + 3] = (BIOS_SEG >> 8) & 0xFF;   // CS high
-}
+const biosLstPath = biosPath.replace(/\.bin$/, '.lst');
+const handlers = loadIvtHandlers(biosLstPath);
+writeIvtTo(memory, handlers, BIOS_SEG);
 
 // Memory read/write callbacks
 function m_read(addr) {

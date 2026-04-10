@@ -152,12 +152,18 @@ int10h_handler:
     push di
     push cx
     push ax
-    ; Clear cursor
+    ; Clear cursor (always — both text and graphics modes reset it)
     mov ax, 0x0040
     mov ds, ax
     mov byte [0x0050], 0
     mov byte [0x0051], 0
-    ; Clear screen: DS=VGA, fill with spaces
+    ; Branch on requested mode: AL=0x13 → Mode 13h (320x200x256),
+    ; everything else treated as text mode (80x25).
+    pop ax                 ; AL = original mode byte
+    push ax                ; save it again for the final pop
+    cmp al, 0x13
+    je .set_mode_13h
+    ; --- Text mode clear: 2000 words of space+attr at 0xB8000 ---
     mov ax, 0xB800
     mov ds, ax
     xor di, di
@@ -168,6 +174,21 @@ int10h_handler:
     add di, 2
     dec cx
     jnz .clr_loop
+    jmp short .set_mode_done
+.set_mode_13h:
+    ; --- Mode 13h clear: 64000 bytes of 0 at 0xA0000 ---
+    ; Write as 32000 words for speed (still single-byte opcodes).
+    mov ax, 0xA000
+    mov ds, ax
+    xor di, di
+    mov cx, 32000
+    xor ax, ax
+.clr13_loop:
+    mov [di], ax           ; DS:DI = A000:offset, word write
+    add di, 2
+    dec cx
+    jnz .clr13_loop
+.set_mode_done:
     pop ax
     mov al, 0x30
     pop cx

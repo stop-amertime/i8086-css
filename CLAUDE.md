@@ -13,34 +13,38 @@ database approach with a JS→CSS transpiler. See GitHub issue #49 for the full
 plan.
 
 - `legacy/` — the old approach (preserved for reference, not actively developed)
-- `transpiler/` — the new approach (**not yet started**, this is the next work item)
+- `transpiler/` — the new approach
 - `tools/` — conformance testing infrastructure (reference emulator + comparison tools)
-- `gossamer.asm` / `gossamer.bin` — Gossamer BIOS (still active, used by both approaches)
-- `examples/` — test programs (fib.asm, etc.)
+- `bios/` — Gossamer BIOS source (gossamer.asm, gossamer-dos.asm)
+- `build/` — compiled BIOS binaries and listings (generated from bios/)
+- `tests/` — test assembly sources (.asm) and compiled binaries (.com)
 
 ## Project layout
 
 ```
-transpiler/          NEW: JS→CSS transpiler (not yet built — start here)
-  README.md          Architecture doc explaining what to build and how
+transpiler/          JS→CSS transpiler
+  README.md          Architecture doc
+  generate-hacky.mjs Generate CSS from a .COM binary (hack path, non-canonical layout)
+  generate-dos.mjs   Generate CSS via DOS boot (full DOS mode)
+  src/               Transpiler source modules
+bios/                Gossamer BIOS source
+  gossamer.asm       Simple BIOS: INT 10h, 16h, 1Ah, 20h, 21h
+  gossamer-dos.asm   DOS boot BIOS: disk I/O, kernel loading
+build/               Compiled BIOS outputs (gitignored except .bin)
+  gossamer.bin       Compiled simple BIOS (loaded at F000:0000)
+  gossamer-dos.bin   Compiled DOS BIOS
+  gossamer.lst       NASM listing
+  gossamer-dos.lst   NASM listing
 tools/               Conformance testing
   js8086.js          Vendored reference 8086 emulator (~2700 lines JS)
   ref-emu.mjs        Runs reference emulator, outputs register trace
   compare.mjs        Tick-by-tick comparison against calcite output
-gossamer.asm         Gossamer BIOS: INT 10h, 16h, 1Ah, 20h, 21h handlers
-gossamer.bin         Compiled BIOS binary (loaded at F000:0000)
-gossamer.lst         NASM listing for gossamer.asm
-examples/            Test binaries
-  fib.asm / fib.com  Fibonacci (simplest test case)
-tests/               Test output artifacts
+tests/               Test assembly sources and binaries
+dos/                 DOS kernel and system files
+  bin/               kernel.sys, command.com, etc.
 legacy/              OLD approach — see legacy/README.md
-  build_css.py       Old transpiler (binary → CSS via JSON database)
   base_template.css  CSS skeleton with @function definitions (USEFUL REFERENCE)
   base_template.html HTML wrapper with visualization
-  build_c.py         C → 8086 binary via gcc-ia16
-  x86-instructions-rebane.json  Instruction metadata database
-  extra/             Instruction table generator tools
-  web/               Browser-based transpiler (TypeScript/Vite)
 ```
 
 ## The cardinal rule
@@ -88,6 +92,71 @@ In practice, this means:
   whether a particular deeply-nested expression actually evaluates in
   Chrome's implementation.
 
+## What CSS-DOS is (and isn't)
+
+**CSS-DOS is a DOS/PC emulator, not a bespoke 8086 sandbox.** The machine we
+present to programs must look like a real PC-compatible machine, because the
+entire point is that unmodified DOS programs can run on it. If we take
+shortcuts that diverge from real hardware, we build a thing that only runs
+*our* programs — which is not the goal.
+
+### The canonical machine
+
+The memory map, BIOS entry points, BDA layout, IVT, and hardware regions must
+match what a real PC looks like. Programs assume this layout and we do not
+get to move things around for convenience:
+
+| Region           | Address         | Purpose                            |
+|------------------|-----------------|------------------------------------|
+| IVT              | 0x00000–0x003FF | Interrupt vector table             |
+| BDA              | 0x00400–0x004FF | BIOS Data Area (video mode, etc.)  |
+| Conventional RAM | 0x00500–0x9FFFF | Program + stack + DOS              |
+| VGA graphics     | 0xA0000–0xAFFFF | Mode 13h framebuffer (64000 bytes) |
+| VGA text         | 0xB8000–0xB8FFF | 80x25 color text (4000 bytes)      |
+| BIOS ROM shadow  | 0xF0000–0xFFFFF | Gossamer BIOS code                 |
+
+### Rules that follow from this
+
+- **No flags that programs can't see.** A program that does `MOV AX, 0x13; INT 10h`
+  expects Mode 13h regardless of how the CSS was baked. Transpiler flags must
+  never change semantics that a running program could observe.
+- **BDA state must be real.** Fields like `video_mode` at 0x0449 must reflect
+  actual state. Never hardcode values in INT 10h handlers and hope.
+- **INT 10h handlers must actually do the thing.** `AH=00h` writes mode to BDA
+  and clears the framebuffer. `AH=0Fh` reads BDA. `AH=1Ah` reports the real
+  display adapter. A program that calls these and gets lies breaks in ways
+  that are nearly impossible to debug.
+- **The runner trusts the machine.** When deciding whether to show text or
+  graphics output, the runner reads BDA 0x0449 — it does not guess from CSS
+  content or UI toggles. That's what a real monitor does.
+- **The raw `.COM` path in `generate-hacky.mjs` is the "hack path".** It explicitly
+  does not try to be a DOS machine and is fine to have a simpler layout.
+  Everything above applies to `generate-dos.mjs` (the DOS boot path).
+
+### Bake-time memory pruning
+
+Because CSS can't load files at runtime — all memory is serialized as CSS
+properties up front — *unused* memory regions cost real bytes in the output
+file. This gives us one legitimate form of optimization: **prune-only flags**
+that omit regions we know the program can't touch.
+
+The rules:
+
+- **Default = full canonical layout.** `generate-dos.mjs` with no flags emits
+  every region above. A program that never touches 0xA0000 still has it; the
+  region is just zeros and costs ~1 MB in the CSS. This is the correct default
+  because *we don't know* what a program will touch.
+- **Pruning is opt-in and prune-only.** Flags like `--no-gfx` or `--no-text-vga`
+  *remove* regions from the output. They never relocate, substitute, or fake
+  anything. A pruned CSS file is a strict subset of the canonical CSS file.
+- **Pruning is an author's promise.** If you pass `--no-gfx`, you are asserting
+  this program does not write to 0xA0000. If it does, it silently writes into
+  nothing and the failure mode is weird. Only prune when you know.
+- **Pruning does not change BIOS behavior.** INT 10h still tracks mode in BDA
+  even if the framebuffer region is pruned — because we might still care about
+  the mode byte for display routing. Handlers never branch on "is this region
+  present".
+
 ## The two approaches
 
 ### v1: JSON instruction database (legacy/)
@@ -121,11 +190,11 @@ Read `transpiler/README.md` for detailed architecture and implementation plan.
 C:\Users\AdmT9N0CX01V65438A\AppData\Local\bin\NASM\nasm.exe -f bin -o tests/prog.com tests/prog.asm
 
 # 2. Generate CSS — NOTE: only ONE positional arg (the .com file).
-#    gossamer.bin is auto-loaded from the project root. Do NOT pass gossamer.bin as an arg.
-node transpiler/generate.mjs tests/prog.com --mem 1536 -o tests/prog.css
+#    gossamer.bin is auto-loaded from build/. Do NOT pass gossamer.bin as an arg.
+node transpiler/generate-hacky.mjs tests/prog.com --mem 1536 -o tests/prog.css
 
 # 3. Run conformance comparison — takes THREE positional args: .com, gossamer.bin, .css
-node tools/compare.mjs tests/prog.com gossamer.bin tests/prog.css --ticks=500
+node tools/compare.mjs tests/prog.com build/gossamer.bin tests/prog.css --ticks=500
 ```
 
 The compare tool runs both the reference JS emulator and calcite, then finds the
@@ -147,9 +216,10 @@ first tick where registers diverge. It handles REP-prefixed instructions
 The BIOS is loaded at segment F000:0000 and the IVT (interrupt vector table)
 at addresses 0x0000-0x03FF is pre-populated to point to these handlers.
 
-To rebuild after editing gossamer.asm:
+To rebuild after editing:
 ```sh
-nasm -f bin -o gossamer.bin gossamer.asm -l gossamer.lst
+nasm -f bin -o build/gossamer.bin bios/gossamer.asm -l build/gossamer.lst
+nasm -f bin -o build/gossamer-dos.bin bios/gossamer-dos.asm -l build/gossamer-dos.lst
 ```
 
 ## Relationship to calcite

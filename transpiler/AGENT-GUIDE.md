@@ -113,7 +113,7 @@ After writing your emitter function, you must:
 
 After making changes, run:
 ```
-node transpiler/generate.mjs examples/fib.com -o tests/fib-pure.css
+node transpiler/generate-hacky.mjs examples/fib.com -o tests/fib-pure.css
 ```
 If it generates without errors, the dispatch table has no conflicts.
 

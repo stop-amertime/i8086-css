@@ -41,20 +41,7 @@
       color:inherit;
     }
 
-    @font-face {
-      font-family: 'Lekton';
-      font-style: normal;
-      font-weight: 400;
-      font-display: swap;
-      src: url(./static/Lekton.woff2) format('woff2');
-    }
-    @font-face {
-      font-family: 'Lekton';
-      font-style: normal;
-      font-weight: 700;
-      font-display: swap;
-      src: url(./static/Lekton-bold.woff2) format('woff2');
-    }
+    @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
   </style>
 </head>
 <body>
@@ -302,7 +289,7 @@ key-board {
   display: if(style(--m8448:1):block;style(--m8448:2):block;else:none);
   margin-top: 10px;
   background:grey;
-  font-family: "Lekton", monospace;
+  font-family: "VT323", monospace;
   font-weight: bold;
   &>p {
     color: #000;
@@ -439,7 +426,7 @@ key-board {
   color: Linen;
   height: 25lh;
   white-space: pre-wrap;
-  font-family: "Lekton", monospace;
+  font-family: "VT323", monospace;
   line-height: 1;
   font-size: clamp(1rem, 2.5vw, 1.5rem);
   word-break: break-all;

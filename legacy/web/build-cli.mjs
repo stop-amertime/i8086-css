@@ -419,7 +419,7 @@ const binary = readFileSync(resolve(inputFile));
 
 // Load BIOS binary if it exists
 let biosOption = null;
-const biosPath = resolve(__dirname, '..', 'gossamer.bin');
+const biosPath = resolve(__dirname, '..', '..', 'build', 'gossamer.bin');
 try {
   const biosBinary = readFileSync(biosPath);
   biosOption = {

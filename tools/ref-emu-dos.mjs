@@ -27,7 +27,7 @@ const maxTicks = parseInt(args[0]) || 10000;
 const jsonMode = args.includes('--json');
 
 // --- Load binaries ---
-const biosPath = resolve(projectRoot, 'gossamer-dos.bin');
+const biosPath = resolve(projectRoot, 'build', 'gossamer-dos.bin');
 const kernelPath = resolve(projectRoot, 'dos', 'bin', 'kernel.sys');
 const diskPath = resolve(projectRoot, 'dos', 'disk.img');
 
@@ -36,7 +36,7 @@ const kernelBin = readFileSync(kernelPath);
 const diskBin = readFileSync(diskPath);
 
 // Get bios_init offset from listing
-const lstPath = resolve(projectRoot, 'gossamer-dos.lst');
+const lstPath = resolve(projectRoot, 'build', 'gossamer-dos.lst');
 let biosInitOffset = 0x37C; // default
 try {
   const lst = readFileSync(lstPath, 'utf-8');

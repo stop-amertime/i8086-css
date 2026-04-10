@@ -185,7 +185,7 @@ sizes. Would not affect Calcite (which should compile either form to O(1)).
 Single command:
 
 ```sh
-node transpiler/generate.mjs program.bin -o program.css
+node transpiler/generate-hacky.mjs program.bin -o program.css
 ```
 
 Produces one CSS file containing the CPU (opcode dispatches, register updates,
@@ -204,7 +204,7 @@ Use the existing conformance pipeline:
 
 ```sh
 # 1. Generate CSS
-node transpiler/generate.mjs program.bin -o program.css
+node transpiler/generate-hacky.mjs program.bin -o program.css
 
 # 2. Reference trace
 node tools/ref-emu.mjs program.bin > ref-trace.json
@@ -278,7 +278,8 @@ Inherited from the legacy with minor adaptation:
 
 ```
 transpiler/
-  generate.mjs            Entry point: binary -> CSS
+  generate-hacky.mjs      Entry point (hack path): binary -> CSS, non-canonical layout
+  generate-dos.mjs        Entry point (DOS path): .com/.exe -> CSS via DOS boot
   src/
     parse-emulator.mjs     Extract opcode catalog from js8086.js
     emit-css.mjs           Top-level CSS generation orchestrator

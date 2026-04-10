@@ -4,7 +4,23 @@
 // Generates a CSS file that boots DOS, which then loads and runs
 // the target program via its real DOS kernel.
 //
-// Usage: node transpiler/generate-dos.mjs program.com -o program.css [--html]
+// Usage: node transpiler/generate-dos.mjs program.com -o program.css [options]
+//
+// Options:
+//   -o FILE         Output CSS (or HTML with --html)
+//   --html          Emit an HTML file wrapping the CSS
+//   --mem BYTES     Conventional memory size (default 0xA0000 = 640KB)
+//   --data NAME PATH  Copy a companion file onto the disk image
+//   --no-gfx        Omit the VGA Mode 13h framebuffer (0xA0000-0xAFA00).
+//                   Author's promise that the program never sets mode 0x13
+//                   or writes to 0xA0000. Saves ~64KB in the CSS.
+//   --no-text-vga   Omit the VGA text buffer (0xB8000-0xB8FA0).
+//                   Author's promise that the program never uses text mode.
+//                   Almost certainly wrong — DOS boot uses text mode.
+//
+// By default, the output matches the canonical PC memory layout: IVT, BDA,
+// conventional RAM, VGA gfx at 0xA0000, VGA text at 0xB8000, and the BIOS
+// ROM shadow. See CLAUDE.md ("What CSS-DOS is") for the full philosophy.
 //
 // This script:
 // 1. Builds a FAT12 disk image containing KERNEL.SYS, CONFIG.SYS, and the program
@@ -24,9 +40,9 @@ const projectRoot = resolve(__dirname, '..');
 
 // --- Paths ---
 const NASM = 'C:/Users/AdmT9N0CX01V65438A/AppData/Local/bin/NASM/nasm.exe';
-const BIOS_ASM = resolve(projectRoot, 'gossamer-dos.asm');
-const BIOS_BIN = resolve(projectRoot, 'gossamer-dos.bin');
-const BIOS_LST = resolve(projectRoot, 'gossamer-dos.lst');
+const BIOS_ASM = resolve(projectRoot, 'bios', 'gossamer-dos.asm');
+const BIOS_BIN = resolve(projectRoot, 'build', 'gossamer-dos.bin');
+const BIOS_LST = resolve(projectRoot, 'build', 'gossamer-dos.lst');
 const KERNEL_SYS = resolve(projectRoot, 'dos', 'bin', 'kernel.sys');
 const MKFAT12 = resolve(projectRoot, 'tools', 'mkfat12.mjs');
 const CONFIG_SYS = resolve(projectRoot, 'dos', 'config.sys');
@@ -39,7 +55,7 @@ const BIOS_LINEAR = 0xF0000;     // F000:0000 — BIOS ROM
 // --- CLI argument parsing ---
 const args = process.argv.slice(2);
 if (args.length === 0) {
-  console.error('Usage: node generate-dos.mjs <program.com> [-o output] [--html] [--data NAME PATH] ...');
+  console.error('Usage: node generate-dos.mjs <program.com> [-o output] [--html] [--mem N] [--data NAME PATH] [--no-gfx] [--no-text-vga]');
   process.exit(1);
 }
 
@@ -47,6 +63,7 @@ let inputFile = null;
 let outputFile = null;
 let htmlMode = false;
 let memOverride = null;
+const prune = { gfx: false, textVga: false };
 const dataFiles = []; // [{name, path}] — companion files to include on disk
 
 for (let i = 0; i < args.length; i++) {
@@ -56,6 +73,10 @@ for (let i = 0; i < args.length; i++) {
     htmlMode = true;
   } else if (args[i] === '--mem' && i + 1 < args.length) {
     memOverride = parseInt(args[++i]);
+  } else if (args[i] === '--no-gfx') {
+    prune.gfx = true;
+  } else if (args[i] === '--no-text-vga') {
+    prune.textVga = true;
   } else if (args[i] === '--data' && i + 2 < args.length) {
     const name = args[++i];
     const path = args[++i];
@@ -160,7 +181,9 @@ const defaultMem = 0xA0000;
 const memBytes = memOverride != null ? memOverride : defaultMem;
 
 const embData = [{ addr: DISK_LINEAR, bytes: diskBytes }];
-const memoryZones = dosMemoryZones(kernelBytes, KERNEL_LINEAR, memBytes, embData);
+const memoryZones = dosMemoryZones(kernelBytes, KERNEL_LINEAR, memBytes, embData, prune);
+if (prune.gfx)     console.log('  Pruned: VGA Mode 13h framebuffer (0xA0000-0xAFA00)');
+if (prune.textVga) console.log('  Pruned: VGA text buffer (0xB8000-0xB8FA0)');
 
 const totalAddresses = memoryZones.reduce((sum, [s, e]) => sum + (e - s), 0);
 console.log(`Memory zones: ${memoryZones.map(([s,e]) => `0x${s.toString(16)}-0x${e.toString(16)} (${e-s})`).join(', ')}`);

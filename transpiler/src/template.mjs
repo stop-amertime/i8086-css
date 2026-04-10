@@ -162,11 +162,16 @@ export function emitHTMLHeader() {
 <meta charset="utf-8">
 <title>CSS-DOS</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
 `;
 }
 
 export function emitHTMLFooter() {
-  return `</style>
+  return `
+body, .cpu::after {
+  font-family: "VT323", monospace;
+}
+</style>
 </head>
 <body>
 <div class="clock" style="container-type:inline-size">

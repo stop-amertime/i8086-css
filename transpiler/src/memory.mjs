@@ -7,23 +7,21 @@
 const BIOS_LINEAR = 0xF0000; // F000:0000
 const BIOS_SEG = 0xF000;
 
-// Standard IVT entries for gossamer.asm (must match handler offsets in gossamer.lst / ref-emu.mjs)
-const BIOS_IVT_HANDLERS = {
-  0x10: 0x0000,  // INT 10h - Video services
-  0x16: 0x0155,  // INT 16h - Keyboard
-  0x1A: 0x0190,  // INT 1Ah - Timer
-  0x20: 0x023D,  // INT 20h - Program terminate
-  0x21: 0x01A9,  // INT 21h - DOS services
-};
-
 /**
- * Build IVT (Interrupt Vector Table) bytes for the standard BIOS handlers.
+ * Build IVT (Interrupt Vector Table) bytes from a handler map.
+ * Handlers should come from tools/lib/bios-symbols.mjs loadIvtHandlers(),
+ * which parses them fresh from the NASM listing. Nothing in this repo
+ * should hardcode handler offsets — they change every BIOS rebuild.
+ *
  * Returns {addr, bytes} suitable for embeddedData.
  * Each IVT entry is 4 bytes: IP_lo, IP_hi, CS_lo, CS_hi.
  */
-export function buildIVTData() {
+export function buildIVTData(handlers) {
+  if (!handlers || Object.keys(handlers).length === 0) {
+    throw new Error('buildIVTData: handlers map is required — pass loadIvtHandlers(lstPath)');
+  }
   const ivt = new Array(0x400).fill(0);
-  for (const [intNum, handlerOff] of Object.entries(BIOS_IVT_HANDLERS)) {
+  for (const [intNum, handlerOff] of Object.entries(handlers)) {
     const addr = parseInt(intNum) * 4;
     ivt[addr]     = handlerOff & 0xFF;         // IP low
     ivt[addr + 1] = (handlerOff >> 8) & 0xFF;  // IP high
@@ -50,18 +48,29 @@ export function buildAddressSet(zones) {
 /**
  * Standard memory zones for .COM programs.
  * --mem controls the conventional memory size (program + stack area).
+ * When `graphics` is true, also includes the Mode 13h framebuffer at 0xA0000
+ * (320x200 = 64000 bytes, one byte per pixel as a palette index).
  */
-export function comMemoryZones(programBytes, programOffset, memBytes) {
+export function comMemoryZones(programBytes, programOffset, memBytes, graphics = false) {
   // memBytes = size of conventional memory area starting at 0
   // (includes IVT + BDA + program + stack)
-  return [
+  const zones = [
     [0x0000, memBytes],                // IVT + BDA + program + stack (contiguous)
     [0xB8000, 0xB8FA0],               // VGA text mode (80x25x2 = 4000 bytes)
   ];
+  if (graphics) {
+    zones.push([0xA0000, 0xAFA00]);   // VGA Mode 13h framebuffer (320x200 = 64000 bytes)
+  }
+  return zones;
 }
 
 /**
- * Standard memory zones for DOS boot mode.
+ * Canonical memory zones for DOS boot mode.
+ *
+ * CSS-DOS is a DOS/PC emulator — the memory layout must match what a real
+ * PC-compatible machine looks like, because that's what DOS programs assume.
+ * See CLAUDE.md ("What CSS-DOS is (and isn't)") for the full rule set.
+ *
  * memBytes = total conventional memory size (default 640KB = 0xA0000).
  *
  * The EDRDOS kernel always relocates its code and data structures to the
@@ -69,18 +78,34 @@ export function comMemoryZones(programBytes, programOffset, memBytes) {
  * The middle area (between the kernel image and DOS high area) is where
  * user programs load — its size depends on the program.
  *
- * Layout (640KB):
+ * Canonical layout (default, no pruning):
  *   0x00000-0x00600  IVT + BDA + free area (always needed)
  *   0x00600-0x1A000  Kernel binary + decompressed code/data (~105 KB)
  *   0x1A000-0x30000  Kernel init workspace + temp relocation (~88 KB)
  *   0x30000-0x86000  User program area (grows with program size)
  *   0x86000-0xA0000  DOS data/code segments, relocated BIOS, CONFIG,
  *                    COMMAND.COM, system MCBs (~104 KB, always needed)
+ *   0xA0000-0xAFA00  VGA Mode 13h framebuffer (64000 bytes) — always emitted
+ *   0xB8000-0xB8FA0  VGA text mode buffer (4000 bytes) — always emitted
  *
- * To reduce CSS size for small programs, pass a smaller --mem value.
- * The kernel high area (top 104KB) is always included regardless of --mem.
+ * Both VGA regions are emitted by default because a real PC always has
+ * them. Programs that never touch them just get a zero-filled region in
+ * the CSS.
+ *
+ * ### Bake-time pruning (optional)
+ *
+ * The `prune` option lets callers omit specific regions from the output as
+ * a size optimization. This is prune-only: it never relocates or fakes
+ * anything. Passing a prune flag is an author's promise that the program
+ * does not write to that region. If it does, the write silently vanishes.
+ *
+ *   prune.gfx      — drop the Mode 13h framebuffer (saves 64000 bytes of CSS)
+ *   prune.textVga  — drop the VGA text buffer      (saves 4000 bytes of CSS)
+ *
+ * `memBytes` is the other pruning knob: lowering it shrinks the conventional
+ * RAM region. The kernel high area (top 104KB) is always included regardless.
  */
-export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedData) {
+export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedData, prune = {}) {
   // The kernel high area always starts at memBytes - 0x1A000 (104 KB from top)
   const highAreaStart = memBytes - 0x1A000;
   // The kernel low area covers IVT + BDA + kernel image + init workspace
@@ -95,7 +120,12 @@ export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedDa
     zones.push([0x0000, lowAreaEnd]);       // IVT + BDA + kernel + init workspace
     zones.push([highAreaStart, memBytes]);   // DOS high area + program heap top
   }
-  zones.push([0xB8000, 0xB8FA0]);           // VGA text mode
+  if (!prune.gfx) {
+    zones.push([0xA0000, 0xAFA00]);         // VGA Mode 13h framebuffer (320x200)
+  }
+  if (!prune.textVga) {
+    zones.push([0xB8000, 0xB8FA0]);         // VGA text mode (80x25x2)
+  }
 
   // Include embedded data regions (e.g., disk image at 0xD0000)
   for (const { addr, bytes } of (embeddedData || [])) {

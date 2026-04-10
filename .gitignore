@@ -10,6 +10,10 @@
 *.o
 *.com
 
+# Build outputs — binaries are small and needed, track them; listings are regenerable
+!build/*.bin
+build/*.lst
+
 # Node
 node_modules/
 dist/
@@ -29,9 +33,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Third-party source
-examples/Zork_I_-_The_Great_Underground_Empire_1980/
-
 # Playwright debug artifacts
 .playwright-mcp/
 
@@ -40,17 +41,8 @@ examples/Zork_I_-_The_Great_Underground_Empire_1980/
 !package.json
 !package-lock.json
 !legacy/*.json
-tests/*-raw.txt
-tests/*-stderr.txt
-calcite_stderr.txt
-.compare-trace.json
-ref-trace.json
-tests/dos-ref-*.log
 
 # Disk images and archives
 dos/disk.img
 *.img
 *.zip
-
-# Windows artifacts
-nul

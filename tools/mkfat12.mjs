@@ -19,22 +19,12 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 
-// --- FAT12 1.44MB floppy geometry ---
+// --- FAT12 geometry — auto-sized to fit content ---
 const SECTOR_SIZE = 512;
-const SECTORS_PER_TRACK = 18;
-const HEADS = 2;
-const CYLINDERS = 80;
-const TOTAL_SECTORS = SECTORS_PER_TRACK * HEADS * CYLINDERS; // 2880
-const DISK_SIZE = TOTAL_SECTORS * SECTOR_SIZE; // 1,474,560
-
-// FAT12 layout
 const RESERVED_SECTORS = 1;    // boot sector
 const NUM_FATS = 2;
-const FAT_SECTORS = 9;         // each FAT is 9 sectors for 1.44MB
-const ROOT_DIR_ENTRIES = 224;  // standard for 1.44MB
-const ROOT_DIR_SECTORS = Math.ceil(ROOT_DIR_ENTRIES * 32 / SECTOR_SIZE); // 14
-const DATA_START_SECTOR = RESERVED_SECTORS + NUM_FATS * FAT_SECTORS + ROOT_DIR_SECTORS;
-// = 1 + 2*9 + 14 = 33
+const ROOT_DIR_ENTRIES = 16;   // small root dir (16 entries = 1 sector)
+const ROOT_DIR_SECTORS = Math.ceil(ROOT_DIR_ENTRIES * 32 / SECTOR_SIZE); // 1
 
 // --- Parse arguments ---
 const args = process.argv.slice(2);
@@ -57,63 +47,68 @@ if (!outputFile) {
   process.exit(1);
 }
 
+// --- Compute disk size from content ---
+// Count total data sectors needed for all files + subdirectory clusters
+let dataSectorsNeeded = 0;
+for (const file of files) {
+  dataSectorsNeeded += Math.ceil(file.data.length / SECTOR_SIZE) || 1;
+}
+// Add 1 cluster per unique subdirectory
+const uniqueDirs = new Set();
+for (const file of files) {
+  const backslash = file.name.indexOf('\\');
+  if (backslash >= 0) uniqueDirs.add(file.name.substring(0, backslash));
+}
+dataSectorsNeeded += uniqueDirs.size;
+
+// FAT12: each FAT sector covers ~341 clusters (512 bytes * 2/3 entries)
+// FAT sectors needed = ceil(dataClusters / 341)
+const dataClusters = dataSectorsNeeded + 2; // +2 for reserved entries
+const FAT_SECTORS = Math.max(1, Math.ceil((dataClusters * 3 / 2) / SECTOR_SIZE));
+const DATA_START_SECTOR = RESERVED_SECTORS + NUM_FATS * FAT_SECTORS + ROOT_DIR_SECTORS;
+
+// Total sectors = overhead + data + 10% headroom (min 64 sectors)
+const TOTAL_SECTORS = Math.max(64, DATA_START_SECTOR + dataSectorsNeeded + Math.ceil(dataSectorsNeeded * 0.1));
+const DISK_SIZE = TOTAL_SECTORS * SECTOR_SIZE;
+
+// Pick a plausible floppy geometry (doesn't matter for CSS-DOS, kernel reads BPB)
+const HEADS = 2;
+const SECTORS_PER_TRACK = 18;
+
 // --- Create disk image ---
 const disk = new Uint8Array(DISK_SIZE);
 
 // --- Boot sector (sector 0) ---
-// Jump instruction
-disk[0] = 0xEB; disk[1] = 0x3C; disk[2] = 0x90; // jmp short 0x3E; nop
-
-// OEM name
+disk[0] = 0xEB; disk[1] = 0x3C; disk[2] = 0x90;
 writeString(disk, 3, 'CSSDOS  ');
 
 // BIOS Parameter Block (BPB)
-writeWord(disk, 11, SECTOR_SIZE);          // bytes per sector
+writeWord(disk, 11, SECTOR_SIZE);
 disk[13] = 1;                               // sectors per cluster
-writeWord(disk, 14, RESERVED_SECTORS);     // reserved sectors
-disk[16] = NUM_FATS;                        // number of FATs
-writeWord(disk, 17, ROOT_DIR_ENTRIES);     // root dir entries
-writeWord(disk, 19, TOTAL_SECTORS);        // total sectors (16-bit)
-disk[21] = 0xF0;                            // media descriptor (1.44MB floppy)
-writeWord(disk, 22, FAT_SECTORS);          // sectors per FAT
-writeWord(disk, 24, SECTORS_PER_TRACK);    // sectors per track
-writeWord(disk, 26, HEADS);               // number of heads
-writeDword(disk, 28, 0);                   // hidden sectors
-writeDword(disk, 32, 0);                   // total sectors (32-bit, 0 since <65536)
+writeWord(disk, 14, RESERVED_SECTORS);
+disk[16] = NUM_FATS;
+writeWord(disk, 17, ROOT_DIR_ENTRIES);
+writeWord(disk, 19, TOTAL_SECTORS);
+disk[21] = 0xF0;                            // media descriptor
+writeWord(disk, 22, FAT_SECTORS);
+writeWord(disk, 24, SECTORS_PER_TRACK);
+writeWord(disk, 26, HEADS);
+writeDword(disk, 28, 0);
+writeDword(disk, 32, 0);
 
 // Extended boot record
-disk[36] = 0x00;                            // drive number (floppy)
-disk[37] = 0x00;                            // reserved
-disk[38] = 0x29;                            // extended boot signature
-writeDword(disk, 39, 0x12345678);          // volume serial number
-writeString(disk, 43, 'CSS-DOS    ');      // volume label (11 chars)
-writeString(disk, 54, 'FAT12   ');         // filesystem type
+disk[36] = 0x00; disk[37] = 0x00; disk[38] = 0x29;
+writeDword(disk, 39, 0x12345678);
+writeString(disk, 43, 'CSS-DOS    ');
+writeString(disk, 54, 'FAT12   ');
 
-// Boot code — minimal: just print a message and halt
-// We don't actually boot from this sector; the BIOS loads the kernel directly.
-// But DOS kernel reads the BPB from the boot drive to understand disk geometry.
-const bootCode = [
-  0xFA,                     // cli
-  0xEB, 0xFE,              // jmp $ (halt)
-];
-for (let i = 0; i < bootCode.length; i++) {
-  disk[0x3E + i] = bootCode[i];
-}
-
-// Boot signature
-disk[510] = 0x55;
-disk[511] = 0xAA;
+// Boot code
+disk[0x3E] = 0xFA; disk[0x3F] = 0xEB; disk[0x40] = 0xFE;
+disk[510] = 0x55; disk[511] = 0xAA;
 
 // --- Initialize FATs ---
-// FAT12: first two entries are reserved
-// Entry 0: media descriptor | 0xF00
-// Entry 1: 0xFFF (end of chain marker)
 const fat1Start = RESERVED_SECTORS * SECTOR_SIZE;
 const fat2Start = (RESERVED_SECTORS + FAT_SECTORS) * SECTOR_SIZE;
-
-// FAT12 entries are 12 bits each, packed in 1.5 bytes
-// Entry 0 = 0xFF0, Entry 1 = 0xFFF
-// Bytes: F0 FF FF
 disk[fat1Start + 0] = 0xF0;
 disk[fat1Start + 1] = 0xFF;
 disk[fat1Start + 2] = 0xFF;
@@ -165,7 +160,7 @@ if (rootDirEntryOffset < ROOT_DIR_ENTRIES * 32) {
 
 // --- Write disk image ---
 writeFileSync(resolve(outputFile), disk);
-console.log(`Created ${outputFile} (${DISK_SIZE} bytes, ${files.length} files)`);
+console.log(`Created ${outputFile} (${DISK_SIZE} bytes, ${files.length} files, ${TOTAL_SECTORS} sectors)`);
 
 // ============================================================
 // Directory and file writing

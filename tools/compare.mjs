@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
+import { loadIvtHandlers, writeIvtTo } from './lib/bios-symbols.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -57,19 +58,11 @@ for (let i = 0; i < comBin.length; i++) memory[0x100 + i] = comBin[i];
 const BIOS_BASE = 0xF0000;
 for (let i = 0; i < biosBin.length; i++) memory[BIOS_BASE + i] = biosBin[i];
 
-// IVT
+// IVT — handler offsets come from the NASM listing next to the .bin,
+// not hardcoded. See tools/lib/bios-symbols.mjs for the rationale.
 const BIOS_SEG = 0xF000;
-const handlers = {
-  0x10: 0x0000, 0x16: 0x0155, 0x1A: 0x0190,
-  0x20: 0x023D, 0x21: 0x01A9,
-};
-for (const [intNum, off] of Object.entries(handlers)) {
-  const addr = parseInt(intNum) * 4;
-  memory[addr] = off & 0xFF;
-  memory[addr + 1] = (off >> 8) & 0xFF;
-  memory[addr + 2] = BIOS_SEG & 0xFF;
-  memory[addr + 3] = (BIOS_SEG >> 8) & 0xFF;
-}
+const handlers = loadIvtHandlers(biosPath.replace(/\.bin$/, '.lst'));
+writeIvtTo(memory, handlers, BIOS_SEG);
 
 const cpu = Intel8086(
   (addr, val) => { memory[addr & 0xFFFFF] = val & 0xFF; },

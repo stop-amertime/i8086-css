@@ -9,7 +9,8 @@
 ; Backend is memory-mapped (no port I/O):
 ;   - VGA text buffer at B800:0000
 ;   - Disk image at D000:0000
-;   - Keyboard input via polling 0000:0500
+;   - Keyboard input via BDA ring buffer at 0040:001E (standard PC convention)
+;     Host writes (scancode<<8|ascii) word into the ring buffer before each tick.
 ;
 ; DOS kernel (KERNEL.SYS) is pre-loaded at 0060:0000 (linear 0x600)
 ; by the transpiler. The BIOS init code sets up the IVT and jumps to it.
@@ -252,7 +253,14 @@ int10h_handler:
     mov ds, cx
     mov byte [video_cur_pos], 0
     mov byte [video_cur_pos+1], 0
-    mov [video_mode], al        ; store actual requested mode, not hardcoded 0x03
+    ; Only store modes we actually support; map anything else to 0x03.
+    ; Programs like rogue request modes (e.g. 0x11 EGA/VGA mono) that we
+    ; can't emulate — fall back to text so BDA stays consistent.
+    cmp al, 0x13
+    je .set_mode_store
+    mov al, 0x03                ; unsupported mode → fall back to text
+.set_mode_store:
+    mov [video_mode], al
     ; Branch on mode: AL=0x13 → Mode 13h graphics, else text
     cmp al, 0x13
     je .set_mode_13h
@@ -703,44 +711,43 @@ int16h_handler:
     iret
 
 .read_key:
-    ; Busy-wait on keyboard buffer at 0000:0500
-    pop ds
-    pop bx
-    push ds
-    push bx
-    xor bx, bx
-    mov ds, bx
+    ; AH=00h/10h: Block until a key is in the BDA ring buffer, then pop it.
+    ; DS is already BDA_SEG from handler entry.
 .key_wait:
-    mov ax, [0x0500]
-    test ax, ax
-    jz .key_wait
-    mov word [0x0500], 0
-    pop bx
+    mov bx, [kbd_buffer_head]
+    cmp bx, [kbd_buffer_tail]
+    je .key_wait                ; buffer empty — spin
+    mov ax, [bx]                ; read (scancode<<8 | ascii) word
+    add bx, 2
+    cmp bx, [kbd_buffer_end]    ; wrap around ring buffer
+    jb .rk_nowrap
+    mov bx, [kbd_buffer_start]
+.rk_nowrap:
+    mov [kbd_buffer_head], bx   ; advance head (consumes the entry)
     pop ds
-    iret
+    pop bx
+    iret                        ; AX = key word
 
 .check_key:
-    ; Check if key is available (non-destructive)
+    ; AH=01h/11h: Non-destructive peek. Set ZF if buffer empty, clear if key waiting.
+    ; DS is already BDA_SEG from handler entry.
+    mov bx, [kbd_buffer_head]
+    cmp bx, [kbd_buffer_tail]
+    je .ck_empty
+    mov ax, [bx]                ; peek at next key (don't consume)
     pop ds
     pop bx
-    push ds
-    push bx
-    xor bx, bx
-    mov ds, bx
-    mov ax, [0x0500]
-    pop bx
-    pop ds
-    test ax, ax
     push bp
     mov bp, sp
-    jz .ck_none
-    ; Key available: clear ZF
-    and word [bp+6], 0xFFBF
-    jmp short .ck_ret
-.ck_none:
-    ; No key: set ZF
-    or word [bp+6], 0x0040
-.ck_ret:
+    and word [bp+6], 0xFFBF     ; clear ZF — key available
+    pop bp
+    iret
+.ck_empty:
+    pop ds
+    pop bx
+    push bp
+    mov bp, sp
+    or word [bp+6], 0x0040      ; set ZF — no key
     pop bp
     iret
 

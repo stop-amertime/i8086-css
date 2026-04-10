@@ -167,6 +167,11 @@ int10h_handler:
     ; everything else treated as text mode (80x25).
     pop ax                 ; AL = original mode byte
     push ax                ; save it again for the final pop
+    ; Only store modes we support; map anything else to 0x03.
+    cmp al, 0x13
+    je .store_mode
+    mov al, 0x03
+.store_mode:
     mov [0x0049], al       ; store video_mode in BDA
     cmp al, 0x13
     je .set_mode_13h

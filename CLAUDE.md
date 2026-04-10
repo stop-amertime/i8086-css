@@ -157,6 +157,241 @@ The rules:
   the mode byte for display routing. Handlers never branch on "is this region
   present".
 
+### The disk problem and the ROM disk plan (planned, not yet implemented)
+
+The DOS boot path bakes the FAT12 disk image into 8086 real-mode memory at
+`0xD0000`. The 8086 can only address 1 MB (`0x00000`–`0xFFFFF`) and the BIOS
+ROM lives at `0xF0000`–`0xFFFFF`, so the disk has at most ~128 KB of space
+between `0xD0000` and `0xEFFFF`. That's enough for tiny test programs but
+nowhere near enough for real software like Doom8088 (whose preprocessed text
+WAD `DOOM16DT.WAD` alone is 1.3 MB, never mind the EXE).
+
+#### How a real DOS computer reads from disk
+
+Before describing the fix, it's worth understanding what we're emulating,
+because the layering matters. On any DOS PC ever built, an application's
+`fread()` call goes through four cleanly separated layers:
+
+```
+Application:      fread(buf, 1, 512, fp)
+                       ↓
+C runtime:        _read(fd, buf, 512)
+                       ↓
+DOS kernel:       INT 21h AH=3Fh "read from file handle"
+                       ↓
+DOS file system:  walks FAT chain, computes (drive, LBA, count)
+                       ↓
+BIOS:             INT 13h AH=02h "read sectors from disk"
+                       ↓
+BIOS sector driver: talks to disk controller hardware
+                       ↓
+Hardware:         IDE/floppy controller actually moves bytes
+```
+
+Each layer has a clean interface and the layer above does not know how the
+layer below works. This is why a DOS program written for an IBM XT in 1985
+runs unchanged on a 2024 PC with NVMe storage — every layer is replaceable.
+
+- **Application + C runtime** live inside the program binary. They think in
+  files and bytes. They never change.
+- **The DOS kernel** is the only layer that knows what a "file" is. It owns
+  the FAT, the directory tree, the per-process file handle table, the file
+  position. It translates "give me bytes 500–600 of MYFILE.TXT" into "read
+  sector 47 from drive A, copy bytes 88–187 from that sector into the
+  destination". For us this is **EDR-DOS** sitting in `dos/bin/kernel.sys`,
+  ~58 KB of code we did not write.
+- **The BIOS** has no idea what a file is. It only knows sectors. `INT 13h
+  AH=02h` says "read N sectors starting at LBA L into ES:BX" and that is the
+  whole interface. The implementation can be anything: a real floppy
+  controller, an IDE bus, a USB MSC bridge, a RAM disk, **or a CSS dispatch
+  table**. The DOS kernel cannot tell the difference and does not care.
+
+The key insight: **the BIOS↔hardware boundary is the only place where "how
+bytes physically come off a disk" lives.** Everything above that boundary is
+the same on every PC ever made. A 1985 floppy and a 2024 NVMe SSD both run
+the same DOS programs because both end up satisfying `INT 13h AH=02h` with
+the right bytes — and that's the only thing the layer above asks of them.
+
+So **the ROM disk plan only changes Layer 4** (the BIOS sector driver).
+Everything above — application, libc, EDR-DOS kernel, FAT walker, file
+handle table — is untouched. This is exactly the layering that lets the same
+DOS code run on different storage backends.
+
+#### Why "outside the address space" is even meaningful in CSS-DOS
+
+CSS-DOS doesn't have physical RAM. Memory is a sparse map of integer
+addresses to bytes, expressed as `@property --m{N}` declarations and a
+`--readMem(--at: N)` dispatch function. Address numbers are unbounded — we
+could have `@property --m17000000` and Chrome would handle it. The 1 MB
+limit is purely a property of the **8086 CPU's segment:offset addressing**:
+`mov al, [si]` with `DS:SI` resolves to `linear = DS*16 + SI`, and both are
+16-bit, so the linear result tops out at `0x10FFEF` (and is masked to
+`0xFFFFF` by A20 wrap). The CPU literally cannot generate a `mov` instruction
+whose target byte is at linear address `0x100000` or higher.
+
+So we can put the disk's bytes in CSS at any address we want. The 8086 just
+can't `mov` to them directly. The BIOS has to bridge the gap — and the
+bridge is exactly the BIOS sector driver from Layer 4 above. We're swapping
+out the equivalent of "the floppy controller" with "the CSS dispatch table",
+and just like swapping floppy for IDE, the layers above don't notice.
+
+#### The bridge: memory-mapped window with an LBA register
+
+We carve a small region of normal 8086 RAM into a **disk window**:
+
+| Address       | Size      | Purpose                                       |
+|---------------|-----------|-----------------------------------------------|
+| `0x004F0`     | 2 bytes   | Disk LBA register (BDA, current sector)       |
+| `0xD0000`     | 512 bytes | Disk window (one sector visible to the CPU)   |
+
+The LBA register lives **inside the BIOS Data Area** at `0x004F0`. The BDA
+spans `0x400`–`0x4FF` and the `0x4F0`–`0x4FF` range is the canonical
+"intra-application communications area" — reserved for vendor / app use,
+with no standard meaning that EDR-DOS or any well-behaved DOS program
+touches. That's the right home for a BIOS-private control register: it's
+BDA-owned (matches what the LBA represents conceptually), it survives across
+DOS calls without interference, and it stays inside the canonical PC memory
+layout the rest of the docs already commit to.
+
+(We deliberately do *not* use `0x500`. That address is the "magic keyboard
+byte" in `gossamer.asm` (the simple BIOS, not the DOS one). The simple BIOS
+gets away with it because its memory map is flat and `0x500` is otherwise
+meaningless there. In the DOS path, `0x500` is inside the application
+workspace EDR-DOS hands out, and a stray write from any program would
+corrupt the disk register. The BDA is the safe place.)
+
+The LBA register is a normal writable word — the CPU writes it like any
+other memory. The disk window is **also** addressable like normal memory,
+but the values it returns aren't stored bytes — they're computed by
+`--readMem` from the current LBA value plus the byte offset within the
+window. Conceptually:
+
+```css
+@function --readMem(--at <integer>) returns <integer> {
+  result: if(
+    /* normal RAM */
+    ...
+    /* disk window: 512 cases that dispatch on the LBA register at 0x4F0 */
+    style(--at: 851968): --readDiskByte(var(--__1m1264), 0);   /* 0xD0000 → LBA word + offset 0 */
+    style(--at: 851969): --readDiskByte(var(--__1m1264), 1);   /* 0xD0001 → LBA word + offset 1 */
+    ...
+    style(--at: 852479): --readDiskByte(var(--__1m1264), 511); /* 0xD01FF → LBA word + offset 511 */
+  else: 0);
+}
+
+@function --readDiskByte(--lba <integer>, --off <integer>) returns <integer> {
+  result: if(
+    style(--lba: 0, --off: 0): 235;       /* sector 0, byte 0 = MZ signature 'M' */
+    style(--lba: 0, --off: 1): 60;
+    /* ... one branch per disk byte ... */
+  else: 0);
+}
+```
+
+(`var(--__1m1264)` reads the previous-tick value of `--m1264` — the byte at
+linear address `0x4F0`. The actual emission probably reads the full word as
+two bytes combined, but the principle is the same.)
+
+The BIOS's `INT 13h` handler (read sectors from disk) becomes:
+
+```asm
+; AH=02h: read CX sectors from disk to ES:BX, starting at LBA in (CH/CL/DH)
+;   For each requested sector:
+;     1. Compute LBA from (cyl, head, sector) and store in [0040:00F0]  (BDA + 0xF0)
+;     2. Copy 512 bytes from 0xD0000 to ES:BX using a normal mov-loop
+;     3. ES:BX += 512
+```
+
+That's it. The CPU does normal byte-by-byte (or word-by-word) memory copies.
+The CSS engine, every time the CPU reads a byte from the window, satisfies
+the read by dispatching into the disk-data table keyed by the current LBA.
+
+#### Why this generalises to any DOS program
+
+The whole point of preserving the `INT 13h` interface is that **we don't
+have to know anything about the program above us**. Any DOS program that
+uses normal file I/O hits this code path automatically:
+
+1. Program calls `fread()` or `open()`/`read()` (or whichever libc the
+   program was linked with — Watcom, Microsoft C, gcc-ia16/newlib, etc.).
+2. libc issues `INT 21h AH=3Dh / 3Fh / 42h / 3Eh` (open, read, lseek,
+   close).
+3. EDR-DOS receives these, walks its file table, walks the FAT, and issues
+   `INT 13h AH=02h` for the sectors it needs.
+4. Our BIOS handler (the new one) services the read from the ROM disk.
+5. EDR-DOS hands the bytes back up, libc returns from `fread()`, the
+   program gets its data and never knows the storage was a CSS function.
+
+This is exactly how a real `IO.SYS` shim worked when DOS booted from a CD
+through MSCDEX, or from a network share through LANtastic, or from a
+SCSI disk through an ASPI driver. New backend, same interface above. **The
+only programs that won't work are ones that bypass `INT 13h` and talk to a
+specific disk controller's I/O ports directly** — copy-protected games doing
+weak-bit checks, disk utilities like Norton Disk Doctor, etc. Those are rare
+and not interesting targets.
+
+So the answer to "will this generalise to new games?" is: yes, automatically,
+for every DOS program that uses files the normal way. Doom is just the first
+one we'll test against because its WAD makes the size pressure obvious.
+
+#### What changes in the codebase
+
+- **`bios/gossamer-dos.asm`** — rewrite `INT 13h AH=02h` to use the LBA
+  register + window pattern instead of computing a source segment from LBA.
+  Remove the `DISK_SEG = 0xD000` constant. Add an `lba_register` BDA offset
+  at `0xF0`. The DOS kernel and any program doing `INT 13h` continues to
+  work unchanged.
+- **`transpiler/src/memory.mjs`** — add a "ROM disk" zone that is *not*
+  treated as normal `@property --m{N}` writable memory. Instead it emits a
+  `--readDiskByte` dispatch function. The disk window addresses
+  (`0xD0000`–`0xD01FF`) get special-cased in the `--readMem` dispatch to
+  call `--readDiskByte` instead of returning a stored byte.
+- **`transpiler/src/emit-css.mjs`** — wire the new dispatch function into the
+  emitted CSS.
+- **`transpiler/generate-dos.mjs`** — read the disk image as a byte blob and
+  pass it to the ROM disk emitter instead of putting it in `embeddedData` at
+  `0xD0000`.
+- **`tools/mkfat12.mjs`** — no change. It produces a byte blob; where that
+  blob goes is the transpiler's concern.
+
+#### Constraints this respects
+
+- **Pure CSS, works in Chrome.** The dispatch function is plain `if(style())`
+  branches like everything else. No port I/O, no new opcodes, no JS bridge.
+- **The 8086 sees normal memory.** The CPU uses ordinary `mov` instructions
+  to read the window. From the running program's perspective the disk just
+  works the way memory-mapped I/O always does on PCs.
+- **The DOS kernel is unchanged.** EDR-DOS sees the same `INT 13h` it would
+  see on a real PC. We are not patching the kernel and not pretending to be
+  a different DOS.
+- **Calcite-friendly.** The dispatch is one big `if(style())` chain — Calcite
+  already pattern-matches these into dispatch tables.
+- **Disk size is unbounded.** A 1.3 MB WAD becomes ~1.3 million dispatch
+  branches in `--readDiskByte`, which produces ~30–50 MB of CSS source. That
+  is large but valid. Chrome won't realistically *evaluate* a Doom-sized CSS
+  file at any usable speed (per the limits documented above), but the file is
+  still well-formed CSS, and Calcite reads the source and JIT-compiles the
+  dispatch into a flat byte array — fast and memory-efficient.
+- **The cardinal rule still holds.** Calcite is not getting a special back
+  channel; it's reading the same CSS Chrome would.
+
+#### What it unlocks
+
+The first target is Doom8088 (text mode 40x25, `-DC_ONLY`, `i8088`,
+`-noems -noxms`). The pre-built EXE is ~180 KB and the WAD is ~1.3 MB.
+Together with the EDR-DOS kernel and CONFIG.SYS on the FAT12 image, the
+total is ~1.5 MB — well under any reasonable disk size cap. Once it boots
+to title screen we'll have validated the entire stack: EDR-DOS EXE loader,
+multi-segment program with relocations, INT 21h file I/O serving from the
+ROM disk, Mode 13h (or text mode) display, keyboard input.
+
+After Doom, the same plumbing makes any DOS program with significant data
+files runnable: Wolfenstein 3D, Commander Keen, Sierra adventure games,
+infocom interpreters, etc. Anything that fits in 640 KB conventional + a
+WAD/data file on disk, and uses `INT 21h` for file I/O (which is everything
+written with a normal C compiler or assembler that linked against MS-DOS or
+Borland or Watcom libc).
+
 ## The two approaches
 
 ### v1: JSON instruction database (legacy/)

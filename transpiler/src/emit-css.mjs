@@ -23,6 +23,7 @@ import { emitAllShifts, emitShiftFlagFunctions, emitShiftByNFlagFunctions } from
 import { emitCycleCounts } from './cycle-counts.mjs';
 import { emitIRQSentinel, emitPicVectorProperties, emitIRQFunctions } from './patterns/irq.mjs';
 import { emitPitProperties } from './patterns/pit.mjs';
+import { emitAllBiosHandlers } from './patterns/bios.mjs';
 
 /**
  * Dispatch table builder. Collects per-register entries keyed by opcode.
@@ -282,6 +283,7 @@ export function emitCSS(opts, writeStream) {
   emitAllShifts(dispatch);    // SHL/SHR/SAR/ROL/ROR (D0-D1)
   emitCycleCounts(dispatch);  // Per-instruction 8086 cycle costs
   emitIRQSentinel(dispatch);  // Sentinel opcode 0xF1 for hardware IRQ delivery
+  emitAllBiosHandlers(dispatch);  // BIOS opcode 0xD6 dispatch on routine ID
 
   const w = (s) => writeStream.write(s + '\n\n');
 

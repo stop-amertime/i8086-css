@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 import { emitCSS } from './src/emit-css.mjs';
 import { comMemoryZones, buildIVTData } from './src/memory.mjs';
 import { loadIvtHandlers } from '../tools/lib/bios-symbols.mjs';
+import { buildBiosRom } from './src/patterns/bios.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -94,6 +95,34 @@ const memBytes = memOverride != null ? memOverride : defaultMem;
 // real PC. See CLAUDE.md ("What CSS-DOS is").
 if (biosHandlers) {
   embeddedData.push(buildIVTData(biosHandlers));
+}
+
+// Phase 5 BIOS microcode: append ROM stubs after gossamer.bin.
+// Each BIOS-handled interrupt gets a 3-byte stub [0xD6, routineID, 0xCF]
+// placed right after the gossamer binary in the BIOS region (0xF0000+).
+// IVT entries for these interrupts are overridden to point to the new stubs.
+const { handlers: biosRomHandlers, romBytes: biosRomBytes } = buildBiosRom();
+const biosRomOffset = biosBytes.length; // offset within BIOS region
+for (let i = 0; i < biosRomBytes.length; i++) {
+  biosBytes.push(biosRomBytes[i]);
+}
+// Override IVT entries for BIOS-handled interrupts to point to the new ROM.
+// We build a dense byte array covering only the IVT slots we need to override,
+// then push it as an embeddedData entry AFTER the gossamer IVT so it wins.
+const BIOS_SEG = 0xF000;
+for (const [intNum, stubOffset] of Object.entries(biosRomHandlers)) {
+  const ivtAddr = parseInt(intNum) * 4;
+  const handlerOffset = biosRomOffset + stubOffset;
+  // Push a 4-byte embeddedData entry for each overridden IVT slot
+  embeddedData.push({
+    addr: ivtAddr,
+    bytes: [
+      handlerOffset & 0xFF,
+      (handlerOffset >> 8) & 0xFF,
+      BIOS_SEG & 0xFF,
+      (BIOS_SEG >> 8) & 0xFF,
+    ],
+  });
 }
 
 // Build memory zones

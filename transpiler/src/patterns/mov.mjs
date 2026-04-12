@@ -105,23 +105,33 @@ export function emitMOV_RegRM(dispatch) {
   dispatch.addEntry('IP', 0x8A, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `MOV reg8, r/m8`);
 
   // 0x89: MOV r/m16, reg16 (d=0) — destination is r/m
-  // If mod=11, r/m is a register. If mod!=11, it's a memory write.
-  // For register destination (mod=11): rm field selects register
+  // If mod=3 (register): single-cycle. If mod!=3 (memory): 2 μops.
+  // Register destination (mod=3): rm field selects register
   for (let r = 0; r < 8; r++) {
     dispatch.addEntry(regOrder16[r], 0x89,
       `if(style(--mod: 3) and style(--rm: ${r}): var(--regVal16); else: var(--__1${regOrder16[r]}))`,
       `MOV r/m16(reg), reg16 (if rm=${r})`);
   }
-  // Memory write: if mod!=3, write regVal16 to ea
+  // μop 0: write low byte to memory (addr is -1 if mod=3, so no write)
   dispatch.addMemWrite(0x89,
     `if(style(--mod: 3): -1; else: var(--ea))`,
     `--lowerBytes(var(--regVal16), 8)`,
-    `MOV r/m16(mem), reg16 low byte`);
+    `MOV r/m16(mem), reg16 lo`, 0);
+  // μop 1: write high byte to memory
   dispatch.addMemWrite(0x89,
     `if(style(--mod: 3): -1; else: calc(var(--ea) + 1))`,
     `--rightShift(var(--regVal16), 8)`,
-    `MOV r/m16(mem), reg16 high byte`);
-  dispatch.addEntry('IP', 0x89, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `MOV r/m16, reg16`);
+    `MOV r/m16(mem), reg16 hi`, 1);
+  // IP: on μop 0 only advance if mod=3 (reg, single-cycle); on μop 1 always advance (mem retire)
+  dispatch.addEntry('IP', 0x89,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `MOV r/m16, reg16 IP`, 0);
+  dispatch.addEntry('IP', 0x89,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `MOV r/m16, reg16 retire`, 1);
+  // Custom uOp advance: mod=3 → always 0 (single-cycle); mod!=3 → 0→1→0
+  dispatch.setUopAdvance(0x89,
+    `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
 
   // 0x88: MOV r/m8, reg8 (d=0, w=0) — destination is r/m (byte)
   // When mod=11, rm selects a register. Combine lo/hi into one entry per 16-bit reg.
@@ -167,17 +177,23 @@ export function emitMOV_SegRM(dispatch) {
       `if(${branches.join('; ')}; else: var(--__1${regOrder16[r]}))`,
       `MOV r/m16(${regOrder16[r]}), segreg`);
   }
-  // Memory write: if mod!=3, write segreg value to EA
-  // Uses precomputed --segRegVal from decode.mjs
+  // Memory write: if mod!=3, write segreg value to EA (2 μops)
   dispatch.addMemWrite(0x8C,
     `if(style(--mod: 3): -1; else: var(--ea))`,
     `--lowerBytes(var(--segRegVal), 8)`,
-    `MOV r/m16, segreg → mem lo`);
+    `MOV r/m16, segreg → mem lo`, 0);
   dispatch.addMemWrite(0x8C,
     `if(style(--mod: 3): -1; else: calc(var(--ea) + 1))`,
     `--rightShift(var(--segRegVal), 8)`,
-    `MOV r/m16, segreg → mem hi`);
-  dispatch.addEntry('IP', 0x8C, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `MOV r/m16, segreg`);
+    `MOV r/m16, segreg → mem hi`, 1);
+  dispatch.addEntry('IP', 0x8C,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `MOV r/m16, segreg IP`, 0);
+  dispatch.addEntry('IP', 0x8C,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `MOV r/m16, segreg retire`, 1);
+  dispatch.setUopAdvance(0x8C,
+    `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
 }
 
 /**
@@ -204,16 +220,16 @@ export function emitMOV_AccMem(dispatch) {
     `MOV [mem], AL`);
   dispatch.addEntry('IP', 0xA2, `calc(var(--__1IP) + 3)`, `MOV [mem], AL`);
 
-  // 0xA3: MOV [addr16], AX — store AX to seg:addr16 (default DS, overridable)
+  // 0xA3: MOV [addr16], AX — store AX to seg:addr16 (2 μops, always memory)
   dispatch.addMemWrite(0xA3,
     `calc(var(--directSeg) + var(--q1) + var(--q2) * 256)`,
     `var(--AL)`,
-    `MOV [mem], AX lo`);
+    `MOV [mem], AX lo`, 0);
   dispatch.addMemWrite(0xA3,
     `calc(var(--directSeg) + var(--q1) + var(--q2) * 256 + 1)`,
     `var(--AH)`,
-    `MOV [mem], AX hi`);
-  dispatch.addEntry('IP', 0xA3, `calc(var(--__1IP) + 3)`, `MOV [mem], AX`);
+    `MOV [mem], AX hi`, 1);
+  dispatch.addEntry('IP', 0xA3, `calc(var(--__1IP) + 3)`, `MOV [mem], AX`, 1);
 }
 
 /**

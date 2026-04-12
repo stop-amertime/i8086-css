@@ -37,7 +37,7 @@ export function emitShift_D1(dispatch) {
       `Shift D1 → ${regName}`);
   }
 
-  // Memory write: if mod!=3
+  // Memory write: if mod!=3, 2 μops for 16-bit write
   dispatch.addMemWrite(0xD1,
     `if(style(--mod: 3): -1; else: var(--ea))`,
     `if(` +
@@ -49,7 +49,7 @@ export function emitShift_D1(dispatch) {
     `style(--reg: 2): --lowerBytes(calc(var(--rmVal16) * 2 + var(--_cf)), 8); ` +
     `style(--reg: 3): --lowerBytes(calc(round(down, var(--rmVal16) / 2) + var(--_cf) * 32768), 8); ` +
     `else: 0)`,
-    `Shift D1 → mem lo`);
+    `Shift D1 → mem lo`, 0);
   dispatch.addMemWrite(0xD1,
     `if(style(--mod: 3): -1; else: calc(var(--ea) + 1))`,
     `if(` +
@@ -61,21 +61,27 @@ export function emitShift_D1(dispatch) {
     `style(--reg: 2): --rightShift(--lowerBytes(calc(var(--rmVal16) * 2 + var(--_cf)), 16), 8); ` +
     `style(--reg: 3): --rightShift(calc(round(down, var(--rmVal16) / 2) + var(--_cf) * 32768), 8); ` +
     `else: 0)`,
-    `Shift D1 → mem hi`);
+    `Shift D1 → mem hi`, 1);
 
-  // Flags: simplified — CF from the shifted-out bit
-  // RCL/RCR: only CF changes (new CF = shifted-out bit); leave PF/ZF/SF unchanged
+  // Flags
   dispatch.addEntry('flags', 0xD1,
     `if(` +
     `style(--reg: 4): calc(--shlFlags16(var(--rmVal16)) + --and(var(--__1flags), 3856)); ` +
     `style(--reg: 5): calc(--shrFlags16(var(--rmVal16)) + --and(var(--__1flags), 3856)); ` +
     `style(--reg: 7): calc(--sarFlags16(var(--rmVal16)) + --and(var(--__1flags), 3856)); ` +
-    `style(--reg: 2): calc(var(--__1flags) - --bit(var(--__1flags), 0) + --bit(var(--rmVal16), 15)); ` +  // RCL: new CF = old bit 15
-    `style(--reg: 3): calc(var(--__1flags) - --bit(var(--__1flags), 0) + --bit(var(--rmVal16), 0)); ` +   // RCR: new CF = old bit 0
+    `style(--reg: 2): calc(var(--__1flags) - --bit(var(--__1flags), 0) + --bit(var(--rmVal16), 15)); ` +
+    `style(--reg: 3): calc(var(--__1flags) - --bit(var(--__1flags), 0) + --bit(var(--rmVal16), 0)); ` +
     `else: var(--__1flags))`,
     `Shift D1 flags`);
 
-  dispatch.addEntry('IP', 0xD1, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `Shift D1`);
+  dispatch.addEntry('IP', 0xD1,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `Shift D1 IP`, 0);
+  dispatch.addEntry('IP', 0xD1,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `Shift D1 retire`, 1);
+  dispatch.setUopAdvance(0xD1,
+    `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
 }
 
 /**
@@ -236,7 +242,7 @@ export function emitShift_D3(dispatch) {
       `Shift D3 → ${regName}`);
   }
 
-  // Memory writes for mod != 3
+  // Memory writes for mod != 3 (2 μops)
   dispatch.addMemWrite(0xD3,
     `if(style(--mod: 3): -1; else: var(--ea))`,
     `if(` +
@@ -246,7 +252,7 @@ export function emitShift_D3(dispatch) {
     `style(--reg: 0): --lowerBytes(${rol16}, 8); ` +
     `style(--reg: 1): --lowerBytes(${ror16}, 8); ` +
     `else: 0)`,
-    `Shift D3 → mem lo`);
+    `Shift D3 → mem lo`, 0);
   dispatch.addMemWrite(0xD3,
     `if(style(--mod: 3): -1; else: calc(var(--ea) + 1))`,
     `if(` +
@@ -256,7 +262,7 @@ export function emitShift_D3(dispatch) {
     `style(--reg: 0): --rightShift(${rol16}, 8); ` +
     `style(--reg: 1): --rightShift(${ror16}, 8); ` +
     `else: 0)`,
-    `Shift D3 → mem hi`);
+    `Shift D3 → mem hi`, 1);
 
   // Flags: when CL=0 flags unchanged; otherwise compute per-operation flags
   // CF for SHL: bit (16-CL) of original = --bit(rmVal16, --_shlCFidx16),
@@ -273,7 +279,14 @@ export function emitShift_D3(dispatch) {
     `else: var(--__1flags))`,
     `Shift D3 flags`);
 
-  dispatch.addEntry('IP', 0xD3, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `Shift D3`);
+  dispatch.addEntry('IP', 0xD3,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `Shift D3 IP`, 0);
+  dispatch.addEntry('IP', 0xD3,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `Shift D3 retire`, 1);
+  dispatch.setUopAdvance(0xD3,
+    `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
 }
 
 /**

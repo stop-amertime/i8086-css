@@ -119,14 +119,19 @@ export function emitMOV_RMimm(dispatch) {
   dispatch.addMemWrite(0xC7,
     `if(style(--mod: 3): -1; else: var(--ea))`,
     `var(--immByte)`,
-    `MOV r/m16, imm16 → mem lo`);
+    `MOV r/m16, imm16 → mem lo`, 0);
   dispatch.addMemWrite(0xC7,
     `if(style(--mod: 3): -1; else: calc(var(--ea) + 1))`,
     `--rightShift(var(--immWord), 8)`,
-    `MOV r/m16, imm16 → mem hi`);
+    `MOV r/m16, imm16 → mem hi`, 1);
+  dispatch.addEntry('IP', 0xC7,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + 2); else: var(--__1IP))`,
+    `MOV r/m16, imm16 IP`, 0);
   dispatch.addEntry('IP', 0xC7,
     `calc(var(--__1IP) + 2 + var(--modrmExtra) + 2)`,
-    `MOV r/m16, imm16`);
+    `MOV r/m16, imm16 retire`, 1);
+  dispatch.setUopAdvance(0xC7,
+    `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
 
   // 0xC6: MOV r/m8, imm8
   for (const { reg, lowIdx, highIdx } of SPLIT_REGS) {
@@ -228,19 +233,20 @@ export function emitSTOS(dispatch) {
   dispatch.addEntry('IP', 0xAA, repIP(), `STOSB`);
 
   // STOSW: mem[ES:DI] = AX (word), DI += (DF ? -2 : 2)
+  // 2 μops: μop 0 writes lo, μop 1 writes hi + adjusts DI + retires
   dispatch.addMemWrite(0xAB,
     repGuardAddr(`calc(var(--__1ES) * 16 + var(--__1DI))`),
     `var(--AL)`,
-    `STOSW lo`);
+    `STOSW lo`, 0);
   dispatch.addMemWrite(0xAB,
     repGuardAddr(`calc(var(--__1ES) * 16 + var(--__1DI) + 1)`),
     `var(--AH)`,
-    `STOSW hi`);
+    `STOSW hi`, 1);
   dispatch.addEntry('DI', 0xAB,
     repGuardReg(`--lowerBytes(calc(var(--__1DI) + 2 - --bit(var(--__1flags), 10) * 4), 16)`, `var(--__1DI)`),
-    `STOSW DI adjust`);
-  dispatch.addEntry('CX', 0xAB, repCX(), `REP STOSW CX`);
-  dispatch.addEntry('IP', 0xAB, repIP(), `STOSW`);
+    `STOSW DI adjust`, 1);
+  dispatch.addEntry('CX', 0xAB, repCX(), `REP STOSW CX`, 1);
+  dispatch.addEntry('IP', 0xAB, repIP(), `STOSW`, 1);
 }
 
 /**
@@ -277,23 +283,23 @@ export function emitMOVS(dispatch) {
   dispatch.addEntry('CX', 0xA4, repCX(), `REP MOVSB CX`);
   dispatch.addEntry('IP', 0xA4, repIP(), `MOVSB`);
 
-  // MOVSW: copy word (2 bytes)
+  // MOVSW: copy word (2 μops)
   dispatch.addMemWrite(0xA5,
     repGuardAddr(`calc(var(--__1ES) * 16 + var(--__1DI))`),
     `var(--_strSrcByte)`,
-    `MOVSW lo`);
+    `MOVSW lo`, 0);
   dispatch.addMemWrite(0xA5,
     repGuardAddr(`calc(var(--__1ES) * 16 + var(--__1DI) + 1)`),
     `var(--_strSrcHiByte)`,
-    `MOVSW hi`);
+    `MOVSW hi`, 1);
   dispatch.addEntry('SI', 0xA5,
     repGuardReg(`--lowerBytes(calc(var(--__1SI) + 2 - --bit(var(--__1flags), 10) * 4), 16)`, `var(--__1SI)`),
-    `MOVSW SI adjust`);
+    `MOVSW SI adjust`, 1);
   dispatch.addEntry('DI', 0xA5,
     repGuardReg(`--lowerBytes(calc(var(--__1DI) + 2 - --bit(var(--__1flags), 10) * 4), 16)`, `var(--__1DI)`),
-    `MOVSW DI adjust`);
-  dispatch.addEntry('CX', 0xA5, repCX(), `REP MOVSW CX`);
-  dispatch.addEntry('IP', 0xA5, repIP(), `MOVSW`);
+    `MOVSW DI adjust`, 1);
+  dispatch.addEntry('CX', 0xA5, repCX(), `REP MOVSW CX`, 1);
+  dispatch.addEntry('IP', 0xA5, repIP(), `MOVSW`, 1);
 }
 
 /**
@@ -383,16 +389,23 @@ export function emitXCHG_RM(dispatch) {
       `if(${branches.join('; ')}; else: var(--__1${regName}))`,
       `XCHG r/m16 → ${regName}`);
   }
-  // Memory write: when mod!=3, write regVal16 to EA
+  // Memory write: when mod!=3, write regVal16 to EA (2 μops)
   dispatch.addMemWrite(0x87,
     `if(style(--mod: 3): -1; else: var(--ea))`,
     `--lowerBytes(var(--regVal16), 8)`,
-    `XCHG r/m16 → mem lo`);
+    `XCHG r/m16 → mem lo`, 0);
   dispatch.addMemWrite(0x87,
     `if(style(--mod: 3): -1; else: calc(var(--ea) + 1))`,
     `--rightShift(var(--regVal16), 8)`,
-    `XCHG r/m16 → mem hi`);
-  dispatch.addEntry('IP', 0x87, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `XCHG r/m16`);
+    `XCHG r/m16 → mem hi`, 1);
+  dispatch.addEntry('IP', 0x87,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `XCHG r/m16 IP`, 0);
+  dispatch.addEntry('IP', 0x87,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `XCHG r/m16 retire`, 1);
+  dispatch.setUopAdvance(0x87,
+    `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
 
   // 0x86: XCHG reg8, r/m8
   for (const { reg: regName, lowIdx, highIdx } of SPLIT_REGS) {
@@ -442,17 +455,23 @@ export function emitPOP_RM(dispatch) {
     `if(style(--mod: 3) and style(--rm: 4): --read2(calc(var(--__1SS) * 16 + var(--__1SP))); else: calc(var(--__1SP) + 2))`,
     `POP r/m16 SP`);
 
-  // Memory write: when mod!=3, write popped value to EA
+  // Memory write: when mod!=3, write popped value to EA (2 μops)
   dispatch.addMemWrite(0x8F,
     `if(style(--mod: 3): -1; else: var(--ea))`,
     `--lowerBytes(--read2(calc(var(--__1SS) * 16 + var(--__1SP))), 8)`,
-    `POP r/m16 → mem lo`);
+    `POP r/m16 → mem lo`, 0);
   dispatch.addMemWrite(0x8F,
     `if(style(--mod: 3): -1; else: calc(var(--ea) + 1))`,
     `--rightShift(--read2(calc(var(--__1SS) * 16 + var(--__1SP))), 8)`,
-    `POP r/m16 → mem hi`);
-
-  dispatch.addEntry('IP', 0x8F, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `POP r/m16`);
+    `POP r/m16 → mem hi`, 1);
+  dispatch.addEntry('IP', 0x8F,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `POP r/m16 IP`, 0);
+  dispatch.addEntry('IP', 0x8F,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `POP r/m16 retire`, 1);
+  dispatch.setUopAdvance(0x8F,
+    `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
 }
 
 /**
@@ -540,55 +559,37 @@ export function emitXLAT(dispatch) {
  * Same as INT 0xCD but interrupt number = 3, return IP = IP + 1.
  */
 export function emitINT3(dispatch) {
-  dispatch.addEntry('SP', 0xCC, `calc(var(--__1SP) - 6)`, `INT 3 (SP-=6)`);
+  // INT 3 (0xCC): same 6-μop structure as INT 0xCD, but intNum=3, retIP=IP+1
+  const ssBase = `var(--__1SS) * 16`;
 
-  // Load new IP from IVT[3*4] = IVT[12]
-  dispatch.addEntry('IP', 0xCC,
-    `--read2(12)`,
-    `INT 3 load IP from IVT`);
-
-  // Load new CS from IVT[3*4+2] = IVT[14]
-  dispatch.addEntry('CS', 0xCC,
-    `--read2(14)`,
-    `INT 3 load CS from IVT`);
-
-  // Clear IF (bit 9) and TF (bit 8): flags & 0xFCFF = flags & 64767
-  dispatch.addEntry('flags', 0xCC,
-    `--and(var(--__1flags), 64767)`,
-    `INT 3 clear IF+TF`);
-
-  const ssBase = `calc(var(--__1SS) * 16)`;
-  const retIP = `calc(var(--__1IP) + 1)`;
-
-  // Push FLAGS at SP-2/SP-1 (highest address, pushed first)
+  dispatch.addEntry('SP', 0xCC, `calc(var(--__1SP) - 6)`, `INT 3 (SP-=6)`, 0);
   dispatch.addMemWrite(0xCC,
     `calc(${ssBase} + var(--__1SP) - 2)`,
     `--lowerBytes(var(--__1flags), 8)`,
-    `INT 3 push FLAGS lo`);
+    `INT 3 push FLAGS lo`, 0);
   dispatch.addMemWrite(0xCC,
-    `calc(${ssBase} + var(--__1SP) - 1)`,
+    `calc(${ssBase} + var(--__1SP) + 5)`,
     `--rightShift(var(--__1flags), 8)`,
-    `INT 3 push FLAGS hi`);
-
-  // Push CS at SP-4/SP-3
+    `INT 3 push FLAGS hi`, 1);
   dispatch.addMemWrite(0xCC,
-    `calc(${ssBase} + var(--__1SP) - 4)`,
+    `calc(${ssBase} + var(--__1SP) + 2)`,
     `--lowerBytes(var(--__1CS), 8)`,
-    `INT 3 push CS lo`);
+    `INT 3 push CS lo`, 2);
   dispatch.addMemWrite(0xCC,
-    `calc(${ssBase} + var(--__1SP) - 3)`,
+    `calc(${ssBase} + var(--__1SP) + 3)`,
     `--rightShift(var(--__1CS), 8)`,
-    `INT 3 push CS hi`);
-
-  // Push return IP at SP-6/SP-5 (lowest address, pushed last)
+    `INT 3 push CS hi`, 3);
   dispatch.addMemWrite(0xCC,
-    `calc(${ssBase} + var(--__1SP) - 6)`,
-    `--lowerBytes(${retIP}, 8)`,
-    `INT 3 push IP lo`);
+    `calc(${ssBase} + var(--__1SP))`,
+    `--lowerBytes(calc(var(--__1IP) + 1), 8)`,
+    `INT 3 push IP lo`, 4);
   dispatch.addMemWrite(0xCC,
-    `calc(${ssBase} + var(--__1SP) - 5)`,
-    `--rightShift(${retIP}, 8)`,
-    `INT 3 push IP hi`);
+    `calc(${ssBase} + var(--__1SP) + 1)`,
+    `--rightShift(calc(var(--__1IP) + 1), 8)`,
+    `INT 3 push IP hi`, 5);
+  dispatch.addEntry('IP', 0xCC, `--read2(12)`, `INT 3 load IP from IVT`, 5);
+  dispatch.addEntry('CS', 0xCC, `--read2(14)`, `INT 3 load CS from IVT`, 5);
+  dispatch.addEntry('flags', 0xCC, `--and(var(--__1flags), 64767)`, `INT 3 clear IF+TF`, 5);
 }
 
 /**
@@ -596,57 +597,60 @@ export function emitINT3(dispatch) {
  * Otherwise just advance IP by 1.
  */
 export function emitINTO(dispatch) {
-  // OF = bit 11 of flags. Use arithmetic mux since --_of isn't a decode property.
-  // ofBit is 0 or 1. Arithmetic: of*trueVal + (1-of)*falseVal
+  // INTO (0xCE): if OF=1, fire INT 4 (6 μops). If OF=0, single-cycle (IP+=1).
+  // Use custom uOp advance: if OF=0, always retire. If OF=1, 6-μop sequence.
+  const ssBase = `var(--__1SS) * 16`;
   const ofBit = `--bit(var(--__1flags), 11)`;
-  const ssBase = `calc(var(--__1SS) * 16)`;
-  const retIP = `calc(var(--__1IP) + 1)`;
 
-  // SP: if OF, SP -= 6; else unchanged
+  // μop 0: SP -= 6 (if OF), write FLAGS lo (if OF)
   dispatch.addEntry('SP', 0xCE,
     `calc(var(--__1SP) - ${ofBit} * 6)`,
-    `INTO (SP-=6 if OF)`);
-
-  // IP: if OF, load from IVT[16]; else IP + 1
-  dispatch.addEntry('IP', 0xCE,
-    `calc(${ofBit} * --read2(16) + (1 - ${ofBit}) * (var(--__1IP) + 1))`,
-    `INTO load IP`);
-
-  // CS: if OF, load from IVT[18]; else unchanged
-  dispatch.addEntry('CS', 0xCE,
-    `calc(${ofBit} * --read2(18) + (1 - ${ofBit}) * var(--__1CS))`,
-    `INTO load CS`);
-
-  // flags: if OF, clear IF+TF; else unchanged
-  dispatch.addEntry('flags', 0xCE,
-    `calc(${ofBit} * --and(var(--__1flags), 64767) + (1 - ${ofBit}) * var(--__1flags))`,
-    `INTO clear IF+TF if OF`);
-
-  // Memory pushes — addr uses arithmetic mux: of*real_addr + (1-of)*(-1)
+    `INTO (SP-=6 if OF)`, 0);
   dispatch.addMemWrite(0xCE,
     `calc(${ofBit} * (${ssBase} + var(--__1SP) - 2) + (1 - ${ofBit}) * (-1))`,
     `--lowerBytes(var(--__1flags), 8)`,
-    `INTO push FLAGS lo`);
+    `INTO push FLAGS lo`, 0);
+  // μop 0 IP: advance if OF=0 (single-cycle)
+  dispatch.addEntry('IP', 0xCE,
+    `calc(var(--__1IP) + (1 - ${ofBit}))`,
+    `INTO IP μop0`, 0);
+
   dispatch.addMemWrite(0xCE,
-    `calc(${ofBit} * (${ssBase} + var(--__1SP) - 1) + (1 - ${ofBit}) * (-1))`,
+    `calc(${ssBase} + var(--__1SP) + 5)`,
     `--rightShift(var(--__1flags), 8)`,
-    `INTO push FLAGS hi`);
+    `INTO push FLAGS hi`, 1);
   dispatch.addMemWrite(0xCE,
-    `calc(${ofBit} * (${ssBase} + var(--__1SP) - 4) + (1 - ${ofBit}) * (-1))`,
+    `calc(${ssBase} + var(--__1SP) + 2)`,
     `--lowerBytes(var(--__1CS), 8)`,
-    `INTO push CS lo`);
+    `INTO push CS lo`, 2);
   dispatch.addMemWrite(0xCE,
-    `calc(${ofBit} * (${ssBase} + var(--__1SP) - 3) + (1 - ${ofBit}) * (-1))`,
+    `calc(${ssBase} + var(--__1SP) + 3)`,
     `--rightShift(var(--__1CS), 8)`,
-    `INTO push CS hi`);
+    `INTO push CS hi`, 3);
   dispatch.addMemWrite(0xCE,
-    `calc(${ofBit} * (${ssBase} + var(--__1SP) - 6) + (1 - ${ofBit}) * (-1))`,
-    `--lowerBytes(${retIP}, 8)`,
-    `INTO push IP lo`);
+    `calc(${ssBase} + var(--__1SP))`,
+    `--lowerBytes(calc(var(--__1IP) + 1), 8)`,
+    `INTO push IP lo`, 4);
   dispatch.addMemWrite(0xCE,
-    `calc(${ofBit} * (${ssBase} + var(--__1SP) - 5) + (1 - ${ofBit}) * (-1))`,
-    `--rightShift(${retIP}, 8)`,
-    `INTO push IP hi`);
+    `calc(${ssBase} + var(--__1SP) + 1)`,
+    `--rightShift(calc(var(--__1IP) + 1), 8)`,
+    `INTO push IP hi`, 5);
+  dispatch.addEntry('IP', 0xCE, `--read2(16)`, `INTO load IP from IVT`, 5);
+  dispatch.addEntry('CS', 0xCE, `--read2(18)`, `INTO load CS from IVT`, 5);
+  dispatch.addEntry('flags', 0xCE, `--and(var(--__1flags), 64767)`, `INTO clear IF+TF`, 5);
+
+  // Custom uOp advance: OF=0 → always retire; OF=1 → 0→1→2→3→4→5→0
+  // On μop 0, OF is in --__1flags. We use --bit(var(--__1flags), 11).
+  // Problem: on μops 1-5, --__1flags hasn't changed (flags only cleared on μop 5).
+  // So OF is still 1 on all μops. The advance: if OF=0 → 0; else standard chain.
+  dispatch.setUopAdvance(0xCE,
+    `if(` +
+    `style(--__1uOp: 0): calc(${ofBit} * 1); ` +
+    `style(--__1uOp: 1): 2; ` +
+    `style(--__1uOp: 2): 3; ` +
+    `style(--__1uOp: 3): 4; ` +
+    `style(--__1uOp: 4): 5; ` +
+    `else: 0)`);
 }
 
 /**

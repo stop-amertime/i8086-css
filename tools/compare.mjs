@@ -112,7 +112,8 @@ console.error(`Reference trace saved (${refTrace.length} ticks)`);
 console.error(`Running calcite for ${calciteTicks} ticks...`);
 
 // Find calcite binary
-const calciteBin = resolve(__dirname, '..', '..', 'calcite', 'target', 'release', 'calcite-cli.exe');
+const calciteExeName = process.platform === 'win32' ? 'calcite-cli.exe' : 'calcite-cli';
+const calciteBin = resolve(__dirname, '..', '..', 'calcite', 'target', 'release', calciteExeName);
 const calciteCmd = [
   calciteBin,
   '--input', cssPath,

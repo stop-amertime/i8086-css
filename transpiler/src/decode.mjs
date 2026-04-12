@@ -370,13 +370,5 @@ export function emitDecodeProperties() {
   --_shlCFidx16: max(0, calc(16 - var(--_clMasked)));
   --_shlCFidx8: max(0, calc(8 - var(--_clMasked)));
 
-  /* TF (Trap Flag) single-step: 8086 fires INT 1 AFTER the instruction completes.
-     --_tfPending: set to 1 when current FLAGS has TF=1 (latches the request).
-     --_tf: fires INT 1 on the NEXT tick by reading __1_tfPending.
-     This way the instruction executes normally, then INT 1 fires on the following tick. */
-  --_tfPending: --bit(var(--flags), 8);
-  --_tf: var(--__1_tfPending);
-  --_tfIP: --read2(4);
-  --_tfCS: --read2(6);
 `;
 }

@@ -23,7 +23,7 @@ export const REGISTERS = [
 // Extra state variables that participate in the double-buffer cycle
 export const STATE_VARS = [
   { name: 'halt', init: 0, debug: true },
-  { name: '_tfPending', init: 0, debug: false },
+  { name: 'uOp', init: 0, debug: true },
 ];
 
 /**

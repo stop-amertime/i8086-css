@@ -33,6 +33,7 @@ export const STATE_VARS = [
   { name: 'pitReload', init: 0, debug: false },
   { name: 'pitMode', init: 0, debug: false },
   { name: 'pitWriteState', init: 0, debug: false },
+  { name: 'kbdLast', init: 0, debug: false },
 ];
 
 /**
@@ -42,6 +43,11 @@ export function emitPropertyDecls(opts) {
   const all = getAllVars(opts);
   const lines = [];
   lines.push(`@property --clock {
+  syntax: '<integer>';
+  inherits: true;
+  initial-value: 0;
+}`);
+  lines.push(`@property --keyboard {
   syntax: '<integer>';
   inherits: true;
   initial-value: 0;

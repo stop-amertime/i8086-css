@@ -327,6 +327,16 @@ export function emitCSS(opts, writeStream) {
   writeStream.write('  /* ===== PIC / IRQ STATE ===== */\n');
   writeStream.write(emitPicVectorProperties() + '\n\n');
 
+  // Keyboard state
+  writeStream.write('  /* ===== KEYBOARD ===== */\n');
+  writeStream.write('  --_kbdScancode: --rightShift(var(--keyboard), 8);\n');
+  writeStream.write('  --_kbdAscii: --lowerBytes(var(--keyboard), 8);\n');
+  // Edge detection: update kbdLast only at instruction boundaries
+  writeStream.write('  --kbdLast: if(style(--__1uOp: 0): var(--keyboard); else: var(--__1kbdLast));\n');
+  // _kbdChanged: 1 when keyboard differs from previous boundary, 0 otherwise
+  writeStream.write('  --_kbdChanged: if(style(--__1uOp: 0): min(1, max(0, sign(calc(max(var(--keyboard), var(--__1kbdLast)) - min(var(--keyboard), var(--__1kbdLast)))))); else: 0);\n');
+  writeStream.write('\n');
+
   // Unknown opcode detection — sets --unknownOp=1 and --haltCode=opcode
   writeStream.write('  /* ===== UNKNOWN OPCODE FLAG ===== */\n');
   writeStream.write(dispatch.emitUnknownOpFlag() + '\n');
@@ -343,7 +353,7 @@ export function emitCSS(opts, writeStream) {
     // picPending default: OR in PIT IRQ (bit 0) when PIT counter crosses zero.
     // --_pitFired is 0 or 1 (computed by PIT properties below).
     const defaultExpr = reg === 'picPending'
-      ? `--or(var(--__1picPending), var(--_pitFired))`
+      ? `--or(--or(var(--__1picPending), var(--_pitFired)), calc(var(--_kbdChanged) * 2))`
       : `var(--__1${reg})`;
     writeStream.write(dispatch.emitRegisterDispatch(reg, defaultExpr) + '\n');
   }

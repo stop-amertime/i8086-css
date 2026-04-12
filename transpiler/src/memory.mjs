@@ -233,20 +233,13 @@ export function emitMemoryProperties(opts) {
 
 /**
  * Emit the per-byte write rules for writable memory (inside .cpu).
- * Each byte checks all 6 memory write slots (INT needs 6: 3 word pushes).
+ * v3: each byte checks the single memory write slot (--memAddr).
  */
 export function emitMemoryWriteRules(opts) {
   const { addresses } = opts;
   const lines = [];
   for (const addr of addresses) {
-    lines.push(`  --m${addr}: if(
-    style(--memAddr0: ${addr}): var(--memVal0);
-    style(--memAddr1: ${addr}): var(--memVal1);
-    style(--memAddr2: ${addr}): var(--memVal2);
-    style(--memAddr3: ${addr}): var(--memVal3);
-    style(--memAddr4: ${addr}): var(--memVal4);
-    style(--memAddr5: ${addr}): var(--memVal5);
-  else: var(--__1m${addr}));`);
+    lines.push(`  --m${addr}: if(style(--memAddr: ${addr}): var(--memVal); else: var(--__1m${addr}));`);
   }
   return lines.join('\n');
 }
@@ -292,23 +285,19 @@ export function emitMemoryExecuteKeyframe(opts) {
 }
 
 /**
- * Emit @property declarations for memory write slots.
- * 6 slots: INT needs 3 word pushes = 6 byte writes.
+ * Emit @property declarations for the single memory write slot.
+ * v3: one write per cycle (--memAddr, --memVal).
  */
 export function emitWriteSlotProperties() {
-  const lines = [];
-  for (let i = 0; i < 6; i++) {
-    lines.push(`@property --memAddr${i} {
+  return `@property --memAddr {
   syntax: '<integer>';
   inherits: true;
   initial-value: -1;
 }
 
-@property --memVal${i} {
+@property --memVal {
   syntax: '<integer>';
   inherits: true;
   initial-value: 0;
-}`);
-  }
-  return lines.join('\n\n');
+}`;
 }

@@ -106,17 +106,29 @@ function emitALU(dispatch, op) {
         `if(style(--mod: 3) and style(--rm: ${r}): ${res16}; else: var(--__1${REG16[r]}))`,
         `${op} r/m16, reg16 → ${REG16[r]}`);
     }
-    // Memory write (word)
+    // Memory write (word) — 2 μops when mod!=3
     dispatch.addMemWrite(op1,
       `if(style(--mod: 3): -1; else: var(--ea))`,
       `--lowerBytes(${res16}, 8)`,
-      `${op} r/m16, reg16 → mem lo`);
+      `${op} r/m16, reg16 → mem lo`, 0);
     dispatch.addMemWrite(op1,
       `if(style(--mod: 3): -1; else: calc(var(--ea) + 1))`,
       `--rightShift(${res16}, 8)`,
-      `${op} r/m16, reg16 → mem hi`);
+      `${op} r/m16, reg16 → mem hi`, 1);
   }
-  dispatch.addEntry('IP', op1, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `${op} r/m16, reg16`);
+  if (writesResult) {
+    // 16-bit memory write path: 2 μops when mod!=3
+    dispatch.addEntry('IP', op1,
+      `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+      `${op} r/m16, reg16 IP`, 0);
+    dispatch.addEntry('IP', op1,
+      `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+      `${op} r/m16, reg16 retire`, 1);
+    dispatch.setUopAdvance(op1,
+      `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
+  } else {
+    dispatch.addEntry('IP', op1, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `${op} r/m16, reg16`);
+  }
   dispatch.addEntry('flags', op1, flagsFn16('var(--rmVal16)', 'var(--regVal16)'), `${op} r/m16, reg16 flags`);
 
   // --- base+0: r/m8, reg8 (d=0, w=0) ---

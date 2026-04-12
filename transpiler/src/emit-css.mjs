@@ -26,31 +26,32 @@ import { emitAllShifts, emitShiftFlagFunctions, emitShiftByNFlagFunctions } from
  */
 class DispatchTable {
   constructor() {
-    // regEntries: Map<regName, Map<opcode, {expr, comment}>>
+    // regEntries: Map<regName, Map<opcode, Map<uOp, {expr, comment}>>>
     this.regEntries = new Map();
-    // memWrites: [{opcode, addrExpr, valExpr, comment}]
-    // Each opcode can contribute to up to 3 write slots.
-    this.memWritesByOpcode = new Map(); // opcode → [{addrExpr, valExpr, comment}]
+    // memWrites: Map<opcode, Map<uOp, {addrExpr, valExpr, comment}>>
+    this.memWritesByOpcode = new Map();
+    // Track max uOp per opcode for the advance table
+    this.maxUop = new Map(); // opcode → max uOp index
+    // Custom uOp advance expressions (opcode → CSS expression)
+    // When set, overrides the auto-generated advance for that opcode.
+    this.customUopAdvance = new Map();
   }
 
-  addEntry(reg, opcode, expr, comment = '') {
+  addEntry(reg, opcode, expr, comment = '', uOp = 0) {
     if (!this.regEntries.has(reg)) {
       this.regEntries.set(reg, new Map());
     }
     const regMap = this.regEntries.get(reg);
-    if (regMap.has(opcode)) {
-      // Multiple emitters writing the same register for same opcode
-      // — this is an error in the emitter logic.
-      throw new Error(`Duplicate dispatch entry: ${reg} opcode 0x${opcode.toString(16)} — existing: ${regMap.get(opcode).comment}, new: ${comment}`);
+    if (!regMap.has(opcode)) {
+      regMap.set(opcode, new Map());
     }
-    // For flags: ALU flag functions build flags from scratch but must preserve
-    // TF/IF/DF (bits 8-10) from the previous tick. Instructions that DO modify
-    // these bits (STI/CLI/CLD/STD/INT/IRET/POPF) already set them explicitly.
-    // AF (bit 4) is computed by the flag functions themselves for ADD/SUB/etc.
-    // TF|IF|DF (bits 8-10) preservation is handled at each call site or inside the
-    // flag functions themselves (inc/dec). No automatic wrapper — it breaks mixed
-    // dispatches that have both flag-computing and passthrough branches.
-    regMap.set(opcode, { expr, comment });
+    const uOpMap = regMap.get(opcode);
+    if (uOpMap.has(uOp)) {
+      throw new Error(`Duplicate dispatch entry: ${reg} opcode 0x${opcode.toString(16)} uOp ${uOp} — existing: ${uOpMap.get(uOp).comment}, new: ${comment}`);
+    }
+    uOpMap.set(uOp, { expr, comment });
+    // Track max uOp
+    this.maxUop.set(opcode, Math.max(this.maxUop.get(opcode) || 0, uOp));
   }
 
   /**
@@ -60,6 +61,7 @@ class DispatchTable {
   emitUnknownOpFlag() {
     const ipEntries = this.regEntries.get('IP');
     if (!ipEntries) return '  --unknownOp: 1;';
+    // Only check opcodes, not uOps — if the opcode has any IP entry, it's known
     const opcodes = [...ipEntries.keys()].sort((a, b) => a - b);
     const lines = ['  --unknownOp: if('];
     for (const op of opcodes) {
@@ -69,11 +71,25 @@ class DispatchTable {
     return lines.join('\n');
   }
 
-  addMemWrite(opcode, addrExpr, valExpr, comment = '') {
+  /**
+   * Set a custom uOp advance expression for an opcode.
+   * Used for instructions with conditional multi-cycle behavior (e.g., mod=3 vs memory).
+   */
+  setUopAdvance(opcode, expr) {
+    this.customUopAdvance.set(opcode, expr);
+  }
+
+  addMemWrite(opcode, addrExpr, valExpr, comment = '', uOp = 0) {
     if (!this.memWritesByOpcode.has(opcode)) {
-      this.memWritesByOpcode.set(opcode, []);
+      this.memWritesByOpcode.set(opcode, new Map());
     }
-    this.memWritesByOpcode.get(opcode).push({ addrExpr, valExpr, comment });
+    const uOpMap = this.memWritesByOpcode.get(opcode);
+    if (uOpMap.has(uOp)) {
+      throw new Error(`Duplicate memWrite: opcode 0x${opcode.toString(16)} uOp ${uOp} — existing: ${uOpMap.get(uOp).comment}, new: ${comment}`);
+    }
+    uOpMap.set(uOp, { addrExpr, valExpr, comment });
+    // Track max uOp
+    this.maxUop.set(opcode, Math.max(this.maxUop.get(opcode) || 0, uOp));
   }
 
   /**
@@ -90,13 +106,30 @@ class DispatchTable {
       return `  --${reg}: ${defaultExpr};`;
     }
 
-    // Build the normal instruction dispatch
+    // Build the instruction dispatch, with nested uOp dispatch for multi-cycle opcodes
     const wrapIP = (reg === 'IP');
     const dispatchLines = [];
     const sorted = [...entries.entries()].sort(([a], [b]) => a - b);
-    for (const [opcode, { expr, comment }] of sorted) {
-      const commentStr = comment ? ` /* ${comment} */` : '';
-      dispatchLines.push(`    style(--opcode: ${opcode}): ${expr};${commentStr}`);
+    for (const [opcode, uOpMap] of sorted) {
+      const isMultiCycle = (this.maxUop.get(opcode) || 0) > 0;
+      if (!isMultiCycle && uOpMap.size === 1 && uOpMap.has(0)) {
+        // Single-cycle opcode: flat entry (same as v2)
+        const { expr, comment } = uOpMap.get(0);
+        const commentStr = comment ? ` /* ${comment} */` : '';
+        dispatchLines.push(`    style(--opcode: ${opcode}): ${expr};${commentStr}`);
+      } else {
+        // Multi-cycle opcode: nested dispatch on --__1uOp.
+        // Even if this register only has uOp 0 entries, we must nest to
+        // prevent the expression from firing on other μops (where the
+        // register should hold its value via the default).
+        const innerLines = [];
+        const sortedUops = [...uOpMap.entries()].sort(([a], [b]) => a - b);
+        for (const [uOp, { expr, comment }] of sortedUops) {
+          const commentStr = comment ? ` /* ${comment} */` : '';
+          innerLines.push(`      style(--__1uOp: ${uOp}): ${expr};${commentStr}`);
+        }
+        dispatchLines.push(`    style(--opcode: ${opcode}): if(\n${innerLines.join('\n')}\n    else: ${defaultExpr});`);
+      }
     }
 
     let normalExpr;
@@ -106,83 +139,89 @@ class DispatchTable {
       normalExpr = `if(\n${dispatchLines.join('\n')}\n  else: ${defaultExpr})`;
     }
 
-    // TF (Trap Flag) override: when previous FLAGS had TF=1, fire INT 1 instead
-    // of the normal instruction. INT 1: push FLAGS/CS/IP, clear TF+IF, jump to IVT[1].
-    const TF_OVERRIDES = {
-      'IP':    'var(--_tfIP)',
-      'CS':    'var(--_tfCS)',
-      'SP':    'calc(var(--__1SP) - 6)',
-      'flags': '--and(var(--__1flags), 64767)',  // & 0xFCFF = clear TF+IF
-    };
-
-    const tfExpr = TF_OVERRIDES[reg] || `var(--__1${reg})`;
-    return `  --${reg}: if(style(--_tf: 1): ${tfExpr}; else: ${normalExpr});`;
+    return `  --${reg}: ${normalExpr};`;
   }
 
   /**
-   * Emit the 6 memory write slot properties (--memAddr0/Val0 through --memAddr5/Val5).
-   * Each slot aggregates across all opcodes that use it.
-   * 6 slots needed: INT pushes 3 words = 6 byte writes.
+   * Emit the single memory write slot (--memAddr, --memVal).
+   * v3: one write per cycle, dispatched on (opcode, uOp).
    */
   emitMemoryWriteSlots() {
-    const NUM_SLOTS = 6;
-    const slots = Array.from({ length: NUM_SLOTS }, () => []);
-
-    for (const [opcode, writes] of this.memWritesByOpcode) {
-      if (writes.length > NUM_SLOTS) {
-        throw new Error(`Opcode 0x${opcode.toString(16)} uses ${writes.length} memory write slots (max ${NUM_SLOTS})`);
-      }
-      for (let i = 0; i < writes.length; i++) {
-        slots[i].push({ opcode, ...writes[i] });
-      }
-    }
-
-    // TF trap INT 1 memory writes: push FLAGS/CS/IP to stack
-    const ssBase = 'calc(var(--__1SS) * 16)';
-    const tfAddr = [
-      `calc(${ssBase} + var(--__1SP) - 2)`,   // slot 0: FLAGS lo
-      `calc(${ssBase} + var(--__1SP) - 1)`,   // slot 1: FLAGS hi
-      `calc(${ssBase} + var(--__1SP) - 4)`,   // slot 2: CS lo
-      `calc(${ssBase} + var(--__1SP) - 3)`,   // slot 3: CS hi
-      `calc(${ssBase} + var(--__1SP) - 6)`,   // slot 4: IP lo
-      `calc(${ssBase} + var(--__1SP) - 5)`,   // slot 5: IP hi
-    ];
-    // Push FLAGS as-is (including TF) — matches real 8086 behavior
-    const tfFlagsPush = `var(--__1flags)`;
-    const tfVal = [
-      `--lowerBytes(${tfFlagsPush}, 8)`,       // FLAGS lo (TF cleared)
-      `--rightShift(${tfFlagsPush}, 8)`,        // FLAGS hi (TF cleared)
-      `--lowerBytes(var(--__1CS), 8)`,          // CS lo
-      `--rightShift(var(--__1CS), 8)`,          // CS hi
-      `--lowerBytes(var(--__1IP), 8)`,          // IP lo (current IP, not IP+2)
-      `--rightShift(var(--__1IP), 8)`,          // IP hi
-    ];
-
     const lines = [];
-    for (let slot = 0; slot < NUM_SLOTS; slot++) {
-      if (slots[slot].length === 0) {
-        // Even empty slots need TF override
-        lines.push(`  --memAddr${slot}: if(style(--_tf: 1): ${tfAddr[slot]}; else: -1);`);
-        lines.push(`  --memVal${slot}: if(style(--_tf: 1): ${tfVal[slot]}; else: 0);`);
-        continue;
-      }
 
-      // Address dispatch with TF override
-      lines.push(`  --memAddr${slot}: if(`);
-      lines.push(`    style(--_tf: 1): ${tfAddr[slot]};`);
-      for (const { opcode, addrExpr, comment } of slots[slot]) {
-        lines.push(`    style(--opcode: ${opcode}): ${addrExpr}; /* ${comment || ''} */`);
-      }
-      lines.push(`  else: -1);`);
+    // Collect all (opcode, uOp) → {addrExpr, valExpr} entries
+    const addrLines = [];
+    const valLines = [];
+    const sortedOpcodes = [...this.memWritesByOpcode.entries()].sort(([a], [b]) => a - b);
 
-      // Value dispatch with TF override
-      lines.push(`  --memVal${slot}: if(`);
-      lines.push(`    style(--_tf: 1): ${tfVal[slot]};`);
-      for (const { opcode, valExpr, comment } of slots[slot]) {
-        lines.push(`    style(--opcode: ${opcode}): ${valExpr}; /* ${comment || ''} */`);
+    for (const [opcode, uOpMap] of sortedOpcodes) {
+      if (uOpMap.size === 1 && uOpMap.has(0)) {
+        // Single uOp: flat dispatch
+        const { addrExpr, valExpr, comment } = uOpMap.get(0);
+        addrLines.push(`    style(--opcode: ${opcode}): ${addrExpr}; /* ${comment || ''} */`);
+        valLines.push(`    style(--opcode: ${opcode}): ${valExpr}; /* ${comment || ''} */`);
+      } else {
+        // Multi-uOp: nested dispatch on --__1uOp
+        const innerAddr = [];
+        const innerVal = [];
+        const sortedUops = [...uOpMap.entries()].sort(([a], [b]) => a - b);
+        for (const [uOp, { addrExpr, valExpr, comment }] of sortedUops) {
+          innerAddr.push(`      style(--__1uOp: ${uOp}): ${addrExpr}; /* ${comment || ''} */`);
+          innerVal.push(`      style(--__1uOp: ${uOp}): ${valExpr}; /* ${comment || ''} */`);
+        }
+        addrLines.push(`    style(--opcode: ${opcode}): if(\n${innerAddr.join('\n')}\n    else: -1);`);
+        valLines.push(`    style(--opcode: ${opcode}): if(\n${innerVal.join('\n')}\n    else: 0);`);
       }
-      lines.push(`  else: 0);`);
     }
+
+    lines.push(`  --memAddr: if(`);
+    lines.push(addrLines.join('\n'));
+    lines.push(`  else: -1);`);
+    lines.push(`  --memVal: if(`);
+    lines.push(valLines.join('\n'));
+    lines.push(`  else: 0);`);
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Emit the --uOp advance dispatch table.
+   * For single-cycle instructions (maxUop=0): no entry needed (default is 0).
+   * For multi-cycle: uOp N → N+1, last uOp → 0 (retire).
+   */
+  emitUopAdvance() {
+    const lines = [];
+    // Collect all opcodes that have either multi-uOp or custom advance
+    const multiCycleOpcodes = new Map();
+    for (const [opcode, max] of this.maxUop) {
+      if (max > 0) multiCycleOpcodes.set(opcode, max);
+    }
+    for (const [opcode] of this.customUopAdvance) {
+      if (!multiCycleOpcodes.has(opcode)) multiCycleOpcodes.set(opcode, 0);
+    }
+
+    if (multiCycleOpcodes.size === 0) {
+      return '  --uOp: 0;';
+    }
+
+    const sorted = [...multiCycleOpcodes.entries()].sort(([a], [b]) => a - b);
+
+    lines.push('  --uOp: if(');
+    for (const [opcode, maxU] of sorted) {
+      if (this.customUopAdvance.has(opcode)) {
+        // Custom advance expression (e.g., conditional on --mod)
+        lines.push(`    style(--opcode: ${opcode}): ${this.customUopAdvance.get(opcode)};`);
+      } else {
+        // Auto-generated advance chain: 0→1→...→N→0
+        const innerLines = [];
+        for (let u = 0; u < maxU; u++) {
+          innerLines.push(`      style(--__1uOp: ${u}): ${u + 1};`);
+        }
+        innerLines.push(`      style(--__1uOp: ${maxU}): 0;`);
+        lines.push(`    style(--opcode: ${opcode}): if(\n${innerLines.join('\n')}\n    else: 0);`);
+      }
+    }
+    lines.push('  else: 0);');
 
     return lines.join('\n');
   }
@@ -288,8 +327,12 @@ export function emitCSS(opts, writeStream) {
   }
   writeStream.write('\n');
 
-  // Memory write slots
-  writeStream.write('  /* ===== MEMORY WRITE SLOTS ===== */\n');
+  // μop advance dispatch
+  writeStream.write('  /* ===== μOP ADVANCE ===== */\n');
+  writeStream.write(dispatch.emitUopAdvance() + '\n\n');
+
+  // Memory write slot (single addr/val pair per cycle)
+  writeStream.write('  /* ===== MEMORY WRITE ===== */\n');
   writeStream.write(dispatch.emitMemoryWriteSlots() + '\n\n');
 
   // 6. Debug display
@@ -416,14 +459,7 @@ function emitMemoryWriteRulesStreaming(opts, ws) {
   let buf = '';
   let count = 0;
   for (const addr of addresses) {
-    buf += `  --m${addr}: if(
-    style(--memAddr0: ${addr}): var(--memVal0);
-    style(--memAddr1: ${addr}): var(--memVal1);
-    style(--memAddr2: ${addr}): var(--memVal2);
-    style(--memAddr3: ${addr}): var(--memVal3);
-    style(--memAddr4: ${addr}): var(--memVal4);
-    style(--memAddr5: ${addr}): var(--memVal5);
-  else: var(--__1m${addr}));\n`;
+    buf += `  --m${addr}: if(style(--memAddr: ${addr}): var(--memVal); else: var(--__1m${addr}));\n`;
     if (++count % CHUNK === 0) { ws.write(buf); buf = ''; }
   }
   if (buf) ws.write(buf);

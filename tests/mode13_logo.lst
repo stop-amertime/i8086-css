@@ -1,0 +1,115 @@
+     1                                  ; mode13_logo.asm — CSS-DOS boot splash in VGA Mode 13h.
+     2                                  ;
+     3                                  ; Sets video mode 13h, blits the 32x32 CSS-DOS logo (embedded via
+     4                                  ; incbin) into the framebuffer at 4x nearest-neighbor scale, centered.
+     5                                  ;
+     6                                  ; BIOS constraints: no 0x0F-prefixed Jcc, no segment override prefixes,
+     7                                  ; all memory access via DS. So we can't use ES for the framebuffer —
+     8                                  ; we push DS, swap to 0xA000, write, pop DS back, for each source pixel.
+     9                                  ;
+    10                                  ; Layout:
+    11                                  ;   source: 32x32 palette indexes at label `logo` (DS=0)
+    12                                  ;   dest  : 128x128 block, top-left at (96, 36), centered in 320x200
+    13                                  ;
+    14                                  ; Build:
+    15                                  ;   nasm -f bin -o tests/mode13_logo.com tests/mode13_logo.asm
+    16                                  ; Generate CSS:
+    17                                  ;   node transpiler/generate.mjs tests/mode13_logo.com --graphics -o tests/mode13_logo.css
+    18                                  ; Render:
+    19                                  ;   calcite --input tests/mode13_logo.css --ticks 5000000 --halt 0x2110 ;           --framebuffer 0xA0000 320x200 tests/mode13_logo.ppm
+    21                                  
+    22                                  [bits 16]
+    23                                  [org 0x100]
+    24                                  
+    25                                  %define LOGO_W   32
+    26                                  %define LOGO_H   32
+    27                                  %define SCALE    4
+    28                                  %define DEST_W   (LOGO_W * SCALE)        ; 128
+    29                                  %define DEST_H   (LOGO_H * SCALE)        ; 128
+    30                                  %define SCR_W    320
+    31                                  %define DEST_X   ((320 - DEST_W) / 2)    ; 96
+    32                                  %define DEST_Y   ((200 - DEST_H) / 2)    ; 36
+    33                                  %define DEST_OFF (DEST_Y * SCR_W + DEST_X)  ; top-left linear offset
+    34                                  
+    35                                  start:
+    36                                      ; --- Set video mode 13h ---
+    37 00000000 B81300                      mov ax, 0x0013
+    38 00000003 CD10                        int 0x10
+    39                                  
+    40                                      ; --- Blit loop ---
+    41                                      ; DI = destination linear offset within framebuffer (relative to 0xA000:0)
+    42                                      ; SI = source pointer into `logo` (relative to DS=0)
+    43                                      ; BP = source row counter (0..LOGO_H-1)
+    44                                      ; CX = source column counter (0..LOGO_W-1)
+    45                                      ;
+    46                                      ; At the start of each source row, DI is set to the top-left of that
+    47                                      ; row's scaled output band: DI = DEST_OFF + sy * SCALE * SCR_W.
+    48                                      ;
+    49                                      ; For each source pixel:
+    50                                      ;   Read pixel AL (DS=0)
+    51                                      ;   Swap DS to 0xA000
+    52                                      ;   Write SCALE pixels horizontally on SCALE consecutive rows
+    53                                      ;   Swap DS back to 0
+    54                                      ;   Advance DI by SCALE, advance SI by 1
+    55                                      ; After a full source row, advance DI by (SCALE-1) * SCR_W so that
+    56                                      ; the next source row's first pixel lands SCALE rows below.
+    57                                  
+    58 00000005 BE[6E00]                    mov si, logo
+    59 00000008 BF602D                      mov di, DEST_OFF
+    60 0000000B 31ED                        xor bp, bp                     ; sy = 0
+    61                                  .row_loop:
+    62 0000000D B92000                      mov cx, LOGO_W
+    63                                  .pixel_loop:
+    64 00000010 8A04                        mov al, [si]                   ; read source pixel (DS=0, AL = palette index)
+    65 00000012 46                          inc si
+    66                                  
+    67                                      ; --- Framebuffer write: push DS, swap to VGA, write 4x4 block ---
+    68 00000013 1E                          push ds
+    69 00000014 53                          push bx
+    70 00000015 BB00A0                      mov bx, 0xA000
+    71 00000018 8EDB                        mov ds, bx
+    72                                      ; Four rows of four pixels each:
+    73                                      ; Row 0:
+    74 0000001A 8805                        mov [di],       al
+    75 0000001C 884501                      mov [di + 1],   al
+    76 0000001F 884502                      mov [di + 2],   al
+    77 00000022 884503                      mov [di + 3],   al
+    78                                      ; Row 1 (+320):
+    79 00000025 88854001                    mov [di + 320], al
+    80 00000029 88854101                    mov [di + 321], al
+    81 0000002D 88854201                    mov [di + 322], al
+    82 00000031 88854301                    mov [di + 323], al
+    83                                      ; Row 2 (+640):
+    84 00000035 88858002                    mov [di + 640], al
+    85 00000039 88858102                    mov [di + 641], al
+    86 0000003D 88858202                    mov [di + 642], al
+    87 00000041 88858302                    mov [di + 643], al
+    88                                      ; Row 3 (+960):
+    89 00000045 8885C003                    mov [di + 960], al
+    90 00000049 8885C103                    mov [di + 961], al
+    91 0000004D 8885C203                    mov [di + 962], al
+    92 00000051 8885C303                    mov [di + 963], al
+    93 00000055 5B                          pop bx
+    94 00000056 1F                          pop ds
+    95                                  
+    96 00000057 83C704                      add di, SCALE                  ; next source-pixel column slot (4 px right)
+    97 0000005A 49                          dec cx
+    98 0000005B 75B3                        jnz .pixel_loop
+    99                                  
+   100                                      ; End of source row: DI is currently at (sy_band_start + LOGO_W*SCALE),
+   101                                      ; i.e. DEST_X+DEST_W on the *first* row of the band. The next source
+   102                                      ; row needs DI = start of the next band = sy_band_start + SCALE*SCR_W.
+   103                                      ; So: drop SCALE rows (+SCALE*SCR_W) and rewind DEST_W columns.
+   104 0000005D 81C70005                    add di, SCALE * SCR_W          ; drop SCALE rows
+   105 00000061 81EF8000                    sub di, DEST_W                 ; rewind to column DEST_X
+   106                                  
+   107 00000065 45                          inc bp
+   108 00000066 83FD20                      cmp bp, LOGO_H
+   109 00000069 72A2                        jb .row_loop
+   110                                  
+   111                                      ; --- Halt ---
+   112 0000006B CD20                        int 0x20
+   113                                  
+   114 0000006D 90                      align 2
+   115                                  logo:
+   116 0000006E <bin 400h>                  incbin "tests/logo.bin"

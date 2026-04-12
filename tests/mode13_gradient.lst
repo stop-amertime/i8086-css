@@ -1,0 +1,52 @@
+     1                                  ; mode13_gradient.asm — VGA Mode 13h smoke test
+     2                                  ;
+     3                                  ; Sets video mode 13h (320x200x256), fills the framebuffer at
+     4                                  ; 0xA0000 with a diagonal gradient (byte = (x+y) & 15), then exits.
+     5                                  ; All 16 palette colors should appear as diagonal bands.
+     6                                  ;
+     7                                  ; BIOS constraints (from CLAUDE.md / bios/gossamer.asm):
+     8                                  ; - No 0x0F-prefixed opcodes (near Jcc)
+     9                                  ; - No segment override prefixes
+    10                                  ; - All memory access uses DS (not ES)
+    11                                  ;
+    12                                  ; Build:
+    13                                  ;   nasm -f bin -o tests/mode13_gradient.com tests/mode13_gradient.asm
+    14                                  ; Generate CSS:
+    15                                  ;   node transpiler/generate.mjs tests/mode13_gradient.com --graphics -o tests/mode13_gradient.css
+    16                                  ; Render framebuffer:
+    17                                  ;   calcite --input tests/mode13_gradient.css --ticks 200000 ;           --halt 0x2110 --framebuffer 0xA0000 320x200 out.ppm
+    19                                  
+    20                                  [bits 16]
+    21                                  [org 0x100]
+    22                                  
+    23                                  start:
+    24                                      ; Set video mode 13h
+    25 00000000 B81300                      mov ax, 0x0013
+    26 00000003 CD10                        int 0x10
+    27                                  
+    28                                      ; DS = 0xA000 (framebuffer segment)
+    29 00000005 B800A0                      mov ax, 0xA000
+    30 00000008 8ED8                        mov ds, ax
+    31                                  
+    32                                      ; Fill 320x200 = 64000 bytes with (x+y) & 15
+    33                                      ; We iterate by linear offset and derive (x,y) via div/mod,
+    34                                      ; but that's slow. Instead: nested loops.
+    35 0000000A 31FF                        xor di, di              ; DI = linear offset into framebuffer
+    36 0000000C 31D2                        xor dx, dx              ; DX = row (y), 0..199
+    37                                  .row_loop:
+    38 0000000E 31C9                        xor cx, cx              ; CX = column (x), 0..319
+    39                                  .col_loop:
+    40 00000010 89D0                        mov ax, dx
+    41 00000012 01C8                        add ax, cx              ; AX = x + y
+    42 00000014 240F                        and al, 0x0F            ; palette index 0..15
+    43 00000016 8805                        mov [di], al            ; write pixel
+    44 00000018 47                          inc di
+    45 00000019 41                          inc cx
+    46 0000001A 81F94001                    cmp cx, 320
+    47 0000001E 72F0                        jb .col_loop
+    48 00000020 42                          inc dx
+    49 00000021 81FAC800                    cmp dx, 200
+    50 00000025 72E7                        jb .row_loop
+    51                                  
+    52                                      ; Exit
+    53 00000027 CD20                        int 0x20

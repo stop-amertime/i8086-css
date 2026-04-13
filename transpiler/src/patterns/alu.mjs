@@ -119,15 +119,15 @@ function emitALU(dispatch, op) {
   if (writesResult) {
     // 16-bit memory write path: 2 μops when mod!=3
     dispatch.addEntry('IP', op1,
-      `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+      `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)); else: var(--__1IP))`,
       `${op} r/m16, reg16 IP`, 0);
     dispatch.addEntry('IP', op1,
-      `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+      `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`,
       `${op} r/m16, reg16 retire`, 1);
     dispatch.setUopAdvance(op1,
       `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
   } else {
-    dispatch.addEntry('IP', op1, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `${op} r/m16, reg16`);
+    dispatch.addEntry('IP', op1, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `${op} r/m16, reg16`);
   }
   dispatch.addEntry('flags', op1, flagsFn16('var(--rmVal16)', 'var(--regVal16)'), `${op} r/m16, reg16 flags`);
 
@@ -149,7 +149,7 @@ function emitALU(dispatch, op) {
       res8,
       `${op} r/m8, reg8 → mem`);
   }
-  dispatch.addEntry('IP', op0, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `${op} r/m8, reg8`);
+  dispatch.addEntry('IP', op0, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `${op} r/m8, reg8`);
   dispatch.addEntry('flags', op0, flagsFn8('var(--rmVal8)', 'var(--regVal8)'), `${op} r/m8, reg8 flags`);
 
   // --- base+3: reg16, r/m16 (d=1, w=1) ---
@@ -162,7 +162,7 @@ function emitALU(dispatch, op) {
         `${op} reg16, r/m16 → ${REG16[r]}`);
     }
   }
-  dispatch.addEntry('IP', op3, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `${op} reg16, r/m16`);
+  dispatch.addEntry('IP', op3, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `${op} reg16, r/m16`);
   dispatch.addEntry('flags', op3, flagsFn16('var(--regVal16)', 'var(--rmVal16)'), `${op} reg16, r/m16 flags`);
 
   // --- base+2: reg8, r/m8 (d=1, w=0) ---
@@ -177,7 +177,7 @@ function emitALU(dispatch, op) {
         `${op} reg8, r/m8 → ${reg}`);
     }
   }
-  dispatch.addEntry('IP', op2, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `${op} reg8, r/m8`);
+  dispatch.addEntry('IP', op2, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `${op} reg8, r/m8`);
   dispatch.addEntry('flags', op2, flagsFn8('var(--regVal8)', 'var(--rmVal8)'), `${op} reg8, r/m8 flags`);
 
   // --- base+5: AX, imm16 ---
@@ -187,7 +187,7 @@ function emitALU(dispatch, op) {
       resultExpr16('var(--__1AX)', 'var(--imm16)'),
       `${op} AX, imm16`);
   }
-  dispatch.addEntry('IP', op5, `calc(var(--__1IP) + 3)`, `${op} AX, imm16`);
+  dispatch.addEntry('IP', op5, `calc(var(--__1IP) + 3 + var(--prefixLen))`, `${op} AX, imm16`);
   dispatch.addEntry('flags', op5, flagsFn16('var(--__1AX)', 'var(--imm16)'), `${op} AX, imm16 flags`);
 
   // --- base+4: AL, imm8 ---
@@ -198,7 +198,7 @@ function emitALU(dispatch, op) {
       `--mergelow(var(--__1AX), ${res8imm})`,
       `${op} AL, imm8`);
   }
-  dispatch.addEntry('IP', op4, `calc(var(--__1IP) + 2)`, `${op} AL, imm8`);
+  dispatch.addEntry('IP', op4, `calc(var(--__1IP) + 2 + var(--prefixLen))`, `${op} AL, imm8`);
   dispatch.addEntry('flags', op4, flagsFn8('var(--AL)', 'var(--imm8)'), `${op} AL, imm8 flags`);
 }
 
@@ -207,11 +207,11 @@ function emitALU(dispatch, op) {
  */
 function emitTEST_rm_reg(dispatch) {
   // 0x85: TEST r/m16, reg16
-  dispatch.addEntry('IP', 0x85, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `TEST r/m16, reg16`);
+  dispatch.addEntry('IP', 0x85, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `TEST r/m16, reg16`);
   dispatch.addEntry('flags', 0x85, `calc(--andFlags16(var(--rmVal16), var(--regVal16)) + --and(var(--__1flags), 1808))`, `TEST r/m16, reg16`);
 
   // 0x84: TEST r/m8, reg8
-  dispatch.addEntry('IP', 0x84, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `TEST r/m8, reg8`);
+  dispatch.addEntry('IP', 0x84, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `TEST r/m8, reg8`);
   dispatch.addEntry('flags', 0x84, `calc(--andFlags8(var(--rmVal8), var(--regVal8)) + --and(var(--__1flags), 1808))`, `TEST r/m8, reg8`);
 }
 
@@ -220,11 +220,11 @@ function emitTEST_rm_reg(dispatch) {
  */
 function emitTEST_acc_imm(dispatch) {
   // 0xA9: TEST AX, imm16
-  dispatch.addEntry('IP', 0xA9, `calc(var(--__1IP) + 3)`, `TEST AX, imm16`);
+  dispatch.addEntry('IP', 0xA9, `calc(var(--__1IP) + 3 + var(--prefixLen))`, `TEST AX, imm16`);
   dispatch.addEntry('flags', 0xA9, `calc(--andFlags16(var(--__1AX), var(--imm16)) + --and(var(--__1flags), 1808))`, `TEST AX, imm16`);
 
   // 0xA8: TEST AL, imm8
-  dispatch.addEntry('IP', 0xA8, `calc(var(--__1IP) + 2)`, `TEST AL, imm8`);
+  dispatch.addEntry('IP', 0xA8, `calc(var(--__1IP) + 2 + var(--prefixLen))`, `TEST AL, imm8`);
   dispatch.addEntry('flags', 0xA8, `calc(--andFlags8(var(--AL), var(--imm8)) + --and(var(--__1flags), 1808))`, `TEST AL, imm8`);
 }
 
@@ -238,7 +238,7 @@ function emitINC(dispatch) {
     dispatch.addEntry(REG16[r], opcode,
       `--lowerBytes(calc(var(--__1${REG16[r]}) + 1), 16)`,
       `INC ${REG16[r]}`);
-    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1)`, `INC ${REG16[r]}`);
+    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `INC ${REG16[r]}`);
     dispatch.addEntry('flags', opcode,
       `--incFlags16(var(--__1${REG16[r]}), --lowerBytes(calc(var(--__1${REG16[r]}) + 1), 16), var(--__1flags))`,
       `INC ${REG16[r]} flags`);
@@ -255,7 +255,7 @@ function emitDEC(dispatch) {
     dispatch.addEntry(REG16[r], opcode,
       `--lowerBytes(calc(var(--__1${REG16[r]}) - 1 + 65536), 16)`,
       `DEC ${REG16[r]}`);
-    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1)`, `DEC ${REG16[r]}`);
+    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `DEC ${REG16[r]}`);
     dispatch.addEntry('flags', opcode,
       `--decFlags16(var(--__1${REG16[r]}), --lowerBytes(calc(var(--__1${REG16[r]}) - 1 + 65536), 16), var(--__1flags))`,
       `DEC ${REG16[r]} flags`);

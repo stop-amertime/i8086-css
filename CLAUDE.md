@@ -4,7 +4,19 @@ A complete Intel 8086 PC implemented in pure CSS. The CSS runs in Chrome —
 no JavaScript, no WebAssembly. [Calcite](../calcite) is a JIT compiler that
 makes it fast enough to be usable.
 
-IMPORTANT: WHEN DEBUGGING, DO NOT RUSH TO CONCLUSIONS. Take a measured approach, gather information, and don't apply speculative fixes. Your biggest failure mode in debugging is jumping to conclusions and making assumptions. Prefer to create good debugging infrastructure so you can inspect what is happening clearly, rather than chasing individual bugs around. 
+IMPORTANT: WHEN DEBUGGING, DO NOT RUSH TO CONCLUSIONS. Take a measured approach, gather information, and don't apply speculative fixes. Your biggest failure mode in debugging is jumping to conclusions and making assumptions. Prefer to create good debugging infrastructure so you can inspect what is happening clearly, rather than chasing individual bugs around.
+
+IMPORTANT: DO NOT GUESS OR ASSUME. Before doing anything, look for existing
+documentation. The calcite repo (`../calcite/docs/`) has critical docs:
+- `debugger.md` — the HTTP debug server endpoints and workflows
+- `conformance-testing.md` — the full testing toolkit (`fulldiff.mjs`,
+  `diagnose.mjs`, `ref-dos.mjs`) and how to use them for DOS boot debugging
+- The debugger is the primary debugging tool. Use it. Don't reinvent it.
+
+For anything about DOS, the 8086, BIOS interrupts, FAT12, or the DOS kernel:
+look it up. We don't write the DOS kernel (it's EDR-DOS). We don't write the
+8086 ISA. These are decades-old standards with extensive public documentation.
+Search the web or download a reference before guessing at how something works.
 
 ## Current status
 

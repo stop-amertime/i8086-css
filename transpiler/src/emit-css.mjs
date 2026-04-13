@@ -101,9 +101,10 @@ class DispatchTable {
    * Emit the dispatch table for one register as a CSS if() expression.
    * Returns the full property declaration for inside .cpu.
    *
-   * For IP: wraps the entire dispatch in calc(... + var(--prefixLen)) so that
-   * all instruction IP calculations automatically account for prefix bytes
-   * (segment overrides, REP) without changing each individual emitter.
+   * IP has no special wrapper — each emitter is responsible for including
+   * + var(--prefixLen) in its own advance expression. This avoids a leaky
+   * abstraction where inner hold branches inside multi-μop dispatches would
+   * be incorrectly shifted by a global wrapper.
    */
   emitRegisterDispatch(reg, defaultExpr) {
     const entries = this.regEntries.get(reg);
@@ -112,7 +113,6 @@ class DispatchTable {
     }
 
     // Build the instruction dispatch, with nested uOp dispatch for multi-cycle opcodes
-    const wrapIP = (reg === 'IP');
     const dispatchLines = [];
     const sorted = [...entries.entries()].sort(([a], [b]) => a - b);
     for (const [opcode, uOpMap] of sorted) {
@@ -126,34 +126,15 @@ class DispatchTable {
         // Multi-cycle opcode: flat entries with 'and' composition.
         // style(--opcode: N) and style(--__1uOp: M): expr
         // When no uOp matches, the outer else (hold) fires — no inner else needed.
-        const maxU = this.maxUop.get(opcode) || 0;
         const sortedUops = [...uOpMap.entries()].sort(([a], [b]) => a - b);
-        const uOpSet = new Set(sortedUops.map(([u]) => u));
         for (const [uOp, { expr, comment }] of sortedUops) {
           const commentStr = comment ? ` /* ${comment} */` : '';
           dispatchLines.push(`    style(--opcode: ${opcode}) and style(--__1uOp: ${uOp}): ${expr};${commentStr}`);
         }
-        // For IP: emit explicit hold entries for uOps without an IP expression.
-        // The IP wrapper adds + var(--prefixLen) to the entire dispatch, so the
-        // default fallthrough (var(--__1IP)) becomes IP + prefixLen — wrong for
-        // mid-instruction holds on prefixed instructions (e.g., REP STOSW).
-        // Emitting calc(var(--__1IP) - var(--prefixLen)) cancels the wrapper.
-        if (wrapIP) {
-          for (let u = 0; u <= maxU; u++) {
-            if (!uOpSet.has(u)) {
-              dispatchLines.push(`    style(--opcode: ${opcode}) and style(--__1uOp: ${u}): calc(var(--__1IP) - var(--prefixLen)); /* hold */`);
-            }
-          }
-        }
       }
     }
 
-    let normalExpr;
-    if (wrapIP) {
-      normalExpr = `calc(if(\n${dispatchLines.join('\n')}\n  else: ${defaultExpr}) + var(--prefixLen))`;
-    } else {
-      normalExpr = `if(\n${dispatchLines.join('\n')}\n  else: ${defaultExpr})`;
-    }
+    const normalExpr = `if(\n${dispatchLines.join('\n')}\n  else: ${defaultExpr})`;
 
     return `  --${reg}: ${normalExpr};`;
   }
@@ -246,7 +227,7 @@ class DispatchTable {
  */
 export function emitCSS(opts, writeStream) {
   const { programBytes, biosBytes, memoryZones, embeddedData, htmlMode, programOffset,
-          initialCS, initialIP } = opts;
+          initialCS, initialIP, initialRegs } = opts;
 
   // Build sorted address array from zones (or fall back to legacy contiguous range)
   let addresses;
@@ -262,7 +243,7 @@ export function emitCSS(opts, writeStream) {
   // templateOpts.memSize is used for SP init — derive from the top of the lowest zone
   // (conventional memory area, which is always zones[0] by convention)
   const convEnd = memoryZones ? memoryZones[0][1] : (opts.memSize || 0x10000);
-  const templateOpts = { memSize: convEnd, programOffset, initialCS, initialIP };
+  const templateOpts = { memSize: convEnd, programOffset, initialCS, initialIP, initialRegs };
 
   // Build dispatch table
   const dispatch = new DispatchTable();
@@ -339,6 +320,18 @@ export function emitCSS(opts, writeStream) {
   // _kbdChanged: 1 when keyboard differs from previous boundary, 0 otherwise
   writeStream.write('  --_kbdChanged: if(style(--__1uOp: 0): min(1, max(0, sign(calc(max(var(--keyboard), var(--__1kbdLast)) - min(var(--keyboard), var(--__1kbdLast)))))); else: 0);\n');
   writeStream.write('\n');
+
+  // BIOS subfunction latch: capture AH at instruction boundaries, hold during μop sequence.
+  // BIOS handlers dispatch on AH (subfunction selector) but may modify AX during the
+  // handler, which would taint AH on the next tick. biosAH preserves the original value.
+  //
+  // Three cases:
+  // 1. BIOS handler holding at μop 0 (opcode=214, uOp=0): keep previous biosAH
+  //    (the handler may have modified AX, but the subfunction hasn't changed)
+  // 2. Normal instruction boundary (uOp=0, not a BIOS hold): latch fresh from __1AX
+  // 3. Mid-instruction (uOp>0): keep previous biosAH
+  writeStream.write('  /* ===== BIOS AH LATCH ===== */\n');
+  writeStream.write('  --biosAH: if(style(--opcode: 214) and style(--__1uOp: 0): var(--__1biosAH); style(--__1uOp: 0): --rightShift(var(--__1AX), 8); else: var(--__1biosAH));\n\n');
 
   // Unknown opcode detection — sets --unknownOp=1 and --haltCode=opcode
   writeStream.write('  /* ===== UNKNOWN OPCODE FLAG ===== */\n');

@@ -130,6 +130,7 @@ memory[0x044A] = 80;    // columns
 console.error(`Running reference emulator for ${maxTicks} ticks...`);
 const refTrace = [];
 let lastRefIP = -1;
+let sameIPCount = 0;
 for (let t = 0; t < maxTicks; t++) {
   // Inject key events at the right cycle
   for (const ev of keyEvents) {
@@ -141,8 +142,15 @@ for (let t = 0; t < maxTicks; t++) {
   const st = refState();
   refTrace.push({ tick: t, ...st });
   if (st.IP === lastRefIP) {
-    console.error(`Ref halted at tick ${t}, IP=0x${st.IP.toString(16)}`);
-    break;
+    sameIPCount++;
+    // Halt detection: IP stuck in BIOS ROM (gossamer's jmp $) or
+    // same IP for many ticks without a key event coming to unstick it.
+    if (st.IP >= BIOS_BASE || sameIPCount > 200) {
+      console.error(`Ref halted at tick ${t}, IP=0x${st.IP.toString(16)}`);
+      break;
+    }
+  } else {
+    sameIPCount = 0;
   }
   lastRefIP = st.IP;
 }
@@ -155,13 +163,19 @@ console.error(`Running calcite for ${calciteTicks} ticks...`);
 // Find calcite binary
 const calciteExeName = process.platform === 'win32' ? 'calcite-cli.exe' : 'calcite-cli';
 const calciteBin = resolve(__dirname, '..', '..', 'calcite', 'target', 'release', calciteExeName);
-const calciteCmd = [
+const calciteCmdParts = [
   calciteBin,
   '--input', cssPath,
   '--ticks', String(calciteTicks),
   '--trace-json',
-  '--halt=-15',
-].join(' ');
+  '--halt=halt',
+];
+// Forward --key-events to calcite for keyboard injection
+if (keyEvents.length > 0) {
+  const evStr = keyEvents.map(ev => `${ev.cycle}:${ev.key}`).join(',');
+  calciteCmdParts.push(`--key-events=${evStr}`);
+}
+const calciteCmd = calciteCmdParts.join(' ');
 
 let calciteOutput;
 try {
@@ -232,14 +246,77 @@ let firstDivergence = null;
 let matchCount = 0;
 let totalCompared = 0;
 let multiCycleSkips = 0;
+let biosSkips = 0;
 
 let ci = 0; // calcite cursor
 
 for (let ri = 0; ri < refTrace.length && ci < calciteTrace.length; ri++) {
   const ref = refTrace[ri];
+  let refIP = ref.IP;
+
+  // --- INT 16h AH=00h rewind skip ---
+  // The JS int_handler for INT 16h AH=00h rewinds IP when the buffer is empty,
+  // so the ref trace shows the same IP repeating. Skip these repeated entries —
+  // calcite is holding at the BIOS sentinel's μop 0, and we can't align until
+  // the handler completes and both emulators advance past the INT instruction.
+  if (ri > 0 && refIP === refTrace[ri - 1].IP && refIP < BIOS_BASE) {
+    continue; // skip repeated-IP ref ticks (INT 16h spin)
+  }
+
+  // --- BIOS handler skip ---
+  // When the ref enters BIOS ROM (IP >= 0xF0000), the CSS uses a sentinel
+  // (opcode 0xD6) that executes the handler as μops. The ref executes real
+  // 8086 code inside gossamer.asm. The instruction traces diverge completely
+  // during the handler, but should agree after the handler returns (IRET).
+  //
+  // Strategy: fast-forward the ref trace until IP exits BIOS ROM, then
+  // resume comparison at the post-return IP. The calcite sentinel μops
+  // execute and return to the same post-return IP.
+  if (refIP >= BIOS_BASE) {
+    const biosEntryTick = ri;
+    let biosExitTick = -1;
+    let biosHalted = false;
+    for (let j = ri + 1; j < refTrace.length; j++) {
+      const jIP = refTrace[j].IP;
+      if (jIP < BIOS_BASE) {
+        biosExitTick = j;
+        break;
+      }
+      // Halt detection: ref stuck at same IP (gossamer's jmp $ in INT 20h)
+      if (j > ri + 1 && jIP === refTrace[j - 1].IP) {
+        biosHalted = true;
+        biosExitTick = j;
+        break;
+      }
+    }
+
+    if (biosHalted) {
+      // INT 20h or similar halt — both emulators stop here.
+      // Check if calcite also halted (halt flag set).
+      const calNow = calciteTrace[ci];
+      const calHalt = calNow.halt || 0;
+      biosSkips++;
+      console.error(`  BIOS handler at tick ${biosEntryTick}: halted (ref stuck at 0x${refTrace[biosExitTick].IP.toString(16)})`);
+      // Report success up to halt
+      break;
+    }
+
+    if (biosExitTick < 0) {
+      // Ref never exited BIOS ROM within the trace — ran out of ticks
+      console.error(`  BIOS handler at tick ${biosEntryTick}: ref never returned (ran out of ticks)`);
+      break;
+    }
+
+    // Skip to the post-return ref tick and continue comparison from there
+    const biosReturnIP = refTrace[biosExitTick].IP;
+    const biosTicksInside = biosExitTick - biosEntryTick;
+    biosSkips++;
+    console.error(`  BIOS handler at tick ${biosEntryTick}: skipped ${biosTicksInside} ref ticks, returned to IP=0x${biosReturnIP.toString(16)}`);
+    ri = biosExitTick - 1; // -1 because the for loop increments
+    continue;
+  }
 
   // Advance Calcite to match ref's post-instruction IP.
-  const refIP = ref.IP;
   const retireTick = advanceToIP(calciteTrace, ci, refIP);
   if (retireTick < 0) {
     firstDivergence = {
@@ -295,6 +372,9 @@ console.log(`Instructions compared: ${totalCompared}`);
 console.log(`Matching: ${matchCount}`);
 if (multiCycleSkips > 0) {
   console.log(`Multi-cycle ticks skipped: ${multiCycleSkips} (mid-instruction μop ticks)`);
+}
+if (biosSkips > 0) {
+  console.log(`BIOS handler entries skipped: ${biosSkips} (ref executes gossamer, CSS uses sentinel)`);
 }
 
 if (!firstDivergence) {

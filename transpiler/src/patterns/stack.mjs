@@ -39,7 +39,7 @@ export function emitPUSH_reg(dispatch) {
       `PUSH ${reg} hi`, 1);
 
     // IP advances only on retirement (μop 1)
-    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1)`, `PUSH ${reg}`, 1);
+    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `PUSH ${reg}`, 1);
   }
 }
 
@@ -66,7 +66,7 @@ export function emitPOP_reg(dispatch) {
     // For POP SP (0x5C), SP gets the popped value directly (already handled above)
 
     // IP += 1
-    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1)`, `POP ${reg}`);
+    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `POP ${reg}`);
   }
 }
 
@@ -95,7 +95,7 @@ export function emitPUSH_seg(dispatch) {
       `calc(var(--__1SS) * 16 + var(--__1SP) + 1)`,
       `--rightShift(var(--__1${reg}), 8)`,
       `PUSH ${reg} hi`, 1);
-    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1)`, `PUSH ${reg}`, 1);
+    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `PUSH ${reg}`, 1);
   }
 }
 
@@ -116,7 +116,7 @@ export function emitPOP_seg(dispatch) {
     dispatch.addEntry('SP', opcode,
       `calc(var(--__1SP) + 2)`,
       `POP ${reg} (SP+=2)`);
-    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1)`, `POP ${reg}`);
+    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `POP ${reg}`);
   }
 }
 
@@ -138,7 +138,7 @@ export function emitPUSHF(dispatch) {
     `calc(var(--__1SS) * 16 + var(--__1SP) + 1)`,
     `--rightShift(var(--__1flags), 8)`,
     `PUSHF hi`, 1);
-  dispatch.addEntry('IP', 0x9C, `calc(var(--__1IP) + 1)`, `PUSHF`, 1);
+  dispatch.addEntry('IP', 0x9C, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `PUSHF`, 1);
 }
 
 /**
@@ -152,7 +152,7 @@ export function emitPOPF(dispatch) {
   dispatch.addEntry('SP', 0x9D,
     `calc(var(--__1SP) + 2)`,
     `POPF (SP+=2)`);
-  dispatch.addEntry('IP', 0x9D, `calc(var(--__1IP) + 1)`, `POPF`);
+  dispatch.addEntry('IP', 0x9D, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `POPF`);
 }
 
 /**

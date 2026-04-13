@@ -106,20 +106,13 @@ export function comMemoryZones(programBytes, programOffset, memBytes, graphics =
  * RAM region. The kernel high area (top 104KB) is always included regardless.
  */
 export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedData, prune = {}) {
-  // The kernel high area always starts at memBytes - 0x1A000 (104 KB from top)
-  const highAreaStart = memBytes - 0x1A000;
-  // The kernel low area covers IVT + BDA + kernel image + init workspace
-  const lowAreaEnd = 0x30000;
-
+  // Use one contiguous block for all conventional memory. The kernel
+  // relocates itself to high memory and its code segment can span a wide
+  // range of addresses, so splitting into low/high zones with a gap causes
+  // the CPU to execute into unmapped memory. The ~640KB CSS cost is
+  // acceptable for correctness.
   const zones = [];
-  if (highAreaStart <= lowAreaEnd) {
-    // Small memBytes — just use one contiguous block
-    zones.push([0x0000, memBytes]);
-  } else {
-    // Split into low area + high area, skipping the unused middle
-    zones.push([0x0000, lowAreaEnd]);       // IVT + BDA + kernel + init workspace
-    zones.push([highAreaStart, memBytes]);   // DOS high area + program heap top
-  }
+  zones.push([0x0000, memBytes]);
   if (!prune.gfx) {
     zones.push([0xA0000, 0xAFA00]);         // VGA Mode 13h framebuffer (320x200)
   }

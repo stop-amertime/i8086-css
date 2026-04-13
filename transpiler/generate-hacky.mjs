@@ -125,6 +125,23 @@ for (const [intNum, stubOffset] of Object.entries(biosRomHandlers)) {
   });
 }
 
+// Initialize BDA fields that BIOS handlers depend on.
+// On a real PC, the BIOS POST does this. In the hack path we do it here.
+embeddedData.push({
+  addr: 0x041A,
+  bytes: [
+    0x1E, 0x00,   // keyboard buffer head pointer = 0x001E (BDA offset)
+    0x1E, 0x00,   // keyboard buffer tail pointer = 0x001E (empty)
+  ],
+});
+embeddedData.push({
+  addr: 0x0449,
+  bytes: [
+    0x03,   // video mode 3 (80x25 color text)
+    80,     // columns per row
+  ],
+});
+
 // Build memory zones
 const memoryZones = comMemoryZones(programBytes, programOffset, memBytes, graphics);
 

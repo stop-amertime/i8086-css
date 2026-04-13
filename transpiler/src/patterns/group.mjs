@@ -48,7 +48,7 @@ export function emitGroup_FE(dispatch) {
     `else: --decFlags8(var(--rmVal8), --lowerBytes(calc(var(--rmVal8) - 1 + 256), 8), var(--__1flags)))`,
     `Group FE flags`);
 
-  dispatch.addEntry('IP', 0xFE, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `Group FE`);
+  dispatch.addEntry('IP', 0xFE, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `Group FE`);
 }
 
 /**
@@ -134,7 +134,7 @@ export function emitGroup_F7(dispatch) {
     `Group F7 flags`);
 
   // IP: conditional multi-cycle for NEG/NOT with mod!=3
-  const ipExprF7 = `if(style(--reg: 0): calc(var(--__1IP) + 2 + var(--modrmExtra) + 2); else: calc(var(--__1IP) + 2 + var(--modrmExtra)))`;
+  const ipExprF7 = `if(style(--reg: 0): calc(var(--__1IP) + 2 + var(--modrmExtra) + 2 + var(--prefixLen)); else: calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)))`;
   dispatch.addEntry('IP', 0xF7,
     `if(style(--mod: 3): ${ipExprF7}; else: var(--__1IP))`,
     `Group F7 IP`, 0);
@@ -209,7 +209,7 @@ export function emitGroup_F6(dispatch) {
 
   // IP: TEST has extra imm8 (1 byte)
   dispatch.addEntry('IP', 0xF6,
-    `if(style(--reg: 0): calc(var(--__1IP) + 2 + var(--modrmExtra) + 1); else: calc(var(--__1IP) + 2 + var(--modrmExtra)))`,
+    `if(style(--reg: 0): calc(var(--__1IP) + 2 + var(--modrmExtra) + 1 + var(--prefixLen)); else: calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)))`,
     `Group F6`);
 }
 
@@ -303,7 +303,7 @@ export function emitGroup_80(dispatch) {
 
     // IP: 2 + modrmExtra + 1 (for the immediate byte)
     dispatch.addEntry('IP', opcode,
-      `calc(var(--__1IP) + 2 + var(--modrmExtra) + 1)`,
+      `calc(var(--__1IP) + 2 + var(--modrmExtra) + 1 + var(--prefixLen))`,
       `Group ${opcode.toString(16)}`);
   }
 }
@@ -357,10 +357,10 @@ export function emitGroup_81(dispatch) {
     `Group 81 flags`);
 
   dispatch.addEntry('IP', 0x81,
-    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + 2); else: var(--__1IP))`,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + 2 + var(--prefixLen)); else: var(--__1IP))`,
     `Group 81 IP`, 0);
   dispatch.addEntry('IP', 0x81,
-    `calc(var(--__1IP) + 2 + var(--modrmExtra) + 2)`,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra) + 2 + var(--prefixLen))`,
     `Group 81 retire`, 1);
   dispatch.setUopAdvance(0x81,
     `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
@@ -420,10 +420,10 @@ export function emitGroup_83(dispatch) {
     `Group 83 flags`);
 
   dispatch.addEntry('IP', 0x83,
-    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + 1); else: var(--__1IP))`,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + 1 + var(--prefixLen)); else: var(--__1IP))`,
     `Group 83 IP`, 0);
   dispatch.addEntry('IP', 0x83,
-    `calc(var(--__1IP) + 2 + var(--modrmExtra) + 1)`,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra) + 1 + var(--prefixLen))`,
     `Group 83 retire`, 1);
   dispatch.setUopAdvance(0x83,
     `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
@@ -548,31 +548,30 @@ export function emitGroup_FF(dispatch) {
   // INC/DEC mem, CALL near, PUSH: retire on μop 1
   // CALL FAR: retire on μop 3
   //
-  // rmVal16 is an absolute address — subtract prefixLen to cancel the
-  // automatic calc(... + prefixLen) wrapper.
+  // rmVal16 is an absolute address for JMP/CALL indirect — used directly.
 
   // μop 0 IP: only advances for single-cycle paths (JMP and reg INC/DEC)
   dispatch.addEntry('IP', 0xFF,
     `if(` +
-    `style(--reg: 4): calc(var(--rmVal16) - var(--prefixLen)); ` +
-    `style(--reg: 5): calc(var(--rmVal16) - var(--prefixLen)); ` +
-    `style(--reg: 0) and style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); ` +
-    `style(--reg: 1) and style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); ` +
+    `style(--reg: 4): var(--rmVal16); ` +
+    `style(--reg: 5): var(--rmVal16); ` +
+    `style(--reg: 0) and style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)); ` +
+    `style(--reg: 1) and style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)); ` +
     `else: var(--__1IP))`,
     `Group FF IP μop0`, 0);
 
   // μop 1 IP: retire for INC/DEC mem, CALL near, PUSH; hold for CALL FAR
   dispatch.addEntry('IP', 0xFF,
     `if(` +
-    `style(--reg: 2): calc(var(--rmVal16) - var(--prefixLen)); ` +
+    `style(--reg: 2): var(--rmVal16); ` +
     `style(--reg: 3): var(--__1IP); ` +
-    `style(--reg: 6): calc(var(--__1IP) + 2 + var(--modrmExtra)); ` +
-    `else: calc(var(--__1IP) + 2 + var(--modrmExtra)))`,
+    `style(--reg: 6): calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)); ` +
+    `else: calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)))`,
     `Group FF IP μop1`, 1);
 
   // μop 3 IP: retire for CALL FAR
   dispatch.addEntry('IP', 0xFF,
-    `calc(var(--rmVal16) - var(--prefixLen))`,
+    `var(--rmVal16)`,
     `Group FF CALL FAR IP μop3`, 3);
 
   // CS changes on retirement: CALL FAR on μop 3, JMP FAR on μop 0

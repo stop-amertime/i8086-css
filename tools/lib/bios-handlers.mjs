@@ -52,9 +52,12 @@ export function createBiosHandlers(memory, pic, kbd, getRegs, setRegs) {
       const head = memory[BDA_BASE + 0x1A] | (memory[BDA_BASE + 0x1B] << 8);
       const tail = memory[BDA_BASE + 0x1C] | (memory[BDA_BASE + 0x1D] << 8);
       if (head === tail) {
-        // Buffer empty — in the reference emulator, we can't truly block.
-        // Return false to let the program's own spin loop handle it.
-        return false;
+        // Buffer empty — rewind IP by 2 to re-execute INT 16h next step.
+        // This simulates the CSS μop 0 hold: the instruction keeps retrying
+        // until the buffer is non-empty. Return true to prevent fallthrough
+        // to gossamer's incompatible INT 16h handler.
+        setRegs({ ip: regs.ip - 2 });
+        return true;
       }
       const ascii = memory[BDA_BASE + head];
       const scancode = memory[BDA_BASE + head + 1];
@@ -226,11 +229,125 @@ export function createBiosHandlers(memory, pic, kbd, getRegs, setRegs) {
     return false;
   }
 
+  // --- DOS-path handlers (INT 08h, 11h, 12h, 13h, 15h, 19h) ---
+  // These are needed for the DOS kernel boot path where gossamer-dos.asm
+  // is replaced by microcode handlers. They match the CSS microcode in
+  // transpiler/src/patterns/bios.mjs.
+
+  function int08h() {
+    // Timer IRQ: increment BDA tick counter, send EOI
+    const lo = memory[BDA_BASE + 0x6C] | (memory[BDA_BASE + 0x6D] << 8);
+    const hi = memory[BDA_BASE + 0x6E] | (memory[BDA_BASE + 0x6F] << 8);
+    let newLo = (lo + 1) & 0xFFFF;
+    let newHi = hi;
+    if (newLo === 0) newHi = (newHi + 1) & 0xFFFF;
+    memory[BDA_BASE + 0x6C] = newLo & 0xFF;
+    memory[BDA_BASE + 0x6D] = (newLo >> 8) & 0xFF;
+    memory[BDA_BASE + 0x6E] = newHi & 0xFF;
+    memory[BDA_BASE + 0x6F] = (newHi >> 8) & 0xFF;
+    pic.portOut(0, 0x20, 0x20);  // EOI
+    return true;
+  }
+
+  function int11h() {
+    // Equipment list: return BDA word at 0x0410
+    const val = memory[BDA_BASE + 0x10] | (memory[BDA_BASE + 0x11] << 8);
+    setRegs({ al: val & 0xFF, ah: (val >> 8) & 0xFF });
+    return true;
+  }
+
+  function int12h() {
+    // Memory size: return BDA word at 0x0413 in AX
+    const val = memory[BDA_BASE + 0x13] | (memory[BDA_BASE + 0x14] << 8);
+    setRegs({ al: val & 0xFF, ah: (val >> 8) & 0xFF });
+    return true;
+  }
+
+  function int13h() {
+    const regs = getRegs();
+    if (regs.ah === 0x00) {
+      // Disk reset: AH=0, CF=0
+      setRegs({ ah: 0, flags: regs.flags & ~0x0001 });
+      return true;
+    }
+    if (regs.ah === 0x02) {
+      // Read sectors: AL=count, CH=cyl, CL=sector(1-based), DH=head, ES:BX=dest
+      const count = regs.al;
+      const cyl = regs.ch;
+      const sector = regs.cl;  // 1-based
+      const head = regs.dh;
+      const lba = (cyl * 2 + head) * 18 + (sector - 1);
+      const srcBase = 0xD0000 + lba * 512;
+      const dstBase = regs.es * 16 + (regs.bh * 256 + regs.bl);
+      for (let i = 0; i < count * 512; i++) {
+        memory[dstBase + i] = memory[srcBase + i] || 0;
+      }
+      setRegs({ ah: 0, al: count, flags: regs.flags & ~0x0001 }); // CF=0
+      return true;
+    }
+    if (regs.ah === 0x08) {
+      // Get drive parameters (1.44MB floppy)
+      setRegs({
+        ah: 0, bl: 0x04,     // drive type 1.44MB
+        ch: 79, cl: 18,      // max cyl, max sector
+        dh: 1, dl: 1,        // max head, num drives
+        flags: regs.flags & ~0x0001,
+      });
+      return true;
+    }
+    if (regs.ah === 0x15) {
+      // Get disk type: AH=01 (floppy without change detection)
+      setRegs({ ah: 0x01, flags: regs.flags & ~0x0001 });
+      return true;
+    }
+    // Unknown: AH=01 (invalid function), CF=1
+    setRegs({ ah: 0x01, flags: regs.flags | 0x0001 });
+    return true;
+  }
+
+  function int15h() {
+    const regs = getRegs();
+    if (regs.ah === 0x4F) {
+      // Keyboard intercept: just return (pass through)
+      return true;
+    }
+    if (regs.ah === 0x88) {
+      // Extended memory size: AX=0, CF=0
+      setRegs({ al: 0, ah: 0, flags: regs.flags & ~0x0001 });
+      return true;
+    }
+    if (regs.ah === 0x90 || regs.ah === 0x91) {
+      // OS hooks: AH=0
+      setRegs({ ah: 0 });
+      return true;
+    }
+    if (regs.ah === 0xC0) {
+      // System config table: AH=0, ES:BX=config_table, CF=0
+      // We don't have a config table in the ref emulator — just return success
+      setRegs({ ah: 0, flags: regs.flags & ~0x0001 });
+      return true;
+    }
+    // Unknown: AH=86h, CF=1
+    setRegs({ ah: 0x86, flags: regs.flags | 0x0001 });
+    return true;
+  }
+
+  function int19h() {
+    // Bootstrap halt — same as INT 20h
+    return false;  // let IVT handler run
+  }
+
   return function int_handler(type) {
     switch (type) {
+      case 0x08: return int08h();
       case 0x09: return int09h();
       case 0x10: return int10h();
+      case 0x11: return int11h();
+      case 0x12: return int12h();
+      case 0x13: return int13h();
+      case 0x15: return int15h();
       case 0x16: return int16h();
+      case 0x19: return int19h();
       case 0x1A: return int1ah();
       case 0x20: return int20h();
       default: return false;

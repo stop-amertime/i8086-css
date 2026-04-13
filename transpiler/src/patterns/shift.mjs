@@ -75,10 +75,10 @@ export function emitShift_D1(dispatch) {
     `Shift D1 flags`);
 
   dispatch.addEntry('IP', 0xD1,
-    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)); else: var(--__1IP))`,
     `Shift D1 IP`, 0);
   dispatch.addEntry('IP', 0xD1,
-    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`,
     `Shift D1 retire`, 1);
   dispatch.setUopAdvance(0xD1,
     `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
@@ -128,7 +128,7 @@ export function emitShift_D0(dispatch) {
     `else: var(--__1flags))`,
     `Shift D0 flags`);
 
-  dispatch.addEntry('IP', 0xD0, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `Shift D0`);
+  dispatch.addEntry('IP', 0xD0, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `Shift D0`);
 }
 
 /**
@@ -271,19 +271,19 @@ export function emitShift_D3(dispatch) {
   // CF for ROL: bit 0 of result. CF for ROR: bit 15 of result.
   dispatch.addEntry('flags', 0xD3,
     `if(style(--_clMasked: 0): var(--__1flags); ` +
-    `style(--reg: 4): calc(--shlFlagsN16(var(--rmVal16), var(--_clMasked)) + --and(var(--__1flags), 3856)); ` +
-    `style(--reg: 5): calc(--shrFlagsN16(var(--rmVal16), var(--_clMasked)) + --and(var(--__1flags), 3856)); ` +
-    `style(--reg: 7): calc(--sarFlagsN16(var(--rmVal16), var(--_clMasked)) + --and(var(--__1flags), 3856)); ` +
+    `style(--reg: 4): calc(--shlFlagsN16(var(--rmVal16), var(--_clMasked)) + --and(var(--__1flags), 1808)); ` +
+    `style(--reg: 5): calc(--shrFlagsN16(var(--rmVal16), var(--_clMasked)) + --and(var(--__1flags), 1808)); ` +
+    `style(--reg: 7): calc(--sarFlagsN16(var(--rmVal16), var(--_clMasked)) + --and(var(--__1flags), 1808)); ` +
     `style(--reg: 0): calc(var(--__1flags) - var(--_cf) + --bit(${rol16}, 0)); ` +
     `style(--reg: 1): calc(var(--__1flags) - var(--_cf) + --bit(${ror16}, 15)); ` +
     `else: var(--__1flags))`,
     `Shift D3 flags`);
 
   dispatch.addEntry('IP', 0xD3,
-    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)); else: var(--__1IP))`,
     `Shift D3 IP`, 0);
   dispatch.addEntry('IP', 0xD3,
-    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`,
     `Shift D3 retire`, 1);
   dispatch.setUopAdvance(0xD3,
     `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
@@ -332,15 +332,15 @@ export function emitShift_D2(dispatch) {
   // Flags
   dispatch.addEntry('flags', 0xD2,
     `if(style(--_clMasked: 0): var(--__1flags); ` +
-    `style(--reg: 4): calc(--shlFlagsN8(var(--rmVal8), var(--_clMasked)) + --and(var(--__1flags), 3856)); ` +
-    `style(--reg: 5): calc(--shrFlagsN8(var(--rmVal8), var(--_clMasked)) + --and(var(--__1flags), 3856)); ` +
-    `style(--reg: 7): calc(--sarFlagsN8(var(--rmVal8), var(--_clMasked)) + --and(var(--__1flags), 3856)); ` +
+    `style(--reg: 4): calc(--shlFlagsN8(var(--rmVal8), var(--_clMasked)) + --and(var(--__1flags), 1808)); ` +
+    `style(--reg: 5): calc(--shrFlagsN8(var(--rmVal8), var(--_clMasked)) + --and(var(--__1flags), 1808)); ` +
+    `style(--reg: 7): calc(--sarFlagsN8(var(--rmVal8), var(--_clMasked)) + --and(var(--__1flags), 1808)); ` +
     `style(--reg: 0): calc(var(--__1flags) - var(--_cf) + --bit(${rol8}, 0)); ` +
     `style(--reg: 1): calc(var(--__1flags) - var(--_cf) + --bit(${ror8}, 7)); ` +
     `else: var(--__1flags))`,
     `Shift D2 flags`);
 
-  dispatch.addEntry('IP', 0xD2, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `Shift D2`);
+  dispatch.addEntry('IP', 0xD2, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `Shift D2`);
 }
 
 /**
@@ -359,19 +359,21 @@ export function emitShiftByNFlagFunctions() {
 @function --shlFlagsN16(--val <integer>, --n <integer>) returns <integer> {
   --res: --lowerBytes(round(nearest, calc(var(--val) * pow(2, var(--n)))), 16);
   --cf: --bit(var(--val), max(0, calc(16 - var(--n))));
+  --of: calc(abs(--bit(var(--res), 15) - var(--cf)) * 2048);
   --pf: --parity(var(--res));
   --zf: if(style(--res: 0): 64; else: 0);
   --sf: calc(--bit(var(--res), 15) * 128);
-  result: calc(var(--cf) + var(--pf) + var(--zf) + var(--sf) + 2);
+  result: calc(var(--cf) + var(--of) + var(--pf) + var(--zf) + var(--sf) + 2);
 }
 
 @function --shrFlagsN16(--val <integer>, --n <integer>) returns <integer> {
   --res: round(down, var(--val) / pow(2, var(--n)));
   --cf: --bit(var(--val), calc(var(--n) - 1));
+  --of: calc(--bit(var(--val), 15) * 2048);
   --pf: --parity(var(--res));
   --zf: if(style(--res: 0): 64; else: 0);
   --sf: calc(--bit(var(--res), 15) * 128);
-  result: calc(var(--cf) + var(--pf) + var(--zf) + var(--sf) + 2);
+  result: calc(var(--cf) + var(--of) + var(--pf) + var(--zf) + var(--sf) + 2);
 }
 
 @function --sarFlagsN16(--val <integer>, --n <integer>) returns <integer> {
@@ -386,19 +388,21 @@ export function emitShiftByNFlagFunctions() {
 @function --shlFlagsN8(--val <integer>, --n <integer>) returns <integer> {
   --res: --lowerBytes(round(nearest, calc(var(--val) * pow(2, var(--n)))), 8);
   --cf: --bit(var(--val), max(0, calc(8 - var(--n))));
+  --of: calc(abs(--bit(var(--res), 7) - var(--cf)) * 2048);
   --pf: --parity(var(--res));
   --zf: if(style(--res: 0): 64; else: 0);
   --sf: calc(--bit(var(--res), 7) * 128);
-  result: calc(var(--cf) + var(--pf) + var(--zf) + var(--sf) + 2);
+  result: calc(var(--cf) + var(--of) + var(--pf) + var(--zf) + var(--sf) + 2);
 }
 
 @function --shrFlagsN8(--val <integer>, --n <integer>) returns <integer> {
   --res: round(down, var(--val) / pow(2, var(--n)));
   --cf: --bit(var(--val), calc(var(--n) - 1));
+  --of: calc(--bit(var(--val), 7) * 2048);
   --pf: --parity(var(--res));
   --zf: if(style(--res: 0): 64; else: 0);
   --sf: calc(--bit(var(--res), 7) * 128);
-  result: calc(var(--cf) + var(--pf) + var(--zf) + var(--sf) + 2);
+  result: calc(var(--cf) + var(--of) + var(--pf) + var(--zf) + var(--sf) + 2);
 }
 
 @function --sarFlagsN8(--val <integer>, --n <integer>) returns <integer> {

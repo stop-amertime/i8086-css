@@ -55,7 +55,7 @@ export function emitJcc(dispatch) {
     // If not taken: IP = IP + 2
     // Combined: IP = IP + 2 + taken * sign_extend(q1)
     dispatch.addEntry('IP', opcode,
-      `--lowerBytes(calc(var(--__1IP) + 2 + ${taken} * --u2s1(var(--q1))), 16)`,
+      `--lowerBytes(calc(var(--__1IP) + 2 + var(--prefixLen) + ${taken} * --u2s1(var(--q1))), 16)`,
       `${name} short`);
   }
 }
@@ -65,7 +65,7 @@ export function emitJcc(dispatch) {
  */
 export function emitJMP_short(dispatch) {
   dispatch.addEntry('IP', 0xEB,
-    `--lowerBytes(calc(var(--__1IP) + 2 + --u2s1(var(--q1))), 16)`,
+    `--lowerBytes(calc(var(--__1IP) + 2 + var(--prefixLen) + --u2s1(var(--q1))), 16)`,
     `JMP short`);
 }
 
@@ -74,7 +74,7 @@ export function emitJMP_short(dispatch) {
  */
 export function emitJMP_near(dispatch) {
   dispatch.addEntry('IP', 0xE9,
-    `--lowerBytes(calc(var(--__1IP) + 3 + --u2s2(calc(var(--q1) + var(--q2) * 256))), 16)`,
+    `--lowerBytes(calc(var(--__1IP) + 3 + var(--prefixLen) + --u2s2(calc(var(--q1) + var(--q2) * 256))), 16)`,
     `JMP near`);
 }
 
@@ -86,7 +86,7 @@ export function emitJMP_near(dispatch) {
 export function emitCALL_near(dispatch) {
   // CALL near (0xE8): 2 μops — push return address, jump.
   // Return address = IP + 3 (after the 3-byte CALL instruction)
-  const retAddr = `calc(var(--__1IP) + 3)`;
+  const retAddr = `calc(var(--__1IP) + 3 + var(--prefixLen))`;
 
   // μop 0: SP -= 2, write retAddr lo at SS:(origSP-2)
   dispatch.addEntry('SP', 0xE8,
@@ -103,7 +103,7 @@ export function emitCALL_near(dispatch) {
     `--rightShift(${retAddr}, 8)`,
     `CALL near push ret hi`, 1);
   dispatch.addEntry('IP', 0xE8,
-    `--lowerBytes(calc(var(--__1IP) + 3 + --u2s2(calc(var(--q1) + var(--q2) * 256))), 16)`,
+    `--lowerBytes(calc(var(--__1IP) + 3 + var(--prefixLen) + --u2s2(calc(var(--q1) + var(--q2) * 256))), 16)`,
     `CALL near`, 1);
 }
 
@@ -186,14 +186,14 @@ export function emitINT(dispatch) {
   // origSP-6 = __1SP. --__1IP is still original IP (IP hasn't changed).
   dispatch.addMemWrite(0xCD,
     `calc(${ssBase} + var(--__1SP))`,
-    `--lowerBytes(calc(var(--__1IP) + 2), 8)`,
+    `--lowerBytes(calc(var(--__1IP) + 2 + var(--prefixLen)), 8)`,
     `INT push IP lo`, 4);
 
   // μop 5: write retIP hi, load CS:IP from IVT, clear IF+TF, retire
   // origSP-5 = __1SP+1
   dispatch.addMemWrite(0xCD,
     `calc(${ssBase} + var(--__1SP) + 1)`,
-    `--rightShift(calc(var(--__1IP) + 2), 8)`,
+    `--rightShift(calc(var(--__1IP) + 2 + var(--prefixLen)), 8)`,
     `INT push IP hi`, 5);
   dispatch.addEntry('IP', 0xCD,
     `--read2(calc(var(--q1) * 4))`,
@@ -241,7 +241,7 @@ export function emitLOOP(dispatch) {
   // IP = IP + 2 + (CX-1 != 0 ? rel8 : 0)
   // We need to check if the NEW CX is zero
   dispatch.addEntry('IP', 0xE2,
-    `if(style(--_loopCX: 0): calc(var(--__1IP) + 2); else: --lowerBytes(calc(var(--__1IP) + 2 + --u2s1(var(--q1))), 16))`,
+    `if(style(--_loopCX: 0): calc(var(--__1IP) + 2 + var(--prefixLen)); else: --lowerBytes(calc(var(--__1IP) + 2 + var(--prefixLen) + --u2s1(var(--q1))), 16))`,
     `LOOP`);
 }
 
@@ -252,7 +252,7 @@ export function emitLOOPE(dispatch) {
   const newCX = `--lowerBytes(calc(var(--__1CX) - 1 + 65536), 16)`;
   dispatch.addEntry('CX', 0xE1, newCX, `LOOPE (CX-=1)`);
   dispatch.addEntry('IP', 0xE1,
-    `if(style(--_loopCX: 0): calc(var(--__1IP) + 2); else: if(style(--_zf: 0): calc(var(--__1IP) + 2); else: --lowerBytes(calc(var(--__1IP) + 2 + --u2s1(var(--q1))), 16)))`,
+    `if(style(--_loopCX: 0): calc(var(--__1IP) + 2 + var(--prefixLen)); else: if(style(--_zf: 0): calc(var(--__1IP) + 2 + var(--prefixLen)); else: --lowerBytes(calc(var(--__1IP) + 2 + var(--prefixLen) + --u2s1(var(--q1))), 16)))`,
     `LOOPE`);
 }
 
@@ -263,7 +263,7 @@ export function emitLOOPNE(dispatch) {
   const newCX = `--lowerBytes(calc(var(--__1CX) - 1 + 65536), 16)`;
   dispatch.addEntry('CX', 0xE0, newCX, `LOOPNE (CX-=1)`);
   dispatch.addEntry('IP', 0xE0,
-    `if(style(--_loopCX: 0): calc(var(--__1IP) + 2); else: if(style(--_zf: 1): calc(var(--__1IP) + 2); else: --lowerBytes(calc(var(--__1IP) + 2 + --u2s1(var(--q1))), 16)))`,
+    `if(style(--_loopCX: 0): calc(var(--__1IP) + 2 + var(--prefixLen)); else: if(style(--_zf: 1): calc(var(--__1IP) + 2 + var(--prefixLen)); else: --lowerBytes(calc(var(--__1IP) + 2 + var(--prefixLen) + --u2s1(var(--q1))), 16)))`,
     `LOOPNE`);
 }
 
@@ -272,7 +272,7 @@ export function emitLOOPNE(dispatch) {
  */
 export function emitJCXZ(dispatch) {
   dispatch.addEntry('IP', 0xE3,
-    `if(style(--__1CX: 0): --lowerBytes(calc(var(--__1IP) + 2 + --u2s1(var(--q1))), 16); else: calc(var(--__1IP) + 2))`,
+    `if(style(--__1CX: 0): --lowerBytes(calc(var(--__1IP) + 2 + var(--prefixLen) + --u2s1(var(--q1))), 16); else: calc(var(--__1IP) + 2 + var(--prefixLen)))`,
     `JCXZ`);
 }
 
@@ -307,13 +307,13 @@ export function emitCALL_far(dispatch) {
   // --__1IP is still original IP (hasn't changed)
   dispatch.addMemWrite(0x9A,
     `calc(${ssBase} + var(--__1SP))`,
-    `--lowerBytes(calc(var(--__1IP) + 5), 8)`,
+    `--lowerBytes(calc(var(--__1IP) + 5 + var(--prefixLen)), 8)`,
     `CALL far push IP lo`, 2);
 
   // μop 3: write retIP hi at SS:(origSP-3) = SS:(__1SP+1), load CS:IP, retire
   dispatch.addMemWrite(0x9A,
     `calc(${ssBase} + var(--__1SP) + 1)`,
-    `--rightShift(calc(var(--__1IP) + 5), 8)`,
+    `--rightShift(calc(var(--__1IP) + 5 + var(--prefixLen)), 8)`,
     `CALL far push IP hi`, 3);
   dispatch.addEntry('IP', 0x9A,
     `calc(var(--q1) + var(--q2) * 256)`,

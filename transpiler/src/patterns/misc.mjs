@@ -19,11 +19,11 @@ function repGuardAddr(addr) {
 /** IP expression for string ops: re-execute if repeating, else advance.
  *  instrLen = byte length of the string op itself (always 1 for these). */
 function repIP(instrLen = 1) {
-  // _repContinue=1 when hasREP=1 and CX>1 → re-execute: IP stays at prefix byte.
-  // The dispatch IP wrapper adds + prefixLen, so we emit (IP - prefixLen) here
-  // so the final result is IP - prefixLen + prefixLen = IP (unchanged).
+  // _repContinue=1 when hasREP=1 and CX>1 → re-execute: IP holds at prefix byte.
+  // --__1IP already points at the prefix byte (the start of the instruction),
+  // so the rewind is just var(--__1IP) — no adjustment needed.
   // When not repeating (no REP, or last iteration, or CX=0): advance normally.
-  return `if(style(--_repContinue: 1): calc(var(--__1IP) - var(--prefixLen)); else: calc(var(--__1IP) + ${instrLen}))`;
+  return `if(style(--_repContinue: 1): var(--__1IP); else: calc(var(--__1IP) + ${instrLen} + var(--prefixLen)))`;
 }
 
 /** CX expression for string ops under REP: decrement CX, or keep if no REP.
@@ -50,9 +50,9 @@ function repCondIP(zfExpr, instrLen = 1) {
   // _repContinue already checks CX>1. We also need the ZF condition.
   // Express as: _repContinue=1 AND ((repType=1 AND equal) OR (repType=2 AND not_equal))
   return `if(` +
-    `style(--_repContinue: 1) and style(--repType: 1) and style(--_repZF: 1): calc(var(--__1IP) - var(--prefixLen)); ` +
-    `style(--_repContinue: 1) and style(--repType: 2) and style(--_repZF: 0): calc(var(--__1IP) - var(--prefixLen)); ` +
-    `else: calc(var(--__1IP) + ${instrLen}))`;
+    `style(--_repContinue: 1) and style(--repType: 1) and style(--_repZF: 1): var(--__1IP); ` +
+    `style(--_repContinue: 1) and style(--repType: 2) and style(--_repZF: 0): var(--__1IP); ` +
+    `else: calc(var(--__1IP) + ${instrLen} + var(--prefixLen)))`;
 }
 
 /**
@@ -67,7 +67,7 @@ export function emitHLT(dispatch) {
  * NOP (opcode 0x90): no operation.
  */
 export function emitNOP(dispatch) {
-  dispatch.addEntry('IP', 0x90, `calc(var(--__1IP) + 1)`, `NOP`);
+  dispatch.addEntry('IP', 0x90, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `NOP`);
 }
 
 /**
@@ -125,10 +125,10 @@ export function emitMOV_RMimm(dispatch) {
     `--rightShift(var(--immWord), 8)`,
     `MOV r/m16, imm16 → mem hi`, 1);
   dispatch.addEntry('IP', 0xC7,
-    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + 2); else: var(--__1IP))`,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + 2 + var(--prefixLen)); else: var(--__1IP))`,
     `MOV r/m16, imm16 IP`, 0);
   dispatch.addEntry('IP', 0xC7,
-    `calc(var(--__1IP) + 2 + var(--modrmExtra) + 2)`,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra) + 2 + var(--prefixLen))`,
     `MOV r/m16, imm16 retire`, 1);
   dispatch.setUopAdvance(0xC7,
     `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
@@ -147,7 +147,7 @@ export function emitMOV_RMimm(dispatch) {
     `var(--immByte)`,
     `MOV r/m8, imm8 → mem`);
   dispatch.addEntry('IP', 0xC6,
-    `calc(var(--__1IP) + 2 + var(--modrmExtra) + 1)`,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra) + 1 + var(--prefixLen))`,
     `MOV r/m8, imm8`);
 }
 
@@ -159,43 +159,43 @@ export function emitFlagManip(dispatch) {
   dispatch.addEntry('flags', 0xF8,
     `calc(var(--__1flags) - --bit(var(--__1flags), 0))`,
     `CLC`);
-  dispatch.addEntry('IP', 0xF8, `calc(var(--__1IP) + 1)`, `CLC`);
+  dispatch.addEntry('IP', 0xF8, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `CLC`);
 
   // STC (0xF9): CF = 1
   dispatch.addEntry('flags', 0xF9,
     `--or(var(--__1flags), 1)`,
     `STC`);
-  dispatch.addEntry('IP', 0xF9, `calc(var(--__1IP) + 1)`, `STC`);
+  dispatch.addEntry('IP', 0xF9, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `STC`);
 
   // CMC (0xF5): CF = !CF
   dispatch.addEntry('flags', 0xF5,
     `--xor(var(--__1flags), 1)`,
     `CMC`);
-  dispatch.addEntry('IP', 0xF5, `calc(var(--__1IP) + 1)`, `CMC`);
+  dispatch.addEntry('IP', 0xF5, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `CMC`);
 
   // CLD (0xFC): DF = 0 (bit 10)
   dispatch.addEntry('flags', 0xFC,
     `calc(var(--__1flags) - --bit(var(--__1flags), 10) * 1024)`,
     `CLD`);
-  dispatch.addEntry('IP', 0xFC, `calc(var(--__1IP) + 1)`, `CLD`);
+  dispatch.addEntry('IP', 0xFC, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `CLD`);
 
   // STD (0xFD): DF = 1
   dispatch.addEntry('flags', 0xFD,
     `--or(var(--__1flags), 1024)`,
     `STD`);
-  dispatch.addEntry('IP', 0xFD, `calc(var(--__1IP) + 1)`, `STD`);
+  dispatch.addEntry('IP', 0xFD, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `STD`);
 
   // CLI (0xFA): IF = 0 (bit 9)
   dispatch.addEntry('flags', 0xFA,
     `calc(var(--__1flags) - --bit(var(--__1flags), 9) * 512)`,
     `CLI`);
-  dispatch.addEntry('IP', 0xFA, `calc(var(--__1IP) + 1)`, `CLI`);
+  dispatch.addEntry('IP', 0xFA, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `CLI`);
 
   // STI (0xFB): IF = 1
   dispatch.addEntry('flags', 0xFB,
     `--or(var(--__1flags), 512)`,
     `STI`);
-  dispatch.addEntry('IP', 0xFB, `calc(var(--__1IP) + 1)`, `STI`);
+  dispatch.addEntry('IP', 0xFB, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `STI`);
 }
 
 /**
@@ -207,13 +207,13 @@ export function emitCBW_CWD(dispatch) {
   dispatch.addEntry('AX', 0x98,
     `calc(var(--AL) + --bit(var(--AL), 7) * 65280)`,
     `CBW`);
-  dispatch.addEntry('IP', 0x98, `calc(var(--__1IP) + 1)`, `CBW`);
+  dispatch.addEntry('IP', 0x98, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `CBW`);
 
   // CWD: if AX bit 15 set, DX = 0xFFFF, else DX = 0x0000
   dispatch.addEntry('DX', 0x99,
     `calc(--bit(var(--__1AX), 15) * 65535)`,
     `CWD`);
-  dispatch.addEntry('IP', 0x99, `calc(var(--__1IP) + 1)`, `CWD`);
+  dispatch.addEntry('IP', 0x99, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `CWD`);
 }
 
 /**
@@ -260,7 +260,7 @@ export function emitXCHG_AXreg(dispatch) {
     dispatch.addEntry('AX', opcode, `var(--__1${REG16[r]})`, `XCHG AX, ${REG16[r]}`);
     // The other register gets AX's value
     dispatch.addEntry(REG16[r], opcode, `var(--__1AX)`, `XCHG AX, ${REG16[r]}`);
-    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1)`, `XCHG AX, ${REG16[r]}`);
+    dispatch.addEntry('IP', opcode, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `XCHG AX, ${REG16[r]}`);
   }
 }
 
@@ -399,10 +399,10 @@ export function emitXCHG_RM(dispatch) {
     `--rightShift(var(--regVal16), 8)`,
     `XCHG r/m16 → mem hi`, 1);
   dispatch.addEntry('IP', 0x87,
-    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)); else: var(--__1IP))`,
     `XCHG r/m16 IP`, 0);
   dispatch.addEntry('IP', 0x87,
-    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`,
     `XCHG r/m16 retire`, 1);
   dispatch.setUopAdvance(0x87,
     `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
@@ -433,7 +433,7 @@ export function emitXCHG_RM(dispatch) {
     `if(style(--mod: 3): -1; else: var(--ea))`,
     `var(--regVal8)`,
     `XCHG r/m8 → mem`);
-  dispatch.addEntry('IP', 0x86, `calc(var(--__1IP) + 2 + var(--modrmExtra))`, `XCHG r/m8`);
+  dispatch.addEntry('IP', 0x86, `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`, `XCHG r/m8`);
 }
 
 /**
@@ -465,10 +465,10 @@ export function emitPOP_RM(dispatch) {
     `--rightShift(--read2(calc(var(--__1SS) * 16 + var(--__1SP))), 8)`,
     `POP r/m16 → mem hi`, 1);
   dispatch.addEntry('IP', 0x8F,
-    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra)); else: var(--__1IP))`,
+    `if(style(--mod: 3): calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen)); else: var(--__1IP))`,
     `POP r/m16 IP`, 0);
   dispatch.addEntry('IP', 0x8F,
-    `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+    `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`,
     `POP r/m16 retire`, 1);
   dispatch.setUopAdvance(0x8F,
     `if(style(--mod: 3): 0; style(--__1uOp: 0): 1; else: 0)`);
@@ -483,7 +483,7 @@ export function emitLAHF_SAHF(dispatch) {
   dispatch.addEntry('AX', 0x9F,
     `--mergehigh(var(--__1AX), --lowerBytes(var(--__1flags), 8))`,
     `LAHF`);
-  dispatch.addEntry('IP', 0x9F, `calc(var(--__1IP) + 1)`, `LAHF`);
+  dispatch.addEntry('IP', 0x9F, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `LAHF`);
 
   // SAHF: flags = (flags & 0xFF00) | (AH & 0xD5) | 0x02
   // 0xD5 = 213 clears bit 1 so +2 safely forces it on (avoids double-counting)
@@ -491,7 +491,7 @@ export function emitLAHF_SAHF(dispatch) {
   dispatch.addEntry('flags', 0x9E,
     `calc(--rightShift(var(--__1flags), 8) * 256 + --and(var(--AH), 213) + 2)`,
     `SAHF`);
-  dispatch.addEntry('IP', 0x9E, `calc(var(--__1IP) + 1)`, `SAHF`);
+  dispatch.addEntry('IP', 0x9E, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `SAHF`);
 }
 
 /**
@@ -523,7 +523,7 @@ export function emitIO(dispatch) {
     `style(--q1: 96): --rightShift(var(--__1keyboard), 8); ` +
     `else: 0))`,
     `IN AL, imm8`);
-  dispatch.addEntry('IP', 0xE4, `calc(var(--__1IP) + 2)`, `IN AL, imm8`);
+  dispatch.addEntry('IP', 0xE4, `calc(var(--__1IP) + 2 + var(--prefixLen))`, `IN AL, imm8`);
 
   // IN AX, imm8 (0xE5): word read
   dispatch.addEntry('AX', 0xE5,
@@ -532,7 +532,7 @@ export function emitIO(dispatch) {
     `style(--q1: 96): var(--__1keyboard); ` +
     `else: 0)`,
     `IN AX, imm8`);
-  dispatch.addEntry('IP', 0xE5, `calc(var(--__1IP) + 2)`, `IN AX, imm8`);
+  dispatch.addEntry('IP', 0xE5, `calc(var(--__1IP) + 2 + var(--prefixLen))`, `IN AX, imm8`);
 
   // IN AL, DX (0xEC): port number is in DX register
   dispatch.addEntry('AX', 0xEC,
@@ -542,7 +542,7 @@ export function emitIO(dispatch) {
     `style(--__1DX: 96): --rightShift(var(--__1keyboard), 8); ` +
     `else: 0))`,
     `IN AL, DX`);
-  dispatch.addEntry('IP', 0xEC, `calc(var(--__1IP) + 1)`, `IN AL, DX`);
+  dispatch.addEntry('IP', 0xEC, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `IN AL, DX`);
 
   // IN AX, DX (0xED): word read
   dispatch.addEntry('AX', 0xED,
@@ -551,12 +551,12 @@ export function emitIO(dispatch) {
     `style(--__1DX: 96): var(--__1keyboard); ` +
     `else: 0)`,
     `IN AX, DX`);
-  dispatch.addEntry('IP', 0xED, `calc(var(--__1IP) + 1)`, `IN AX, DX`);
+  dispatch.addEntry('IP', 0xED, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `IN AX, DX`);
 
   // === OUT instructions (imm8 port) ===
 
-  dispatch.addEntry('IP', 0xE6, `calc(var(--__1IP) + 2)`, `OUT imm8, AL`);
-  dispatch.addEntry('IP', 0xE7, `calc(var(--__1IP) + 2)`, `OUT imm8, AX`);
+  dispatch.addEntry('IP', 0xE6, `calc(var(--__1IP) + 2 + var(--prefixLen))`, `OUT imm8, AL`);
+  dispatch.addEntry('IP', 0xE7, `calc(var(--__1IP) + 2 + var(--prefixLen))`, `OUT imm8, AX`);
 
   // OUT imm8, AL (0xE6): port in q1, value is AL (low byte of AX)
   // Port 0x20 (32): EOI — clear lowest set bit of picInService
@@ -582,8 +582,8 @@ export function emitIO(dispatch) {
 
   // === OUT instructions (DX port) ===
 
-  dispatch.addEntry('IP', 0xEE, `calc(var(--__1IP) + 1)`, `OUT DX, AL`);
-  dispatch.addEntry('IP', 0xEF, `calc(var(--__1IP) + 1)`, `OUT DX, AX`);
+  dispatch.addEntry('IP', 0xEE, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `OUT DX, AL`);
+  dispatch.addEntry('IP', 0xEF, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `OUT DX, AX`);
 
   // OUT DX, AL (0xEE): port in DX, value is AL
   dispatch.addEntry('picInService', 0xEE,
@@ -613,7 +613,7 @@ export function emitXLAT(dispatch) {
   dispatch.addEntry('AX', 0xD7,
     `--mergelow(var(--__1AX), var(--_xlatByte))`,
     `XLAT`);
-  dispatch.addEntry('IP', 0xD7, `calc(var(--__1IP) + 1)`, `XLAT`);
+  dispatch.addEntry('IP', 0xD7, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `XLAT`);
 }
 
 /**
@@ -674,7 +674,7 @@ export function emitINTO(dispatch) {
     `INTO push FLAGS lo`, 0);
   // μop 0 IP: advance if OF=0 (single-cycle)
   dispatch.addEntry('IP', 0xCE,
-    `calc(var(--__1IP) + (1 - ${ofBit}))`,
+    `calc(var(--__1IP) + (1 - ${ofBit}) + (1 - ${ofBit}) * var(--prefixLen))`,
     `INTO IP μop0`, 0);
 
   dispatch.addMemWrite(0xCE,
@@ -746,7 +746,7 @@ export function emitBCD(dispatch) {
   dispatch.addEntry('flags', 0xD4,
     `calc(--logicFlags8(mod(var(--AL), max(1, var(--q1)))) + --and(var(--__1flags), 1808))`,
     `AAM flags`);
-  dispatch.addEntry('IP', 0xD4, `calc(var(--__1IP) + 2)`, `AAM`);
+  dispatch.addEntry('IP', 0xD4, `calc(var(--__1IP) + 2 + var(--prefixLen))`, `AAM`);
 
   // ---- AAD (0xD5) ----
   // new AL = (AH * base + AL) & 0xFF,  new AH = 0 → AX = new AL
@@ -758,7 +758,7 @@ export function emitBCD(dispatch) {
   dispatch.addEntry('flags', 0xD5,
     `calc(--logicFlags8(mod(calc(var(--AH) * var(--q1) + var(--AL)), 256)) + --and(var(--__1flags), 1808))`,
     `AAD flags`);
-  dispatch.addEntry('IP', 0xD5, `calc(var(--__1IP) + 2)`, `AAD`);
+  dispatch.addEntry('IP', 0xD5, `calc(var(--__1IP) + 2 + var(--prefixLen))`, `AAD`);
 
   // ---- BCD helpers (all pure CSS math — no @function nesting) ----
   // CF = bit 0 of flags = mod(flags, 2)
@@ -785,7 +785,7 @@ export function emitBCD(dispatch) {
     const newAL = `mod(calc(var(--AL) + ${adj} * 6), 16)`;
     return `calc(--logicFlags8(${newAL}) + ${adj} + ${adj} * 16 + --and(var(--__1flags), 1792))`;
   })(), `AAA flags`);
-  dispatch.addEntry('IP', 0x37, `calc(var(--__1IP) + 1)`, `AAA`);
+  dispatch.addEntry('IP', 0x37, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `AAA`);
 
   // ---- AAS (0x3F): ASCII Adjust after Subtraction ----
   dispatch.addEntry('AX', 0x3F, (() => {
@@ -805,7 +805,7 @@ export function emitBCD(dispatch) {
     const newAL = `mod(calc(var(--AL) - ${adj} * 6 + 16), 16)`;
     return `calc(--logicFlags8(${newAL}) + ${adj} + ${adj} * 16 + --and(var(--__1flags), 1792))`;
   })(), `AAS flags`);
-  dispatch.addEntry('IP', 0x3F, `calc(var(--__1IP) + 1)`, `AAS`);
+  dispatch.addEntry('IP', 0x3F, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `AAS`);
 
   // ---- DAA (0x27): Decimal Adjust after Addition ----
   // Phase 1: if (AL & 0xF) > 9 or AF: AL += 6
@@ -844,7 +844,7 @@ export function emitBCD(dispatch) {
     const newAL = `mod(calc(${oldAL} + ${adj1} + ${adj2}), 256)`;
     return `calc(--logicFlags8(${newAL}) + ${cond2} + ${cond1} * 16 + --and(var(--__1flags), 1792))`;
   })(), `DAA flags`);
-  dispatch.addEntry('IP', 0x27, `calc(var(--__1IP) + 1)`, `DAA`);
+  dispatch.addEntry('IP', 0x27, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `DAA`);
 
   // ---- DAS (0x2F): Decimal Adjust after Subtraction ----
   // Phase 1: if (AL & 0xF) > 9 or AF: AL -= 6
@@ -882,7 +882,7 @@ export function emitBCD(dispatch) {
     const newAL = `mod(calc(${oldAL} - ${adj1} - ${adj2} + 256), 256)`;
     return `calc(--logicFlags8(${newAL}) + ${cond2} + ${cond1} * 16 + --and(var(--__1flags), 1792))`;
   })(), `DAS flags`);
-  dispatch.addEntry('IP', 0x2F, `calc(var(--__1IP) + 1)`, `DAS`);
+  dispatch.addEntry('IP', 0x2F, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `DAS`);
 }
 
 /**
@@ -893,15 +893,15 @@ export function emitBCD(dispatch) {
  */
 export function emitNopStubs(dispatch) {
   // WAIT (0x9B): 1-byte, no-op
-  dispatch.addEntry('IP', 0x9B, `calc(var(--__1IP) + 1)`, `WAIT`);
+  dispatch.addEntry('IP', 0x9B, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `WAIT`);
 
   // LOCK (0xF0): 1-byte prefix, treated as no-op
-  dispatch.addEntry('IP', 0xF0, `calc(var(--__1IP) + 1)`, `LOCK`);
+  dispatch.addEntry('IP', 0xF0, `calc(var(--__1IP) + 1 + var(--prefixLen))`, `LOCK`);
 
   // ESC 0-7 (0xD8-0xDF): has ModR/M byte, so IP += 2 + modrmExtra
   for (let i = 0; i < 8; i++) {
     dispatch.addEntry('IP', 0xD8 + i,
-      `calc(var(--__1IP) + 2 + var(--modrmExtra))`,
+      `calc(var(--__1IP) + 2 + var(--modrmExtra) + var(--prefixLen))`,
       `ESC ${i}`);
   }
 }

@@ -34,6 +34,10 @@ export const STATE_VARS = [
   { name: 'pitMode', init: 0, debug: false },
   { name: 'pitWriteState', init: 0, debug: false },
   { name: 'kbdLast', init: 0, debug: false },
+  { name: 'biosAH', init: 0, debug: false },
+  { name: 'biosSrc', init: 0, debug: false },  // INT 13h: source linear address
+  { name: 'biosDst', init: 0, debug: false },  // INT 13h: destination linear address
+  { name: 'biosCnt', init: 0, debug: false },  // INT 13h: bytes remaining
 ];
 
 /**
@@ -323,5 +327,12 @@ function getAllVars(opts) {
   // Set CS (0 for .COM, 0xF000 for DOS BIOS boot)
   const csReg = regs.find(r => r.name === 'CS');
   if (opts.initialCS != null) csReg.init = opts.initialCS;
+  // Apply any additional initial register overrides
+  if (opts.initialRegs) {
+    for (const [name, val] of Object.entries(opts.initialRegs)) {
+      const reg = regs.find(r => r.name === name);
+      if (reg) reg.init = val;
+    }
+  }
   return [...regs, ...STATE_VARS];
 }

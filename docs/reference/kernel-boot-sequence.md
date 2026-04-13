@@ -616,8 +616,9 @@ a failed attempt at this.
 **FIXED: INT 10h AH=0Eh** — now handles CR/LF/BS/BEL via `--biosAL` dispatch.
 Control chars suppress VGA writes and update cursor position correctly.
 
-**REMAINING BLOCKER: PIT/PIC/IRET** — the F5/F8 key polling loop in
-`biosinit.asm:option_key` polls INT 1Ah in a loop:
+**PREDICTED NEXT BLOCKER: PIT/PIC/IRET** — the F5/F8 key polling loop in
+`biosinit.asm:option_key` polls INT 1Ah in a loop (not yet verified that
+the kernel reaches this point without hitting other bugs first):
 
 ```asm
     xor  ax, ax
@@ -633,10 +634,11 @@ option_key10:
     jb   option_key10 ; no → keep polling
 ```
 
-INT 1Ah now correctly reads BDA ticks, but the ticks stay at 0 because:
+INT 1Ah now correctly reads BDA ticks, but the ticks will stay at 0 because:
 1. PIT channel 0 is not programmed (no OUT to ports 0x43/0x40)
 2. IRQ 0 is masked in the PIC (picMask=0xFF)
-3. Even if IRQ 0 fires, INT 08h doesn't IRET (leaks 6 bytes per fire)
+3. INT 08h/09h handlers don't IRET (observed during a failed PIT attempt —
+   they skip the D6 sentinel but don't pop IP/CS/FLAGS from the stack)
 
 Previously this section described the INT 10h CR/LF issue:
 cursor past row 24, causing VGA writes to wrong addresses.
@@ -679,13 +681,15 @@ to complete and COMMAND.COM to EXEC:
 | 2 | Kernel decompression | Pure CPU, no BIOS | ✅ |
 | 3 | Extended memory query | INT 15h AH=88h → 0 | ✅ |
 | 4 | Conventional memory query | INT 12h → 640 | ✅ |
-| 5 | Version string display | INT 10h AH=0Eh (with CR/LF) | ⚠️ display corruption |
+| 5 | Version string display | INT 10h AH=0Eh (with CR/LF) | ✅ |
 | 6 | Device driver INIT | INT 13h AH=08h/15h probes | ✅ |
 | 7 | DOS init (pcmode_init) | Pure CPU | ✅ |
 | 8 | INT 21h calls (PSP, drives, files) | DOS handles, not BIOS | ✅ |
 | 9 | CONFIG.SYS read | INT 21h → DOS → device → INT 13h AH=02h | ✅ |
-| 10 | F5/F8 key polling (2s timeout) | INT 1Ah AH=00h + INT 16h AH=01h | ❌ **INFINITE LOOP** |
+| 10 | F5/F8 key polling (2s timeout) | INT 1Ah AH=00h + INT 16h AH=01h | ❌ **PIT not firing** |
 | 11 | COMMAND.COM EXEC | INT 21h AH=4Bh → DOS | ✅ |
 
-**Bottom line: fix INT 1Ah AH=00h (read BDA ticks) to unblock boot.
-Fix INT 10h AH=0Eh (CR/LF) for correct display. Everything else works.**
+**Bottom line: INT 1Ah and INT 10h are fixed. The predicted next blocker
+is step 10 — the PIT must fire INT 08h to advance BDA ticks so the F5/F8
+timeout loop exits. Not yet verified that the kernel reaches step 10
+without hitting other bugs.**

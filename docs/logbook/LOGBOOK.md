@@ -18,18 +18,20 @@ and JS reference emulators agree on the first 3740 instructions.
 
 ## Active blocker
 
-**PIT/PIC/IRET needed for DOS boot** — the F5/F8 key polling loop in
-`biosinit.asm:option_key` calls INT 1Ah in a loop waiting for 36 ticks
-(~2 seconds). Without a working PIT firing INT 08h, the tick counter
-never advances and the loop is infinite. Requires:
+**PIT/PIC/IRET likely needed for DOS boot** — the kernel boot sequence doc
+predicts the F5/F8 key polling loop (`biosinit.asm:option_key`) will block
+because it calls INT 1Ah waiting for 36 ticks, and the PIT doesn't fire.
+This has NOT been verified — the kernel may hit a different bug first.
+
+If the PIT is indeed the next blocker, it requires:
 1. Programming PIT channel 0 in `bios/init.asm` (OUT 0x43/0x40)
 2. Unmasking IRQ 0 in PIC (OUT 0x21)
 3. Fixing pit.mjs to treat reload=0 as 65536 (8253 behavior)
 4. Adding IRET to INT 08h/09h handlers (currently just skip sentinel)
 
 An earlier attempt to do all four at once caused a regression (kernel
-version string stopped appearing). These need to be added one at a time
-with verification after each step.
+version string stopped appearing). Root cause unknown. These need to be
+added one at a time with verification after each step.
 
 **Seg-override decode bug** (may or may not still be present) — instruction
 3740: `CS: POP [0x8633]` (2E 8F 06 33 86). Memory mismatch at high byte.

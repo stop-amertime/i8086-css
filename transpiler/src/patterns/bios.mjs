@@ -289,6 +289,274 @@ function int16hEntries() {
   };
 }
 
+/**
+ * INT 10h (Video Services): multi-subfunction handler with folded IRET.
+ *
+ * Dispatches on AH for subfunctions:
+ *
+ * AH=02h (set cursor position):
+ *   μop 0: Write DL (col) to BDA 0x0450
+ *   μop 1: Write DH (row) to BDA 0x0451
+ *   μop 2-4: Folded IRET
+ *
+ * AH=03h (get cursor position):
+ *   μop 0: DX = (row << 8) | col from BDA, CX = 0
+ *   μop 1-3: Folded IRET
+ *
+ * AH=0Eh (teletype output — printable chars only):
+ *   μop 0: Read cursor row/col from BDA 0x0450/0x0451
+ *          (implicitly via expressions; compute VGA address)
+ *   μop 1: Write char (AL) to VGA text buffer at computed address
+ *   μop 2: Write attribute 0x07 to VGA text buffer at address + 1
+ *   μop 3: Write new cursor col to BDA 0x0450
+ *   μop 4: Write new cursor row to BDA 0x0451
+ *   μop 5: Folded IRET — pop IP
+ *   μop 6: Folded IRET — pop CS
+ *   μop 7: Folded IRET — pop FLAGS, SP += 6, retire
+ *
+ * AH=0Fh (get video mode):
+ *   μop 0: AX = (cols << 8) | mode, BX = BX & 0x00FF (clear BH)
+ *   μop 1-3: Folded IRET
+ */
+function int10hEntries() {
+  const q1 = ROUTINE_IDS.INT_10H;
+
+  // Stack base for folded IRET
+  const ssBase = `calc(var(--__1SS) * 16)`;
+  const popIP = `--read2(calc(${ssBase} + var(--__1SP)))`;
+  const popCS = `--read2(calc(${ssBase} + var(--__1SP) + 2))`;
+  const stackedFlags = `--read2(calc(${ssBase} + var(--__1SP) + 4))`;
+  const popFlagsNormal = `calc(--and(${stackedFlags}, 4053) + 2)`;
+
+  // BDA cursor position
+  const BDA_CURSOR_COL = 0x0450;  // 1104 decimal
+  const BDA_CURSOR_ROW = 0x0451;  // 1105 decimal
+  const BDA_VIDEO_MODE = 0x0449;  // 1097 decimal
+  const BDA_NUM_COLS = 0x044A;    // 1098 decimal
+
+  // VGA text buffer base
+  const VGA_TEXT_BASE = 0xB8000;  // 753664 decimal
+
+  // Read current cursor position from BDA
+  const cursorCol = `--readMem(${BDA_CURSOR_COL})`;
+  const cursorRow = `--readMem(${BDA_CURSOR_ROW})`;
+
+  // VGA address for current cursor position: VGA_BASE + (row * 80 + col) * 2
+  const vgaAddr = `calc(${VGA_TEXT_BASE} + (${cursorRow} * 80 + ${cursorCol}) * 2)`;
+
+  // Cursor advance: newCol = (col + 1) mod 80
+  const newCol = `mod(calc(${cursorCol} + 1), 80)`;
+  // Row increment: 1 when newCol wraps to 0, else 0
+  // When newCol=0: 1 - min(1, 0) = 1. When newCol>0: 1 - min(1, N) = 0.
+  const rowIncrement = `calc(1 - min(1, ${newCol}))`;
+  // New row: clamped to 24
+  const newRow = `min(24, calc(${cursorRow} + ${rowIncrement}))`;
+
+  // AH=0Eh teletype: 8 μops (0-7), IRET at μops 5-7
+  // AH=02h set cursor: 5 μops (0-4), IRET at μops 2-4
+  // AH=03h get cursor: 4 μops (0-3), IRET at μops 1-3
+  // AH=0Fh get mode:   4 μops (0-3), IRET at μops 1-3
+
+  // We need to handle different IRET timings per subfunction.
+  // Maximum μop across all subfunctions = 7 (AH=0Eh)
+
+  return {
+    regEntries: [
+      // --- AH=03h: get cursor position → DX, CX ---
+      // μop 0: DX = (row * 256 + col), CX = 0
+      { reg: 'DX', uOp: 0,
+        expr: `if(style(--AH: 3): calc(--readMem(${BDA_CURSOR_ROW}) * 256 + --readMem(${BDA_CURSOR_COL})); else: var(--__1DX))`,
+        comment: 'INT 10h AH=03h: DX=cursor pos' },
+      { reg: 'CX', uOp: 0,
+        expr: `if(style(--AH: 3): 0; else: var(--__1CX))`,
+        comment: 'INT 10h AH=03h: CX=0 cursor shape' },
+
+      // --- AH=0Fh: get video mode → AX, BX ---
+      // μop 0: AX = (cols * 256 + mode), BX = BX & 0x00FF
+      { reg: 'AX', uOp: 0,
+        expr: `if(style(--AH: 15): calc(--readMem(${BDA_NUM_COLS}) * 256 + --readMem(${BDA_VIDEO_MODE})); else: var(--__1AX))`,
+        comment: 'INT 10h AH=0Fh: AX=cols:mode' },
+      { reg: 'BX', uOp: 0,
+        expr: `if(style(--AH: 15): --and(var(--__1BX), 255); else: var(--__1BX))`,
+        comment: 'INT 10h AH=0Fh: BH=0' },
+
+      // --- AH=03h IRET: μops 1-3 ---
+      // --- AH=0Fh IRET: μops 1-3 ---
+      // μop 1: pop IP for AH=03h and AH=0Fh
+      { reg: 'IP', uOp: 1,
+        expr: `if(style(--AH: 3): ${popIP}; style(--AH: 15): ${popIP}; else: var(--__1IP))`,
+        comment: 'INT 10h AH=03h/0Fh: pop IP' },
+      // μop 2: pop CS for AH=03h and AH=0Fh; write to BDA for AH=02h (handled via memWrites)
+      { reg: 'CS', uOp: 2,
+        expr: `if(style(--AH: 3): ${popCS}; style(--AH: 15): ${popCS}; else: var(--__1CS))`,
+        comment: 'INT 10h AH=03h/0Fh: pop CS' },
+      // μop 3: pop FLAGS + SP for AH=03h and AH=0Fh
+      { reg: 'flags', uOp: 3,
+        expr: `if(style(--AH: 3): ${popFlagsNormal}; style(--AH: 15): ${popFlagsNormal}; else: var(--__1flags))`,
+        comment: 'INT 10h AH=03h/0Fh: pop FLAGS' },
+      { reg: 'SP', uOp: 3,
+        expr: `if(style(--AH: 3): calc(var(--__1SP) + 6); style(--AH: 15): calc(var(--__1SP) + 6); else: var(--__1SP))`,
+        comment: 'INT 10h AH=03h/0Fh: SP+=6' },
+
+      // --- AH=02h IRET: μops 2-4 ---
+      // μop 2: pop IP for AH=02h (note: μop 2 already has CS for AH=03h/0Fh above)
+      { reg: 'IP', uOp: 2,
+        expr: `if(style(--AH: 2): ${popIP}; else: var(--__1IP))`,
+        comment: 'INT 10h AH=02h: pop IP' },
+      // μop 3: pop CS for AH=02h (note: μop 3 already has FLAGS for AH=03h/0Fh)
+      { reg: 'CS', uOp: 3,
+        expr: `if(style(--AH: 2): ${popCS}; else: var(--__1CS))`,
+        comment: 'INT 10h AH=02h: pop CS' },
+      // μop 4: pop FLAGS + SP for AH=02h
+      { reg: 'flags', uOp: 4,
+        expr: `if(style(--AH: 2): ${popFlagsNormal}; else: var(--__1flags))`,
+        comment: 'INT 10h AH=02h: pop FLAGS' },
+      { reg: 'SP', uOp: 4,
+        expr: `if(style(--AH: 2): calc(var(--__1SP) + 6); else: var(--__1SP))`,
+        comment: 'INT 10h AH=02h: SP+=6' },
+
+      // --- AH=0Eh IRET: μops 5-7 ---
+      // μop 5: pop IP for AH=0Eh
+      { reg: 'IP', uOp: 5,
+        expr: `if(style(--AH: 14): ${popIP}; else: var(--__1IP))`,
+        comment: 'INT 10h AH=0Eh: pop IP' },
+      // μop 6: pop CS for AH=0Eh
+      { reg: 'CS', uOp: 6,
+        expr: `if(style(--AH: 14): ${popCS}; else: var(--__1CS))`,
+        comment: 'INT 10h AH=0Eh: pop CS' },
+      // μop 7: pop FLAGS + SP for AH=0Eh (retirement)
+      { reg: 'flags', uOp: 7,
+        expr: `if(style(--AH: 14): ${popFlagsNormal}; else: var(--__1flags))`,
+        comment: 'INT 10h AH=0Eh: pop FLAGS' },
+      { reg: 'SP', uOp: 7,
+        expr: `if(style(--AH: 14): calc(var(--__1SP) + 6); else: var(--__1SP))`,
+        comment: 'INT 10h AH=0Eh: SP+=6' },
+    ],
+    memWrites: [
+      // --- AH=02h: set cursor position ---
+      // μop 0: Write DL (col) to BDA 0x0450
+      { uOp: 0,
+        addr: `if(style(--AH: 2): ${BDA_CURSOR_COL}; else: -1)`,
+        val: `var(--DL)`,
+        comment: 'INT 10h AH=02h: col to BDA' },
+      // μop 1: Write DH (row) to BDA 0x0451
+      { uOp: 1,
+        addr: `if(style(--AH: 2): ${BDA_CURSOR_ROW}; else: -1)`,
+        val: `var(--DH)`,
+        comment: 'INT 10h AH=02h: row to BDA' },
+
+      // --- AH=0Eh: teletype output ---
+      // μop 1: Write char byte (AL) to VGA address
+      // (shared uOp 1 with AH=02h row write — use AH dispatch in addr)
+      { uOp: 1,
+        addr: `if(style(--AH: 14): ${vgaAddr}; else: -1)`,
+        val: `var(--AL)`,
+        comment: 'INT 10h AH=0Eh: char to VGA' },
+      // μop 2: Write attribute byte (0x07) to VGA address + 1
+      { uOp: 2,
+        addr: `if(style(--AH: 14): calc(${vgaAddr} + 1); else: -1)`,
+        val: `7`,
+        comment: 'INT 10h AH=0Eh: attr to VGA' },
+      // μop 3: Write new cursor col to BDA 0x0450
+      { uOp: 3,
+        addr: `if(style(--AH: 14): ${BDA_CURSOR_COL}; else: -1)`,
+        val: newCol,
+        comment: 'INT 10h AH=0Eh: new col to BDA' },
+      // μop 4: Write new cursor row to BDA 0x0451
+      { uOp: 4,
+        addr: `if(style(--AH: 14): ${BDA_CURSOR_ROW}; else: -1)`,
+        val: newRow,
+        comment: 'INT 10h AH=0Eh: new row to BDA' },
+    ],
+    maxUop: 7,
+    ipEntries: [],
+    // uOp advance per AH subfunction:
+    //   AH=02h: 0→1→2→3→4→0
+    //   AH=03h: 0→1→2→3→0
+    //   AH=0Eh: 0→1→2→3→4→5→6→7→0
+    //   AH=0Fh: 0→1→2→3→0
+    //   default: 0 (no-op, single μop retire)
+    uopAdvance: `if(` +
+      `style(--AH: 2): if(` +
+        `style(--__1uOp: 0): 1; ` +
+        `style(--__1uOp: 1): 2; ` +
+        `style(--__1uOp: 2): 3; ` +
+        `style(--__1uOp: 3): 4; ` +
+        `style(--__1uOp: 4): 0; ` +
+      `else: 0); ` +
+      `style(--AH: 3): if(` +
+        `style(--__1uOp: 0): 1; ` +
+        `style(--__1uOp: 1): 2; ` +
+        `style(--__1uOp: 2): 3; ` +
+        `style(--__1uOp: 3): 0; ` +
+      `else: 0); ` +
+      `style(--AH: 14): if(` +
+        `style(--__1uOp: 0): 1; ` +
+        `style(--__1uOp: 1): 2; ` +
+        `style(--__1uOp: 2): 3; ` +
+        `style(--__1uOp: 3): 4; ` +
+        `style(--__1uOp: 4): 5; ` +
+        `style(--__1uOp: 5): 6; ` +
+        `style(--__1uOp: 6): 7; ` +
+        `style(--__1uOp: 7): 0; ` +
+      `else: 0); ` +
+      `style(--AH: 15): if(` +
+        `style(--__1uOp: 0): 1; ` +
+        `style(--__1uOp: 1): 2; ` +
+        `style(--__1uOp: 2): 3; ` +
+        `style(--__1uOp: 3): 0; ` +
+      `else: 0); ` +
+    `else: 0)`,
+    q1,
+  };
+}
+
+/**
+ * INT 1Ah (Timer): simplified handler returning tick count = 0.
+ *
+ * AH=00h: CX=0, DX=0 (tick count high/low), AL=0 (midnight flag)
+ * μop 0: Set CX=0, DX=0, AX = (AH << 8) | 0 (clear AL)
+ * μop 1-3: Folded IRET
+ */
+function int1ahEntries() {
+  const q1 = ROUTINE_IDS.INT_1AH;
+
+  // Stack base for folded IRET
+  const ssBase = `calc(var(--__1SS) * 16)`;
+  const popIP = `--read2(calc(${ssBase} + var(--__1SP)))`;
+  const popCS = `--read2(calc(${ssBase} + var(--__1SP) + 2))`;
+  const stackedFlags = `--read2(calc(${ssBase} + var(--__1SP) + 4))`;
+  const popFlagsNormal = `calc(--and(${stackedFlags}, 4053) + 2)`;
+
+  return {
+    regEntries: [
+      // μop 0: CX=0 (tick count high), DX=0 (tick count low), AL=0 (midnight flag)
+      { reg: 'CX', uOp: 0, expr: '0', comment: 'INT 1Ah: CX=0 tick high' },
+      { reg: 'DX', uOp: 0, expr: '0', comment: 'INT 1Ah: DX=0 tick low' },
+      // Clear AL (midnight flag), keep AH: AX = AH * 256
+      { reg: 'AX', uOp: 0, expr: 'calc(var(--AH) * 256)', comment: 'INT 1Ah: AL=0 midnight' },
+
+      // μop 1: pop IP
+      { reg: 'IP', uOp: 1, expr: popIP, comment: 'INT 1Ah: pop IP' },
+      // μop 2: pop CS
+      { reg: 'CS', uOp: 2, expr: popCS, comment: 'INT 1Ah: pop CS' },
+      // μop 3: pop FLAGS + SP+=6 (retirement)
+      { reg: 'flags', uOp: 3, expr: popFlagsNormal, comment: 'INT 1Ah: pop FLAGS' },
+      { reg: 'SP', uOp: 3, expr: 'calc(var(--__1SP) + 6)', comment: 'INT 1Ah: SP+=6' },
+    ],
+    memWrites: [],
+    maxUop: 3,
+    ipEntries: [],
+    uopAdvance: `if(` +
+      `style(--__1uOp: 0): 1; ` +
+      `style(--__1uOp: 1): 2; ` +
+      `style(--__1uOp: 2): 3; ` +
+      `style(--__1uOp: 3): 0; ` +
+    `else: 0)`,
+    q1,
+  };
+}
+
 // =====================================================================
 // Merger: combine handler descriptors into dispatch entries
 // =====================================================================
@@ -305,7 +573,8 @@ export function emitAllBiosHandlers(dispatch) {
     int20hEntries(),
     int09hEntries(),
     int16hEntries(),
-    // Future: int10hEntries(), int1ahEntries()
+    int10hEntries(),
+    int1ahEntries(),
   ];
 
   // Compute the overall max uOp across all handlers

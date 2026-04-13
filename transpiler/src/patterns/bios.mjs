@@ -153,6 +153,142 @@ function int09hEntries() {
   };
 }
 
+/**
+ * INT 16h (keyboard read/peek): multi-μop handler with folded IRET.
+ *
+ * AH=00h (blocking read):
+ *   μop 0: Hold if BDA buffer empty. When non-empty: AX = key word.
+ *   μop 1: Write new head lo to BDA 0x041A
+ *   μop 2: Write new head hi to BDA 0x041B
+ *   μop 3: Folded IRET — pop IP from SS:SP
+ *   μop 4: Folded IRET — pop CS from SS:SP+2
+ *   μop 5: Folded IRET — pop FLAGS from SS:SP+4, SP += 6, retire
+ *
+ * AH=01h (non-blocking peek):
+ *   μop 0: AX = peek key word if non-empty. Set ZF: 1=empty, 0=available.
+ *   μop 1: Folded IRET — pop IP from SS:SP
+ *   μop 2: Folded IRET — pop CS from SS:SP+2
+ *   μop 3: Folded IRET — pop FLAGS from SS:SP+4 with ZF merge, SP += 6, retire
+ *
+ * The folded IRET pops the FLAGS/CS/IP that the INT 0x16 instruction pushed.
+ * AH=01h merges its computed ZF into the popped FLAGS before returning.
+ */
+function int16hEntries() {
+  const q1 = ROUTINE_IDS.INT_16H;
+
+  // Stack base: SS:SP (SP already decremented by 6 from the INT instruction)
+  const ssBase = `calc(var(--__1SS) * 16)`;
+
+  // BDA keyboard buffer head and tail (16-bit words, BDA-relative offsets)
+  const headWord = `--read2(${BDA_KBD_HEAD})`;
+  const tailWord = `--read2(${BDA_KBD_TAIL})`;
+
+  // Buffer non-empty: 1 if head != tail, 0 if equal
+  // sign(max(h-t, t-h)) = 0 when equal, 1 when different
+  const bufNotEmpty = `sign(max(calc(${headWord} - ${tailWord}), calc(${tailWord} - ${headWord})))`;
+
+  // Key word at BDA_BASE + head offset
+  const keyWord = `--read2(calc(${BDA_BASE} + ${headWord}))`;
+
+  // New head: (head + 2 - 0x1E) mod 32 + 0x1E (ring buffer wrap)
+  const newHead = `calc(mod(calc(${headWord} + 2 - ${BDA_KBD_BUF_START}), ${BDA_KBD_BUF_SIZE}) + ${BDA_KBD_BUF_START})`;
+
+  // Stacked FLAGS at SS:SP+4 (pushed by INT instruction)
+  const stackedFlags = `--read2(calc(${ssBase} + var(--__1SP) + 4))`;
+
+  // ZF bit (64) for AH=01h: 64 when buffer empty, 0 when non-empty
+  // bufNotEmpty=1 → ZF=0 (key available), bufNotEmpty=0 → ZF=1 (empty)
+  const zfBit = `calc(64 * calc(1 - ${bufNotEmpty}))`;
+
+  // AX expression for μop 0 (shared by both AH=00h and AH=01h):
+  // When buffer non-empty: read key word. When empty: hold AX unchanged.
+  // For AH=00h, when empty the μop holds (re-evaluates), so AX=__1AX is fine.
+  // For AH=01h, when empty the caller checks ZF not AX, so AX=__1AX is fine.
+  const axExpr = `calc(var(--__1AX) * calc(1 - ${bufNotEmpty}) + ${keyWord} * ${bufNotEmpty})`;
+
+  // IRET expressions — pop IP, CS, FLAGS from the stack the INT pushed
+  const popIP = `--read2(calc(${ssBase} + var(--__1SP)))`;
+  const popCS = `--read2(calc(${ssBase} + var(--__1SP) + 2))`;
+  // Normal FLAGS restore (same as IRET opcode): mask 0x0FD5=4053, force bit 1
+  const popFlagsNormal = `calc(--and(${stackedFlags}, 4053) + 2)`;
+  // FLAGS with ZF merge for AH=01h: clear bit 6 from masked FLAGS, OR in computed ZF
+  // 4053 & ~64 = 3989 (0x0F95)
+  const popFlagsZF = `calc(--and(${stackedFlags}, 3989) + 2 + ${zfBit})`;
+
+  return {
+    regEntries: [
+      // μop 0: AX = key word if non-empty (both AH=00h and AH=01h)
+      { reg: 'AX', uOp: 0, expr: axExpr, comment: 'INT 16h: AX=key if non-empty' },
+
+      // μop 1: AH=01h pops IP here; AH=00h writes memory (no reg change)
+      { reg: 'IP', uOp: 1, expr: `if(style(--AH: 1): ${popIP}; else: var(--__1IP))`,
+        comment: 'INT 16h AH=01h: pop IP' },
+
+      // μop 2: AH=01h pops CS here; AH=00h writes memory (no reg change)
+      { reg: 'CS', uOp: 2, expr: `if(style(--AH: 1): ${popCS}; else: var(--__1CS))`,
+        comment: 'INT 16h AH=01h: pop CS' },
+
+      // μop 3: AH=00h pops IP here; AH=01h pops FLAGS+SP (retirement)
+      { reg: 'IP', uOp: 3, expr: `if(style(--AH: 0): ${popIP}; else: var(--__1IP))`,
+        comment: 'INT 16h AH=00h: pop IP' },
+      { reg: 'flags', uOp: 3, expr: `if(style(--AH: 1): ${popFlagsZF}; else: var(--__1flags))`,
+        comment: 'INT 16h AH=01h: pop FLAGS+ZF' },
+      { reg: 'SP', uOp: 3, expr: `if(style(--AH: 1): calc(var(--__1SP) + 6); else: var(--__1SP))`,
+        comment: 'INT 16h AH=01h: SP+=6' },
+
+      // μop 4: AH=00h pops CS (AH=01h already retired at μop 3)
+      { reg: 'CS', uOp: 4, expr: `if(style(--AH: 0): ${popCS}; else: var(--__1CS))`,
+        comment: 'INT 16h AH=00h: pop CS' },
+
+      // μop 5: AH=00h pops FLAGS + SP+=6 (retirement)
+      { reg: 'flags', uOp: 5, expr: `if(style(--AH: 0): ${popFlagsNormal}; else: var(--__1flags))`,
+        comment: 'INT 16h AH=00h: pop FLAGS' },
+      { reg: 'SP', uOp: 5, expr: `if(style(--AH: 0): calc(var(--__1SP) + 6); else: var(--__1SP))`,
+        comment: 'INT 16h AH=00h: SP+=6' },
+    ],
+    memWrites: [
+      // μop 1: AH=00h writes new head lo byte to BDA 0x041A
+      { uOp: 1, addr: `if(style(--AH: 0): ${BDA_KBD_HEAD}; else: -1)`,
+        val: `--lowerBytes(${newHead}, 8)`, comment: 'INT 16h AH=00h: head lo' },
+      // μop 2: AH=00h writes new head hi byte to BDA 0x041B
+      { uOp: 2, addr: `if(style(--AH: 0): ${BDA_KBD_HEAD + 1}; else: -1)`,
+        val: `--rightShift(${newHead}, 8)`, comment: 'INT 16h AH=00h: head hi' },
+    ],
+    maxUop: 5,
+    // IP entries: INT 16h handles IP via regEntries (folded IRET), not ipEntries.
+    // The IP hold during μops 0-2 for AH=00h is handled by regEntries returning
+    // var(--__1IP) when not the pop μop.
+    // But we need an ipEntry to prevent the merger's hold fallback from overriding.
+    // Actually, IP is in regEntries — let's check how the merger handles that.
+    // The merger has separate regEntries and ipEntries. IP in regEntries goes through
+    // mergeQ1Entries (fallback = var(--__1IP)), while ipEntries go through
+    // mergeQ1EntriesWithFallback (fallback = hold expr).
+    // Since we put IP in regEntries, the IP hold for non-INT-16h handlers at μops 1,3
+    // will be var(--__1IP) which is fine for holding.
+    ipEntries: [],
+    // uOp advance:
+    //   AH=00h: 0(hold if empty)→1→2→3→4→5→0
+    //   AH=01h: 0→1→2→3→0
+    uopAdvance: `if(` +
+      `style(--AH: 0): if(` +
+        `style(--__1uOp: 0): calc(${bufNotEmpty}); ` +  // 0→0 (hold) or 0→1 (advance)
+        `style(--__1uOp: 1): 2; ` +
+        `style(--__1uOp: 2): 3; ` +
+        `style(--__1uOp: 3): 4; ` +
+        `style(--__1uOp: 4): 5; ` +
+        `style(--__1uOp: 5): 0; ` +
+      `else: 0); ` +
+      `style(--AH: 1): if(` +
+        `style(--__1uOp: 0): 1; ` +
+        `style(--__1uOp: 1): 2; ` +
+        `style(--__1uOp: 2): 3; ` +
+        `style(--__1uOp: 3): 0; ` +
+      `else: 0); ` +
+    `else: 0)`,
+    q1,
+  };
+}
+
 // =====================================================================
 // Merger: combine handler descriptors into dispatch entries
 // =====================================================================
@@ -168,7 +304,8 @@ export function emitAllBiosHandlers(dispatch) {
   const handlers = [
     int20hEntries(),
     int09hEntries(),
-    // Future: int10hEntries(), int16hEntries(), int1ahEntries()
+    int16hEntries(),
+    // Future: int10hEntries(), int1ahEntries()
   ];
 
   // Compute the overall max uOp across all handlers

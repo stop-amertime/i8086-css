@@ -25,8 +25,8 @@ with μop sequences for multi-byte-write instructions. BIOS handlers are
 microcode (transpiler/src/patterns/bios.mjs), not gossamer assembly.
 See `V3-PLAN-1.md` for the full architecture.
 
-**Conformance: 3740 instructions on DOS boot.** See `docs/v3-conformance-progress.md`
-for the current state, bugs fixed, and next bug to investigate.
+**Conformance progress:** See `docs/v3-conformance-progress.md` for current
+state, bugs fixed, and next bug to investigate.
 
 - `transpiler/` — JS→CSS transpiler (the active codebase)
 - `tools/` — conformance testing infrastructure (reference emulator + comparison tools)

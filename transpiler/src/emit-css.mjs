@@ -8,6 +8,7 @@ import {
   emitPropertyDecls, emitBufferReads, emitRegisterAliases,
   emitStoreKeyframe, emitExecuteKeyframe, emitClockKeyframes,
   emitClockAndCpuBase, emitDebugDisplay, emitHTMLHeader, emitHTMLFooter,
+  emitKeyboardRules,
 } from './template.mjs';
 import { emitWriteSlotProperties, buildInitialMemory, buildAddressSet, NUM_WRITE_SLOTS } from './memory.mjs';
 import { emitFlagFunctions } from './patterns/flags.mjs';
@@ -306,6 +307,9 @@ export function emitCSS(opts, writeStream) {
   // 6. Debug display
   w('}');
   w(emitDebugDisplay(templateOpts));
+
+  // 7. Keyboard :active rules (separate .cpu block)
+  w(emitKeyboardRules());
 
   // =====================================================================
   // THE BULK — @property declarations, memory, buffer reads, keyframes

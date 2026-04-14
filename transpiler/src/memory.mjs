@@ -7,6 +7,12 @@
 const BIOS_LINEAR = 0xF0000; // F000:0000
 const BIOS_SEG = 0xF000;
 
+// Number of parallel memory write slots.
+// 6 is the minimum (INT pushes 3 words = 6 bytes).
+// 8 gives headroom for instructions that may need extra slots.
+// Calcite handles many slots efficiently via HashMap lookups.
+export const NUM_WRITE_SLOTS = 8;
+
 // Standard IVT entries for gossamer.asm (must match handler offsets in gossamer.lst / ref-emu.mjs)
 const BIOS_IVT_HANDLERS = {
   0x10: 0x0000,  // INT 10h - Video services
@@ -81,20 +87,12 @@ export function comMemoryZones(programBytes, programOffset, memBytes) {
  * The kernel high area (top 104KB) is always included regardless of --mem.
  */
 export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedData) {
-  // The kernel high area always starts at memBytes - 0x1A000 (104 KB from top)
-  const highAreaStart = memBytes - 0x1A000;
-  // The kernel low area covers IVT + BDA + kernel image + init workspace
-  const lowAreaEnd = 0x30000;
-
+  // Use one contiguous block for all conventional memory. The kernel
+  // relocates itself to high memory and its code segment can span a wide
+  // range of addresses, so splitting into low/high zones with a gap causes
+  // the CPU to execute into unmapped memory.
   const zones = [];
-  if (highAreaStart <= lowAreaEnd) {
-    // Small memBytes — just use one contiguous block
-    zones.push([0x0000, memBytes]);
-  } else {
-    // Split into low area + high area, skipping the unused middle
-    zones.push([0x0000, lowAreaEnd]);       // IVT + BDA + kernel + init workspace
-    zones.push([highAreaStart, memBytes]);   // DOS high area + program heap top
-  }
+  zones.push([0x0000, memBytes]);
   zones.push([0xB8000, 0xB8FA0]);           // VGA text mode
 
   // Include embedded data regions (e.g., disk image at 0xD0000)
@@ -203,20 +201,17 @@ export function emitMemoryProperties(opts) {
 
 /**
  * Emit the per-byte write rules for writable memory (inside .cpu).
- * Each byte checks all 6 memory write slots (INT needs 6: 3 word pushes).
+ * Each byte checks all NUM_WRITE_SLOTS memory write slots.
  */
 export function emitMemoryWriteRules(opts) {
   const { addresses } = opts;
   const lines = [];
   for (const addr of addresses) {
-    lines.push(`  --m${addr}: if(
-    style(--memAddr0: ${addr}): var(--memVal0);
-    style(--memAddr1: ${addr}): var(--memVal1);
-    style(--memAddr2: ${addr}): var(--memVal2);
-    style(--memAddr3: ${addr}): var(--memVal3);
-    style(--memAddr4: ${addr}): var(--memVal4);
-    style(--memAddr5: ${addr}): var(--memVal5);
-  else: var(--__1m${addr}));`);
+    const slotLines = [];
+    for (let i = 0; i < NUM_WRITE_SLOTS; i++) {
+      slotLines.push(`    style(--memAddr${i}: ${addr}): var(--memVal${i});`);
+    }
+    lines.push(`  --m${addr}: if(\n${slotLines.join('\n')}\n  else: var(--__1m${addr}));`);
   }
   return lines.join('\n');
 }
@@ -263,11 +258,10 @@ export function emitMemoryExecuteKeyframe(opts) {
 
 /**
  * Emit @property declarations for memory write slots.
- * 6 slots: INT needs 3 word pushes = 6 byte writes.
  */
 export function emitWriteSlotProperties() {
   const lines = [];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < NUM_WRITE_SLOTS; i++) {
     lines.push(`@property --memAddr${i} {
   syntax: '<integer>';
   inherits: true;

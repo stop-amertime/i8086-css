@@ -9,7 +9,7 @@ import {
   emitStoreKeyframe, emitExecuteKeyframe, emitClockKeyframes,
   emitClockAndCpuBase, emitDebugDisplay, emitHTMLHeader, emitHTMLFooter,
 } from './template.mjs';
-import { emitWriteSlotProperties, buildInitialMemory, buildAddressSet } from './memory.mjs';
+import { emitWriteSlotProperties, buildInitialMemory, buildAddressSet, NUM_WRITE_SLOTS } from './memory.mjs';
 import { emitFlagFunctions } from './patterns/flags.mjs';
 
 // Opcode emitters
@@ -125,19 +125,18 @@ class DispatchTable {
    * 6 slots needed: INT pushes 3 words = 6 byte writes.
    */
   emitMemoryWriteSlots() {
-    const NUM_SLOTS = 6;
-    const slots = Array.from({ length: NUM_SLOTS }, () => []);
+    const slots = Array.from({ length: NUM_WRITE_SLOTS }, () => []);
 
     for (const [opcode, writes] of this.memWritesByOpcode) {
-      if (writes.length > NUM_SLOTS) {
-        throw new Error(`Opcode 0x${opcode.toString(16)} uses ${writes.length} memory write slots (max ${NUM_SLOTS})`);
+      if (writes.length > NUM_WRITE_SLOTS) {
+        throw new Error(`Opcode 0x${opcode.toString(16)} uses ${writes.length} memory write slots (max ${NUM_WRITE_SLOTS})`);
       }
       for (let i = 0; i < writes.length; i++) {
         slots[i].push({ opcode, ...writes[i] });
       }
     }
 
-    // TF trap INT 1 memory writes: push FLAGS/CS/IP to stack
+    // TF trap INT 1 memory writes: push FLAGS/CS/IP to stack (slots 0-5)
     const ssBase = 'calc(var(--__1SS) * 16)';
     const tfAddr = [
       `calc(${ssBase} + var(--__1SP) - 2)`,   // slot 0: FLAGS lo
@@ -147,37 +146,49 @@ class DispatchTable {
       `calc(${ssBase} + var(--__1SP) - 6)`,   // slot 4: IP lo
       `calc(${ssBase} + var(--__1SP) - 5)`,   // slot 5: IP hi
     ];
-    // Push FLAGS as-is (including TF) — matches real 8086 behavior
     const tfFlagsPush = `var(--__1flags)`;
     const tfVal = [
-      `--lowerBytes(${tfFlagsPush}, 8)`,       // FLAGS lo (TF cleared)
-      `--rightShift(${tfFlagsPush}, 8)`,        // FLAGS hi (TF cleared)
+      `--lowerBytes(${tfFlagsPush}, 8)`,       // FLAGS lo
+      `--rightShift(${tfFlagsPush}, 8)`,        // FLAGS hi
       `--lowerBytes(var(--__1CS), 8)`,          // CS lo
       `--rightShift(var(--__1CS), 8)`,          // CS hi
-      `--lowerBytes(var(--__1IP), 8)`,          // IP lo (current IP, not IP+2)
+      `--lowerBytes(var(--__1IP), 8)`,          // IP lo
       `--rightShift(var(--__1IP), 8)`,          // IP hi
     ];
 
     const lines = [];
-    for (let slot = 0; slot < NUM_SLOTS; slot++) {
+    for (let slot = 0; slot < NUM_WRITE_SLOTS; slot++) {
+      const hasTF = slot < 6;  // TF only uses slots 0-5
+
+      if (slots[slot].length === 0 && !hasTF) {
+        // Unused slot — always inactive
+        lines.push(`  --memAddr${slot}: -1;`);
+        lines.push(`  --memVal${slot}: 0;`);
+        continue;
+      }
+
       if (slots[slot].length === 0) {
-        // Even empty slots need TF override
+        // TF-only slot
         lines.push(`  --memAddr${slot}: if(style(--_tf: 1): ${tfAddr[slot]}; else: -1);`);
         lines.push(`  --memVal${slot}: if(style(--_tf: 1): ${tfVal[slot]}; else: 0);`);
         continue;
       }
 
-      // Address dispatch with TF override
+      // Address dispatch
       lines.push(`  --memAddr${slot}: if(`);
-      lines.push(`    style(--_tf: 1): ${tfAddr[slot]};`);
+      if (hasTF) {
+        lines.push(`    style(--_tf: 1): ${tfAddr[slot]};`);
+      }
       for (const { opcode, addrExpr, comment } of slots[slot]) {
         lines.push(`    style(--opcode: ${opcode}): ${addrExpr}; /* ${comment || ''} */`);
       }
       lines.push(`  else: -1);`);
 
-      // Value dispatch with TF override
+      // Value dispatch
       lines.push(`  --memVal${slot}: if(`);
-      lines.push(`    style(--_tf: 1): ${tfVal[slot]};`);
+      if (hasTF) {
+        lines.push(`    style(--_tf: 1): ${tfVal[slot]};`);
+      }
       for (const { opcode, valExpr, comment } of slots[slot]) {
         lines.push(`    style(--opcode: ${opcode}): ${valExpr}; /* ${comment || ''} */`);
       }
@@ -416,14 +427,11 @@ function emitMemoryWriteRulesStreaming(opts, ws) {
   let buf = '';
   let count = 0;
   for (const addr of addresses) {
-    buf += `  --m${addr}: if(
-    style(--memAddr0: ${addr}): var(--memVal0);
-    style(--memAddr1: ${addr}): var(--memVal1);
-    style(--memAddr2: ${addr}): var(--memVal2);
-    style(--memAddr3: ${addr}): var(--memVal3);
-    style(--memAddr4: ${addr}): var(--memVal4);
-    style(--memAddr5: ${addr}): var(--memVal5);
-  else: var(--__1m${addr}));\n`;
+    const slotLines = [];
+    for (let i = 0; i < NUM_WRITE_SLOTS; i++) {
+      slotLines.push(`    style(--memAddr${i}: ${addr}): var(--memVal${i});`);
+    }
+    buf += `  --m${addr}: if(\n${slotLines.join('\n')}\n  else: var(--__1m${addr}));\n`;
     if (++count % CHUNK === 0) { ws.write(buf); buf = ''; }
   }
   if (buf) ws.write(buf);

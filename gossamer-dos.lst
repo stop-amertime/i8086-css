@@ -138,7 +138,7 @@
    138 0000005B 80FE19                      cmp dh, 25
    139 0000005E 7222                        jb .tty_save
    140 00000060 FECE                        dec dh
-   141 00000062 E8E301                      call scroll_up_one
+   141 00000062 E80F02                      call scroll_up_one
    142 00000065 EB1B                        jmp short .tty_save
    143                                  
    144                                  .tty_cr:
@@ -150,7 +150,7 @@
    150 0000006D 80FE19                      cmp dh, 25
    151 00000070 7210                        jb .tty_save
    152 00000072 FECE                        dec dh
-   153 00000074 E8D101                      call scroll_up_one
+   153 00000074 E8FD01                      call scroll_up_one
    154 00000077 EB09                        jmp short .tty_save
    155                                  
    156                                  .tty_bs:
@@ -177,1027 +177,1060 @@
    177                                  ; --- INT 10h dispatch for non-teletype ---
    178                                  .dispatch_other:
    179 00000093 80FC02                      cmp ah, 0x02
-   180 00000096 743B                        je .set_cursor
+   180 00000096 7442                        je .set_cursor
    181 00000098 80FC03                      cmp ah, 0x03
-   182 0000009B 7447                        je .get_cursor
+   182 0000009B 744E                        je .get_cursor
    183 0000009D 80FC00                      cmp ah, 0x00
-   184 000000A0 7477                        je .set_mode
+   184 000000A0 7472                        je .set_mode
    185 000000A2 80FC0F                      cmp ah, 0x0F
-   186 000000A5 7452                        je .get_mode
+   186 000000A5 7459                        je .get_mode
    187 000000A7 80FC06                      cmp ah, 0x06
    188 000000AA 7503                        jne .not_scroll_up
-   189 000000AC E99F00                      jmp .scroll_up
+   189 000000AC E9B600                      jmp .scroll_up
    190                                  .not_scroll_up:
    191 000000AF 80FC07                      cmp ah, 0x07
    192 000000B2 7503                        jne .not_scroll_down
-   193 000000B4 E9C900                      jmp .scroll_down
+   193 000000B4 E9E000                      jmp .scroll_down
    194                                  .not_scroll_down:
    195 000000B7 80FC08                      cmp ah, 0x08
    196 000000BA 7503                        jne .not_read_char
-   197 000000BC E9E200                      jmp .read_char
+   197 000000BC E9F900                      jmp .read_char
    198                                  .not_read_char:
    199 000000BF 80FC09                      cmp ah, 0x09
    200 000000C2 7503                        jne .not_write_char
-   201 000000C4 E90C01                      jmp .write_char_attr
+   201 000000C4 E92301                      jmp .write_char_attr
    202                                  .not_write_char:
    203 000000C7 80FC0A                      cmp ah, 0x0A
    204 000000CA 7503                        jne .not_write_char_only
-   205 000000CC E94101                      jmp .write_char_only
+   205 000000CC E95801                      jmp .write_char_only
    206                                  .not_write_char_only:
-   207 000000CF 5D                          pop bp
-   208 000000D0 07                          pop es
-   209 000000D1 1F                          pop ds
-   210 000000D2 CF                          iret
-   211                                  
-   212                                  .set_cursor:
-   213 000000D3 BB4000                      mov bx, BDA_SEG
-   214 000000D6 8EDB                        mov ds, bx
-   215 000000D8 88165000                    mov [video_cur_pos], dl
-   216 000000DC 88365100                    mov [video_cur_pos+1], dh
-   217 000000E0 5D                          pop bp
-   218 000000E1 07                          pop es
-   219 000000E2 1F                          pop ds
-   220 000000E3 CF                          iret
-   221                                  
-   222                                  .get_cursor:
-   223 000000E4 BB4000                      mov bx, BDA_SEG
-   224 000000E7 8EDB                        mov ds, bx
-   225 000000E9 8A165000                    mov dl, [video_cur_pos]
-   226 000000ED 8A365100                    mov dh, [video_cur_pos+1]
-   227 000000F1 8B0E6000                    mov cx, [video_cur_shape]
-   228 000000F5 5D                          pop bp
-   229 000000F6 07                          pop es
-   230 000000F7 1F                          pop ds
-   231 000000F8 CF                          iret
-   232                                  
-   233                                  .get_mode:
-   234 000000F9 53                          push bx
-   235 000000FA BB4000                      mov bx, BDA_SEG
-   236 000000FD 8EDB                        mov ds, bx
-   237 000000FF A04900                      mov al, [video_mode]
-   238 00000102 8A264A00                    mov ah, [video_columns]
-   239 00000106 8A3E6200                    mov bh, [video_page]
-   240                                      ; BH is return value, but we pushed original BX
-   241                                      ; Need to fix this: pop old BX but keep BH
-   242 0000010A 88FB                        mov bl, bh              ; save page in BL
-   243 0000010C 5B                          pop bx                  ; restore original BX
-   244 0000010D 88DF                        mov bh, bl              ; but no, that clobbers... let's just not push BX
-   245                                      ; Actually simpler approach: just return hardcoded for mode 3
-   246 0000010F 5D                          pop bp
-   247 00000110 07                          pop es
-   248 00000111 1F                          pop ds
-   249 00000112 B003                        mov al, 0x03
-   250 00000114 B450                        mov ah, 80
-   251 00000116 B700                        mov bh, 0
-   252 00000118 CF                          iret
-   253                                  
-   254                                  .set_mode:
-   255 00000119 57                          push di
-   256 0000011A 51                          push cx
-   257 0000011B 50                          push ax
-   258 0000011C B84000                      mov ax, BDA_SEG
-   259 0000011F 8ED8                        mov ds, ax
-   260 00000121 C606500000                  mov byte [video_cur_pos], 0
-   261 00000126 C606510000                  mov byte [video_cur_pos+1], 0
-   262 0000012B C606490003                  mov byte [video_mode], 0x03
-   263                                      ; Clear screen
-   264 00000130 B800B8                      mov ax, VGA_SEG
-   265 00000133 8ED8                        mov ds, ax
-   266 00000135 31FF                        xor di, di
-   267 00000137 B9D007                      mov cx, 2000
-   268 0000013A B82007                      mov ax, 0x0720
-   269                                  .clr_loop:
-   270 0000013D 8905                        mov [di], ax
-   271 0000013F 83C702                      add di, 2
-   272 00000142 49                          dec cx
-   273 00000143 75F8                        jnz .clr_loop
-   274 00000145 58                          pop ax
-   275 00000146 B030                        mov al, 0x30           ; return prior mode info
-   276 00000148 59                          pop cx
-   277 00000149 5F                          pop di
-   278 0000014A 5D                          pop bp
-   279 0000014B 07                          pop es
-   280 0000014C 1F                          pop ds
-   281 0000014D CF                          iret
-   282                                  
-   283                                  .scroll_up:
-   284 0000014E 3C00                        cmp al, 0
-   285 00000150 751D                        jne .su_lines
-   286                                      ; AL=0: Clear window
-   287 00000152 57                          push di
-   288 00000153 51                          push cx
-   289 00000154 B900B8                      mov cx, VGA_SEG
-   290 00000157 8ED9                        mov ds, cx
-   291 00000159 31FF                        xor di, di
-   292 0000015B B9D007                      mov cx, 2000
-   293 0000015E B82007                      mov ax, 0x0720
-   294                                  .su_clr:
-   295 00000161 8905                        mov [di], ax
-   296 00000163 83C702                      add di, 2
-   297 00000166 49                          dec cx
-   298 00000167 75F8                        jnz .su_clr
-   299 00000169 59                          pop cx
-   300 0000016A 5F                          pop di
-   301 0000016B 5D                          pop bp
-   302 0000016C 07                          pop es
-   303 0000016D 1F                          pop ds
-   304 0000016E CF                          iret
-   305                                  .su_lines:
-   306 0000016F 51                          push cx
-   307 00000170 88C1                        mov cl, al
-   308 00000172 30ED                        xor ch, ch
-   309                                  .su_loop:
-   310 00000174 E8D100                      call scroll_up_one
-   311 00000177 FEC9                        dec cl
-   312 00000179 75F9                        jnz .su_loop
-   313 0000017B 59                          pop cx
-   314 0000017C 5D                          pop bp
-   315 0000017D 07                          pop es
-   316 0000017E 1F                          pop ds
-   317 0000017F CF                          iret
-   318                                  
-   319                                  .scroll_down:
-   320 00000180 3C00                        cmp al, 0
-   321 00000182 7519                        jne .sd_ret
-   322 00000184 57                          push di
-   323 00000185 51                          push cx
-   324 00000186 B900B8                      mov cx, VGA_SEG
-   325 00000189 8ED9                        mov ds, cx
-   326 0000018B 31FF                        xor di, di
-   327 0000018D B9D007                      mov cx, 2000
-   328 00000190 B82007                      mov ax, 0x0720
-   329                                  .sd_clr:
-   330 00000193 8905                        mov [di], ax
-   331 00000195 83C702                      add di, 2
-   332 00000198 49                          dec cx
-   333 00000199 75F8                        jnz .sd_clr
-   334 0000019B 59                          pop cx
-   335 0000019C 5F                          pop di
-   336                                  .sd_ret:
-   337 0000019D 5D                          pop bp
-   338 0000019E 07                          pop es
-   339 0000019F 1F                          pop ds
-   340 000001A0 CF                          iret
-   341                                  
-   342                                  .read_char:
-   343                                      ; AH=08h: Read char+attr at cursor
-   344 000001A1 53                          push bx
-   345 000001A2 57                          push di
-   346 000001A3 BB4000                      mov bx, BDA_SEG
-   347 000001A6 8EDB                        mov ds, bx
-   348 000001A8 A05000                      mov al, [video_cur_pos]     ; col
-   349 000001AB 8A265100                    mov ah, [video_cur_pos+1]   ; row
-   350 000001AF 52                          push dx
-   351 000001B0 30F6                        xor dh, dh
-   352 000001B2 88E2                        mov dl, ah
-   353 000001B4 B450                        mov ah, 80
-   354 000001B6 86C2                        xchg al, dl
-   355 000001B8 F6E4                        mul ah
-   356 000001BA 30F6                        xor dh, dh
-   357 000001BC 01D0                        add ax, dx
-   358 000001BE D1E0                        shl ax, 1
-   359 000001C0 89C7                        mov di, ax
-   360 000001C2 5A                          pop dx
-   361 000001C3 BB00B8                      mov bx, VGA_SEG
-   362 000001C6 8EDB                        mov ds, bx
-   363 000001C8 8A05                        mov al, [di]           ; character
-   364 000001CA 8A6501                      mov ah, [di+1]         ; attribute
-   365 000001CD 5F                          pop di
-   366 000001CE 5B                          pop bx
-   367 000001CF 5D                          pop bp
-   368 000001D0 07                          pop es
-   369 000001D1 1F                          pop ds
-   370 000001D2 CF                          iret
-   371                                  
-   372                                  .write_char_attr:
-   373                                      ; AH=09h: Write char+attr at cursor, CX times
-   374                                      ; AL=char, BL=attr, CX=count
-   375 000001D3 57                          push di
-   376 000001D4 52                          push dx
-   377 000001D5 51                          push cx
-   378 000001D6 53                          push bx
-   379 000001D7 BB4000                      mov bx, BDA_SEG
-   380 000001DA 8EDB                        mov ds, bx
-   381 000001DC 8A165000                    mov dl, [video_cur_pos]
-   382 000001E0 8A365100                    mov dh, [video_cur_pos+1]
-   383 000001E4 50                          push ax
-   384 000001E5 88F0                        mov al, dh
-   385 000001E7 B350                        mov bl, 80
-   386 000001E9 F6E3                        mul bl
-   387 000001EB 30FF                        xor bh, bh
-   388 000001ED 88D3                        mov bl, dl
-   389 000001EF 01D8                        add ax, bx
-   390 000001F1 D1E0                        shl ax, 1
-   391 000001F3 89C7                        mov di, ax
-   392 000001F5 58                          pop ax
-   393 000001F6 BB00B8                      mov bx, VGA_SEG
-   394 000001F9 8EDB                        mov ds, bx
-   395 000001FB 5B                          pop bx                 ; restore original BX (BL=attr)
-   396 000001FC 53                          push bx
-   397                                  .wca_loop:
-   398 000001FD 8805                        mov [di], al
-   399 000001FF 885D01                      mov [di+1], bl
-   400 00000202 83C702                      add di, 2
-   401 00000205 49                          dec cx
-   402 00000206 75F5                        jnz .wca_loop
-   403 00000208 5B                          pop bx
-   404 00000209 59                          pop cx
-   405 0000020A 5A                          pop dx
-   406 0000020B 5F                          pop di
-   407 0000020C 5D                          pop bp
-   408 0000020D 07                          pop es
-   409 0000020E 1F                          pop ds
-   410 0000020F CF                          iret
-   411                                  
-   412                                  .write_char_only:
-   413                                      ; AH=0Ah: Write char at cursor, CX times (keep existing attr)
-   414                                      ; AL=char, CX=count
-   415 00000210 57                          push di
-   416 00000211 52                          push dx
-   417 00000212 51                          push cx
-   418 00000213 53                          push bx
-   419 00000214 BB4000                      mov bx, BDA_SEG
-   420 00000217 8EDB                        mov ds, bx
-   421 00000219 8A165000                    mov dl, [video_cur_pos]
-   422 0000021D 8A365100                    mov dh, [video_cur_pos+1]
-   423 00000221 50                          push ax
-   424 00000222 88F0                        mov al, dh
-   425 00000224 B350                        mov bl, 80
-   426 00000226 F6E3                        mul bl
-   427 00000228 30FF                        xor bh, bh
-   428 0000022A 88D3                        mov bl, dl
-   429 0000022C 01D8                        add ax, bx
-   430 0000022E D1E0                        shl ax, 1
-   431 00000230 89C7                        mov di, ax
-   432 00000232 58                          pop ax
-   433 00000233 BB00B8                      mov bx, VGA_SEG
-   434 00000236 8EDB                        mov ds, bx
-   435                                  .wco_loop:
-   436 00000238 8805                        mov [di], al           ; write char only, keep attribute
-   437 0000023A 83C702                      add di, 2
-   438 0000023D 49                          dec cx
-   439 0000023E 75F8                        jnz .wco_loop
-   440 00000240 5B                          pop bx
-   441 00000241 59                          pop cx
-   442 00000242 5A                          pop dx
-   443 00000243 5F                          pop di
-   444 00000244 5D                          pop bp
-   445 00000245 07                          pop es
-   446 00000246 1F                          pop ds
-   447 00000247 CF                          iret
-   448                                  
-   449                                  ; ============================================================
-   450                                  ; scroll_up_one — scroll VGA text up by one line
-   451                                  ; ============================================================
-   452                                  scroll_up_one:
-   453 00000248 1E                          push ds
-   454 00000249 56                          push si
-   455 0000024A 57                          push di
-   456 0000024B 51                          push cx
-   457 0000024C 50                          push ax
-   458 0000024D B800B8                      mov ax, VGA_SEG
-   459 00000250 8ED8                        mov ds, ax
-   460 00000252 BEA000                      mov si, 160            ; source = row 1
-   461 00000255 31FF                        xor di, di             ; dest = row 0
-   462 00000257 B98007                      mov cx, 1920           ; 24 rows * 80 cols
-   463                                  .scopy:
-   464 0000025A 8B04                        mov ax, [si]
-   465 0000025C 8905                        mov [di], ax
-   466 0000025E 83C602                      add si, 2
-   467 00000261 83C702                      add di, 2
-   468 00000264 49                          dec cx
-   469 00000265 75F3                        jnz .scopy
-   470 00000267 B95000                      mov cx, 80
-   471 0000026A B82007                      mov ax, 0x0720
-   472                                  .sclear:
-   473 0000026D 8905                        mov [di], ax
-   474 0000026F 83C702                      add di, 2
-   475 00000272 49                          dec cx
-   476 00000273 75F8                        jnz .sclear
-   477 00000275 58                          pop ax
-   478 00000276 59                          pop cx
-   479 00000277 5F                          pop di
-   480 00000278 5E                          pop si
-   481 00000279 1F                          pop ds
-   482 0000027A C3                          ret
-   483                                  
+   207 000000CF 80FC1A                      cmp ah, 0x1A
+   208 000000D2 0F848901                    je .get_display_combo
+   209 000000D6 5D                          pop bp
+   210 000000D7 07                          pop es
+   211 000000D8 1F                          pop ds
+   212 000000D9 CF                          iret
+   213                                  
+   214                                  .set_cursor:
+   215 000000DA BB4000                      mov bx, BDA_SEG
+   216 000000DD 8EDB                        mov ds, bx
+   217 000000DF 88165000                    mov [video_cur_pos], dl
+   218 000000E3 88365100                    mov [video_cur_pos+1], dh
+   219 000000E7 5D                          pop bp
+   220 000000E8 07                          pop es
+   221 000000E9 1F                          pop ds
+   222 000000EA CF                          iret
+   223                                  
+   224                                  .get_cursor:
+   225 000000EB BB4000                      mov bx, BDA_SEG
+   226 000000EE 8EDB                        mov ds, bx
+   227 000000F0 8A165000                    mov dl, [video_cur_pos]
+   228 000000F4 8A365100                    mov dh, [video_cur_pos+1]
+   229 000000F8 8B0E6000                    mov cx, [video_cur_shape]
+   230 000000FC 5D                          pop bp
+   231 000000FD 07                          pop es
+   232 000000FE 1F                          pop ds
+   233 000000FF CF                          iret
+   234                                  
+   235                                  .get_mode:
+   236 00000100 BB4000                      mov bx, BDA_SEG
+   237 00000103 8EDB                        mov ds, bx
+   238 00000105 A04900                      mov al, [video_mode]
+   239 00000108 8A264A00                    mov ah, [video_columns]
+   240 0000010C 8A3E6200                    mov bh, [video_page]
+   241 00000110 5D                          pop bp
+   242 00000111 07                          pop es
+   243 00000112 1F                          pop ds
+   244 00000113 CF                          iret
+   245                                  
+   246                                  .set_mode:
+   247                                      ; Store requested mode in BDA and reset cursor
+   248 00000114 57                          push di
+   249 00000115 51                          push cx
+   250 00000116 B94000                      mov cx, BDA_SEG
+   251 00000119 8ED9                        mov ds, cx
+   252 0000011B C606500000                  mov byte [video_cur_pos], 0
+   253 00000120 C606510000                  mov byte [video_cur_pos+1], 0
+   254                                      ; Only store modes we actually support; map anything else to 0x03.
+   255 00000125 3C13                        cmp al, 0x13
+   256 00000127 7402                        je .set_mode_store
+   257 00000129 B003                        mov al, 0x03
+   258                                  .set_mode_store:
+   259 0000012B A24900                      mov [video_mode], al
+   260 0000012E 3C13                        cmp al, 0x13
+   261 00000130 7417                        je .set_mode_13h
+   262                                      ; --- Text mode: clear 80x25 text buffer at 0xB8000 ---
+   263 00000132 B800B8                      mov ax, VGA_SEG
+   264 00000135 8ED8                        mov ds, ax
+   265 00000137 31FF                        xor di, di
+   266 00000139 B9D007                      mov cx, 2000
+   267 0000013C B82007                      mov ax, 0x0720
+   268                                  .clr_loop:
+   269 0000013F 8905                        mov [di], ax
+   270 00000141 83C702                      add di, 2
+   271 00000144 49                          dec cx
+   272 00000145 75F8                        jnz .clr_loop
+   273 00000147 EB14                        jmp short .set_mode_done
+   274                                  .set_mode_13h:
+   275                                      ; --- Mode 13h: clear 320x200 framebuffer at 0xA0000 ---
+   276 00000149 B800A0                      mov ax, 0xA000
+   277 0000014C 8ED8                        mov ds, ax
+   278 0000014E 31FF                        xor di, di
+   279 00000150 B9007D                      mov cx, 32000
+   280 00000153 31C0                        xor ax, ax
+   281                                  .clr13_loop:
+   282 00000155 8905                        mov [di], ax
+   283 00000157 83C702                      add di, 2
+   284 0000015A 49                          dec cx
+   285 0000015B 75F8                        jnz .clr13_loop
+   286                                  .set_mode_done:
+   287 0000015D 59                          pop cx
+   288 0000015E 5F                          pop di
+   289 0000015F B030                        mov al, 0x30
+   290 00000161 5D                          pop bp
+   291 00000162 07                          pop es
+   292 00000163 1F                          pop ds
+   293 00000164 CF                          iret
+   294                                  
+   295                                  .scroll_up:
+   296 00000165 3C00                        cmp al, 0
+   297 00000167 751D                        jne .su_lines
+   298                                      ; AL=0: Clear window
+   299 00000169 57                          push di
+   300 0000016A 51                          push cx
+   301 0000016B B900B8                      mov cx, VGA_SEG
+   302 0000016E 8ED9                        mov ds, cx
+   303 00000170 31FF                        xor di, di
+   304 00000172 B9D007                      mov cx, 2000
+   305 00000175 B82007                      mov ax, 0x0720
+   306                                  .su_clr:
+   307 00000178 8905                        mov [di], ax
+   308 0000017A 83C702                      add di, 2
+   309 0000017D 49                          dec cx
+   310 0000017E 75F8                        jnz .su_clr
+   311 00000180 59                          pop cx
+   312 00000181 5F                          pop di
+   313 00000182 5D                          pop bp
+   314 00000183 07                          pop es
+   315 00000184 1F                          pop ds
+   316 00000185 CF                          iret
+   317                                  .su_lines:
+   318 00000186 51                          push cx
+   319 00000187 88C1                        mov cl, al
+   320 00000189 30ED                        xor ch, ch
+   321                                  .su_loop:
+   322 0000018B E8E600                      call scroll_up_one
+   323 0000018E FEC9                        dec cl
+   324 00000190 75F9                        jnz .su_loop
+   325 00000192 59                          pop cx
+   326 00000193 5D                          pop bp
+   327 00000194 07                          pop es
+   328 00000195 1F                          pop ds
+   329 00000196 CF                          iret
+   330                                  
+   331                                  .scroll_down:
+   332 00000197 3C00                        cmp al, 0
+   333 00000199 7519                        jne .sd_ret
+   334 0000019B 57                          push di
+   335 0000019C 51                          push cx
+   336 0000019D B900B8                      mov cx, VGA_SEG
+   337 000001A0 8ED9                        mov ds, cx
+   338 000001A2 31FF                        xor di, di
+   339 000001A4 B9D007                      mov cx, 2000
+   340 000001A7 B82007                      mov ax, 0x0720
+   341                                  .sd_clr:
+   342 000001AA 8905                        mov [di], ax
+   343 000001AC 83C702                      add di, 2
+   344 000001AF 49                          dec cx
+   345 000001B0 75F8                        jnz .sd_clr
+   346 000001B2 59                          pop cx
+   347 000001B3 5F                          pop di
+   348                                  .sd_ret:
+   349 000001B4 5D                          pop bp
+   350 000001B5 07                          pop es
+   351 000001B6 1F                          pop ds
+   352 000001B7 CF                          iret
+   353                                  
+   354                                  .read_char:
+   355                                      ; AH=08h: Read char+attr at cursor
+   356 000001B8 53                          push bx
+   357 000001B9 57                          push di
+   358 000001BA BB4000                      mov bx, BDA_SEG
+   359 000001BD 8EDB                        mov ds, bx
+   360 000001BF A05000                      mov al, [video_cur_pos]     ; col
+   361 000001C2 8A265100                    mov ah, [video_cur_pos+1]   ; row
+   362 000001C6 52                          push dx
+   363 000001C7 30F6                        xor dh, dh
+   364 000001C9 88E2                        mov dl, ah
+   365 000001CB B450                        mov ah, 80
+   366 000001CD 86C2                        xchg al, dl
+   367 000001CF F6E4                        mul ah
+   368 000001D1 30F6                        xor dh, dh
+   369 000001D3 01D0                        add ax, dx
+   370 000001D5 D1E0                        shl ax, 1
+   371 000001D7 89C7                        mov di, ax
+   372 000001D9 5A                          pop dx
+   373 000001DA BB00B8                      mov bx, VGA_SEG
+   374 000001DD 8EDB                        mov ds, bx
+   375 000001DF 8A05                        mov al, [di]           ; character
+   376 000001E1 8A6501                      mov ah, [di+1]         ; attribute
+   377 000001E4 5F                          pop di
+   378 000001E5 5B                          pop bx
+   379 000001E6 5D                          pop bp
+   380 000001E7 07                          pop es
+   381 000001E8 1F                          pop ds
+   382 000001E9 CF                          iret
+   383                                  
+   384                                  .write_char_attr:
+   385                                      ; AH=09h: Write char+attr at cursor, CX times
+   386                                      ; AL=char, BL=attr, CX=count
+   387 000001EA 57                          push di
+   388 000001EB 52                          push dx
+   389 000001EC 51                          push cx
+   390 000001ED 53                          push bx
+   391 000001EE BB4000                      mov bx, BDA_SEG
+   392 000001F1 8EDB                        mov ds, bx
+   393 000001F3 8A165000                    mov dl, [video_cur_pos]
+   394 000001F7 8A365100                    mov dh, [video_cur_pos+1]
+   395 000001FB 50                          push ax
+   396 000001FC 88F0                        mov al, dh
+   397 000001FE B350                        mov bl, 80
+   398 00000200 F6E3                        mul bl
+   399 00000202 30FF                        xor bh, bh
+   400 00000204 88D3                        mov bl, dl
+   401 00000206 01D8                        add ax, bx
+   402 00000208 D1E0                        shl ax, 1
+   403 0000020A 89C7                        mov di, ax
+   404 0000020C 58                          pop ax
+   405 0000020D BB00B8                      mov bx, VGA_SEG
+   406 00000210 8EDB                        mov ds, bx
+   407 00000212 5B                          pop bx                 ; restore original BX (BL=attr)
+   408 00000213 53                          push bx
+   409                                  .wca_loop:
+   410 00000214 8805                        mov [di], al
+   411 00000216 885D01                      mov [di+1], bl
+   412 00000219 83C702                      add di, 2
+   413 0000021C 49                          dec cx
+   414 0000021D 75F5                        jnz .wca_loop
+   415 0000021F 5B                          pop bx
+   416 00000220 59                          pop cx
+   417 00000221 5A                          pop dx
+   418 00000222 5F                          pop di
+   419 00000223 5D                          pop bp
+   420 00000224 07                          pop es
+   421 00000225 1F                          pop ds
+   422 00000226 CF                          iret
+   423                                  
+   424                                  .write_char_only:
+   425                                      ; AH=0Ah: Write char at cursor, CX times (keep existing attr)
+   426                                      ; AL=char, CX=count
+   427 00000227 57                          push di
+   428 00000228 52                          push dx
+   429 00000229 51                          push cx
+   430 0000022A 53                          push bx
+   431 0000022B BB4000                      mov bx, BDA_SEG
+   432 0000022E 8EDB                        mov ds, bx
+   433 00000230 8A165000                    mov dl, [video_cur_pos]
+   434 00000234 8A365100                    mov dh, [video_cur_pos+1]
+   435 00000238 50                          push ax
+   436 00000239 88F0                        mov al, dh
+   437 0000023B B350                        mov bl, 80
+   438 0000023D F6E3                        mul bl
+   439 0000023F 30FF                        xor bh, bh
+   440 00000241 88D3                        mov bl, dl
+   441 00000243 01D8                        add ax, bx
+   442 00000245 D1E0                        shl ax, 1
+   443 00000247 89C7                        mov di, ax
+   444 00000249 58                          pop ax
+   445 0000024A BB00B8                      mov bx, VGA_SEG
+   446 0000024D 8EDB                        mov ds, bx
+   447                                  .wco_loop:
+   448 0000024F 8805                        mov [di], al           ; write char only, keep attribute
+   449 00000251 83C702                      add di, 2
+   450 00000254 49                          dec cx
+   451 00000255 75F8                        jnz .wco_loop
+   452 00000257 5B                          pop bx
+   453 00000258 59                          pop cx
+   454 00000259 5A                          pop dx
+   455 0000025A 5F                          pop di
+   456 0000025B 5D                          pop bp
+   457 0000025C 07                          pop es
+   458 0000025D 1F                          pop ds
+   459 0000025E CF                          iret
+   460                                  
+   461                                  .get_display_combo:
+   462                                      ; AH=1Ah: Get/Set Display Combination Code
+   463                                      ; Return VGA color (0x08) — programs use this to detect VGA.
+   464 0000025F 80FB00                      cmp bl, 0
+   465 00000262 750A                        jne .dcc_set
+   466                                      ; BL=00h: Get DCC
+   467 00000264 B308                        mov bl, 0x08            ; active display: VGA color
+   468 00000266 B700                        mov bh, 0x00            ; inactive: none
+   469 00000268 5D                          pop bp
+   470 00000269 07                          pop es
+   471 0000026A 1F                          pop ds
+   472 0000026B B01A                        mov al, 0x1A            ; confirm function supported
+   473 0000026D CF                          iret
+   474                                  .dcc_set:
+   475                                      ; BL!=0: Set DCC — ignore but confirm
+   476 0000026E 5D                          pop bp
+   477 0000026F 07                          pop es
+   478 00000270 1F                          pop ds
+   479 00000271 B01A                        mov al, 0x1A
+   480 00000273 CF                          iret
+   481                                  
+   482                                  ; ============================================================
+   483                                  ; scroll_up_one — scroll VGA text up by one line
    484                                  ; ============================================================
-   485                                  ; INT 11h — Equipment List (read from BDA, like reference BIOS)
-   486                                  ; ============================================================
-   487                                  int11h_handler:
-   488 0000027B FB                          sti
-   489 0000027C 1E                          push ds
-   490 0000027D B84000                      mov ax, BDA_SEG
-   491 00000280 8ED8                        mov ds, ax
-   492 00000282 A11000                      mov ax, [equipment_list]
-   493 00000285 1F                          pop ds
-   494 00000286 CF                          iret
-   495                                  
-   496                                  ; ============================================================
-   497                                  ; INT 12h — Memory Size (read from BDA, like reference BIOS)
-   498                                  ; ============================================================
-   499                                  int12h_handler:
-   500 00000287 FB                          sti
-   501 00000288 1E                          push ds
-   502 00000289 B84000                      mov ax, BDA_SEG
-   503 0000028C 8ED8                        mov ds, ax
-   504 0000028E A11300                      mov ax, [memory_size]
-   505 00000291 1F                          pop ds
-   506 00000292 CF                          iret
-   507                                  
-   508                                  ; ============================================================
-   509                                  ; INT 13h — Disk Services (memory-resident disk image)
-   510                                  ; ============================================================
-   511                                  int13h_handler:
-   512 00000293 80FC00                      cmp ah, 0x00
-   513 00000296 7413                        je .disk_reset
-   514 00000298 80FC02                      cmp ah, 0x02
-   515 0000029B 742E                        je .disk_read
-   516 0000029D 80FC08                      cmp ah, 0x08
-   517 000002A0 740D                        je .disk_params
-   518 000002A2 80FC15                      cmp ah, 0x15
-   519 000002A5 7420                        je .disk_type
-   520                                      ; Unknown function — return error
-   521 000002A7 B401                        mov ah, 0x01           ; invalid function
-   522 000002A9 F9                          stc
-   523 000002AA CF                          iret
-   524                                  
-   525                                  .disk_reset:
-   526 000002AB 30E4                        xor ah, ah
-   527 000002AD F8                          clc
-   528 000002AE CF                          iret
-   529                                  
-   530                                  .disk_params:
-   531                                      ; Return drive parameters for 1.44MB floppy
-   532 000002AF B400                        mov ah, 0
-   533 000002B1 B304                        mov bl, 0x04           ; drive type: 1.44MB
-   534 000002B3 B54F                        mov ch, DISK_CYLS - 1  ; max cylinder (79)
-   535 000002B5 B112                        mov cl, DISK_SPT       ; max sector (18)
-   536 000002B7 B601                        mov dh, DISK_HEADS - 1 ; max head (1)
-   537 000002B9 B201                        mov dl, 1              ; 1 floppy drive
-   538                                      ; ES:DI = disk parameter table
-   539 000002BB 53                          push bx
-   540 000002BC BB00F0                      mov bx, BIOS_SEG
-   541 000002BF 8EC3                        mov es, bx
-   542 000002C1 BF[AA06]                    mov di, disk_param_table
-   543 000002C4 5B                          pop bx
-   544 000002C5 F8                          clc
-   545 000002C6 CF                          iret
-   546                                  
-   547                                  .disk_type:
-   548                                      ; AH=15h: Get disk type — floppy without change detection
-   549 000002C7 B401                        mov ah, 0x01
-   550 000002C9 F8                          clc
-   551 000002CA CF                          iret
-   552                                  
-   553                                  .disk_read:
-   554                                      ; AH=02h: Read sectors
-   555                                      ; AL=count, CH=cylinder, CL=sector(1-based), DH=head, DL=drive, ES:BX=dest
-   556 000002CB 55                          push bp
-   557 000002CC 89E5                        mov bp, sp
-   558 000002CE 1E                          push ds
-   559 000002CF 56                          push si
-   560 000002D0 57                          push di
-   561 000002D1 50                          push ax
-   562 000002D2 52                          push dx
-   563 000002D3 51                          push cx
-   564                                  
-   565                                      ; Reload from stack since we need all values
-   566 000002D4 59                          pop cx
-   567 000002D5 5A                          pop dx
-   568 000002D6 52                          push dx
-   569 000002D7 51                          push cx
-   570                                  
-   571                                      ; Compute LBA = (CH * 2 + DH) * 18 + (CL - 1)
-   572 000002D8 88E8                        mov al, ch
-   573 000002DA 30E4                        xor ah, ah
-   574 000002DC D1E0                        shl ax, 1              ; AX = cyl * 2
-   575 000002DE 89C6                        mov si, ax
-   576 000002E0 30E4                        xor ah, ah
-   577 000002E2 88F0                        mov al, dh
-   578 000002E4 01F0                        add ax, si             ; AX = cyl*2 + head
-   579 000002E6 BE1200                      mov si, DISK_SPT
-   580 000002E9 52                          push dx
-   581 000002EA F7E6                        mul si                 ; AX = (cyl*2+head) * 18
-   582 000002EC 5A                          pop dx
-   583 000002ED 89C6                        mov si, ax
-   584 000002EF 30ED                        xor ch, ch
-   585 000002F1 FEC9                        dec cl                 ; sector is 1-based
-   586 000002F3 01CE                        add si, cx             ; SI = LBA
-   587                                  
-   588                                      ; Source segment = DISK_SEG + LBA * 32
-   589 000002F5 89F0                        mov ax, si
-   590 000002F7 B105                        mov cl, 5
-   591 000002F9 D3E0                        shl ax, cl
-   592 000002FB 0500D0                      add ax, DISK_SEG
-   593 000002FE 8ED8                        mov ds, ax
-   594 00000300 31F6                        xor si, si
-   595                                  
-   596                                      ; Destination = ES:BX
-   597 00000302 89DF                        mov di, bx
-   598                                  
-   599                                      ; Count
-   600 00000304 59                          pop cx
-   601 00000305 5A                          pop dx
-   602 00000306 58                          pop ax
-   603 00000307 30E4                        xor ah, ah
-   604 00000309 89C1                        mov cx, ax
-   605 0000030B 51                          push cx
-   606                                  
-   607                                      ; Copy CX sectors * 512 bytes
-   608                                  .read_sector_loop:
-   609 0000030C 51                          push cx
-   610 0000030D B90001                      mov cx, 256
-   611                                  .read_word_loop:
-   612 00000310 8B04                        mov ax, [si]
-   613 00000312 1E                          push ds
-   614 00000313 53                          push bx
-   615 00000314 8CC3                        mov bx, es
-   616 00000316 8EDB                        mov ds, bx
-   617 00000318 8905                        mov [di], ax
-   618 0000031A 5B                          pop bx
-   619 0000031B 1F                          pop ds
-   620 0000031C 83C602                      add si, 2
-   621 0000031F 83C702                      add di, 2
-   622 00000322 49                          dec cx
-   623 00000323 75EB                        jnz .read_word_loop
-   624 00000325 59                          pop cx
-   625 00000326 49                          dec cx
-   626 00000327 75E3                        jnz .read_sector_loop
-   627                                  
-   628                                      ; Success
-   629 00000329 58                          pop ax                 ; AL = sectors read
-   630 0000032A 30E4                        xor ah, ah
-   631 0000032C F8                          clc
-   632 0000032D 5F                          pop di
-   633 0000032E 5E                          pop si
-   634 0000032F 1F                          pop ds
-   635 00000330 5D                          pop bp
-   636 00000331 CF                          iret
-   637                                  
-   638                                  ; ============================================================
-   639                                  ; INT 16h — Keyboard Services (matches reference BIOS contracts)
-   640                                  ; ============================================================
-   641                                  int16h_handler:
-   642 00000332 FB                          sti
-   643 00000333 53                          push bx
-   644 00000334 1E                          push ds
-   645 00000335 BB4000                      mov bx, BDA_SEG
-   646 00000338 8EDB                        mov ds, bx
-   647 0000033A 80FC00                      cmp ah, 0x00
-   648 0000033D 741C                        je .read_key
-   649 0000033F 80FC01                      cmp ah, 0x01
-   650 00000342 742F                        je .check_key
-   651 00000344 80FC02                      cmp ah, 0x02
-   652 00000347 744A                        je .shift_flags
-   653 00000349 80FC10                      cmp ah, 0x10
-   654 0000034C 740D                        je .read_key           ; enhanced = same for us
-   655 0000034E 80FC11                      cmp ah, 0x11
-   656 00000351 7420                        je .check_key          ; enhanced = same for us
-   657 00000353 80FC12                      cmp ah, 0x12
-   658 00000356 7441                        je .ext_shift_flags
-   659                                      ; Unknown function
-   660 00000358 1F                          pop ds
-   661 00000359 5B                          pop bx
-   662 0000035A CF                          iret
-   663                                  
-   664                                  .read_key:
-   665                                      ; Busy-wait on keyboard buffer at 0000:0500
-   666 0000035B 1F                          pop ds
-   667 0000035C 5B                          pop bx
-   668 0000035D 1E                          push ds
-   669 0000035E 53                          push bx
-   670 0000035F 31DB                        xor bx, bx
-   671 00000361 8EDB                        mov ds, bx
-   672                                  .key_wait:
-   673 00000363 A10005                      mov ax, [0x0500]
-   674 00000366 85C0                        test ax, ax
-   675 00000368 74F9                        jz .key_wait
-   676 0000036A C70600050000                mov word [0x0500], 0
-   677 00000370 5B                          pop bx
-   678 00000371 1F                          pop ds
-   679 00000372 CF                          iret
-   680                                  
-   681                                  .check_key:
-   682                                      ; Check if key is available (non-destructive)
-   683 00000373 1F                          pop ds
-   684 00000374 5B                          pop bx
-   685 00000375 1E                          push ds
-   686 00000376 53                          push bx
-   687 00000377 31DB                        xor bx, bx
-   688 00000379 8EDB                        mov ds, bx
-   689 0000037B A10005                      mov ax, [0x0500]
-   690 0000037E 5B                          pop bx
-   691 0000037F 1F                          pop ds
-   692 00000380 85C0                        test ax, ax
-   693 00000382 55                          push bp
-   694 00000383 89E5                        mov bp, sp
-   695 00000385 7406                        jz .ck_none
-   696                                      ; Key available: clear ZF
-   697 00000387 836606BF                    and word [bp+6], 0xFFBF
-   698 0000038B EB04                        jmp short .ck_ret
-   699                                  .ck_none:
-   700                                      ; No key: set ZF
-   701 0000038D 834E0640                    or word [bp+6], 0x0040
-   702                                  .ck_ret:
-   703 00000391 5D                          pop bp
-   704 00000392 CF                          iret
-   705                                  
-   706                                  .shift_flags:
-   707                                      ; AH=02h: Return shift flags from BDA
-   708 00000393 A01700                      mov al, [kbd_flags_1]
-   709 00000396 1F                          pop ds
-   710 00000397 5B                          pop bx
-   711 00000398 CF                          iret
-   712                                  
-   713                                  .ext_shift_flags:
-   714                                      ; AH=12h: Return extended shift flags
-   715 00000399 A01700                      mov al, [kbd_flags_1]
-   716 0000039C 8A261800                    mov ah, [kbd_flags_2]
-   717 000003A0 1F                          pop ds
-   718 000003A1 5B                          pop bx
-   719 000003A2 CF                          iret
-   720                                  
-   721                                  ; ============================================================
-   722                                  ; INT 1Ah — Timer Services (matches reference BIOS contract)
-   723                                  ; ============================================================
-   724                                  int1ah_handler:
-   725 000003A3 FB                          sti
-   726 000003A4 53                          push bx
-   727 000003A5 1E                          push ds
-   728 000003A6 BB4000                      mov bx, BDA_SEG
-   729 000003A9 8EDB                        mov ds, bx
-   730 000003AB 80FC00                      cmp ah, 0x00
-   731 000003AE 7408                        je .timer_read
-   732 000003B0 80FC01                      cmp ah, 0x01
-   733 000003B3 741F                        je .timer_set
-   734                                      ; Unknown function
-   735 000003B5 1F                          pop ds
-   736 000003B6 5B                          pop bx
-   737 000003B7 CF                          iret
+   485                                  scroll_up_one:
+   486 00000274 1E                          push ds
+   487 00000275 56                          push si
+   488 00000276 57                          push di
+   489 00000277 51                          push cx
+   490 00000278 50                          push ax
+   491 00000279 B800B8                      mov ax, VGA_SEG
+   492 0000027C 8ED8                        mov ds, ax
+   493 0000027E BEA000                      mov si, 160            ; source = row 1
+   494 00000281 31FF                        xor di, di             ; dest = row 0
+   495 00000283 B98007                      mov cx, 1920           ; 24 rows * 80 cols
+   496                                  .scopy:
+   497 00000286 8B04                        mov ax, [si]
+   498 00000288 8905                        mov [di], ax
+   499 0000028A 83C602                      add si, 2
+   500 0000028D 83C702                      add di, 2
+   501 00000290 49                          dec cx
+   502 00000291 75F3                        jnz .scopy
+   503 00000293 B95000                      mov cx, 80
+   504 00000296 B82007                      mov ax, 0x0720
+   505                                  .sclear:
+   506 00000299 8905                        mov [di], ax
+   507 0000029B 83C702                      add di, 2
+   508 0000029E 49                          dec cx
+   509 0000029F 75F8                        jnz .sclear
+   510 000002A1 58                          pop ax
+   511 000002A2 59                          pop cx
+   512 000002A3 5F                          pop di
+   513 000002A4 5E                          pop si
+   514 000002A5 1F                          pop ds
+   515 000002A6 C3                          ret
+   516                                  
+   517                                  ; ============================================================
+   518                                  ; INT 11h — Equipment List (read from BDA, like reference BIOS)
+   519                                  ; ============================================================
+   520                                  int11h_handler:
+   521 000002A7 FB                          sti
+   522 000002A8 1E                          push ds
+   523 000002A9 B84000                      mov ax, BDA_SEG
+   524 000002AC 8ED8                        mov ds, ax
+   525 000002AE A11000                      mov ax, [equipment_list]
+   526 000002B1 1F                          pop ds
+   527 000002B2 CF                          iret
+   528                                  
+   529                                  ; ============================================================
+   530                                  ; INT 12h — Memory Size (read from BDA, like reference BIOS)
+   531                                  ; ============================================================
+   532                                  int12h_handler:
+   533 000002B3 FB                          sti
+   534 000002B4 1E                          push ds
+   535 000002B5 B84000                      mov ax, BDA_SEG
+   536 000002B8 8ED8                        mov ds, ax
+   537 000002BA A11300                      mov ax, [memory_size]
+   538 000002BD 1F                          pop ds
+   539 000002BE CF                          iret
+   540                                  
+   541                                  ; ============================================================
+   542                                  ; INT 13h — Disk Services (memory-resident disk image)
+   543                                  ; ============================================================
+   544                                  int13h_handler:
+   545 000002BF 80FC00                      cmp ah, 0x00
+   546 000002C2 7413                        je .disk_reset
+   547 000002C4 80FC02                      cmp ah, 0x02
+   548 000002C7 742E                        je .disk_read
+   549 000002C9 80FC08                      cmp ah, 0x08
+   550 000002CC 740D                        je .disk_params
+   551 000002CE 80FC15                      cmp ah, 0x15
+   552 000002D1 7420                        je .disk_type
+   553                                      ; Unknown function — return error
+   554 000002D3 B401                        mov ah, 0x01           ; invalid function
+   555 000002D5 F9                          stc
+   556 000002D6 CF                          iret
+   557                                  
+   558                                  .disk_reset:
+   559 000002D7 30E4                        xor ah, ah
+   560 000002D9 F8                          clc
+   561 000002DA CF                          iret
+   562                                  
+   563                                  .disk_params:
+   564                                      ; Return drive parameters for 1.44MB floppy
+   565 000002DB B400                        mov ah, 0
+   566 000002DD B304                        mov bl, 0x04           ; drive type: 1.44MB
+   567 000002DF B54F                        mov ch, DISK_CYLS - 1  ; max cylinder (79)
+   568 000002E1 B112                        mov cl, DISK_SPT       ; max sector (18)
+   569 000002E3 B601                        mov dh, DISK_HEADS - 1 ; max head (1)
+   570 000002E5 B201                        mov dl, 1              ; 1 floppy drive
+   571                                      ; ES:DI = disk parameter table
+   572 000002E7 53                          push bx
+   573 000002E8 BB00F0                      mov bx, BIOS_SEG
+   574 000002EB 8EC3                        mov es, bx
+   575 000002ED BF[D606]                    mov di, disk_param_table
+   576 000002F0 5B                          pop bx
+   577 000002F1 F8                          clc
+   578 000002F2 CF                          iret
+   579                                  
+   580                                  .disk_type:
+   581                                      ; AH=15h: Get disk type — floppy without change detection
+   582 000002F3 B401                        mov ah, 0x01
+   583 000002F5 F8                          clc
+   584 000002F6 CF                          iret
+   585                                  
+   586                                  .disk_read:
+   587                                      ; AH=02h: Read sectors
+   588                                      ; AL=count, CH=cylinder, CL=sector(1-based), DH=head, DL=drive, ES:BX=dest
+   589 000002F7 55                          push bp
+   590 000002F8 89E5                        mov bp, sp
+   591 000002FA 1E                          push ds
+   592 000002FB 56                          push si
+   593 000002FC 57                          push di
+   594 000002FD 50                          push ax
+   595 000002FE 52                          push dx
+   596 000002FF 51                          push cx
+   597                                  
+   598                                      ; Reload from stack since we need all values
+   599 00000300 59                          pop cx
+   600 00000301 5A                          pop dx
+   601 00000302 52                          push dx
+   602 00000303 51                          push cx
+   603                                  
+   604                                      ; Compute LBA = (CH * 2 + DH) * 18 + (CL - 1)
+   605 00000304 88E8                        mov al, ch
+   606 00000306 30E4                        xor ah, ah
+   607 00000308 D1E0                        shl ax, 1              ; AX = cyl * 2
+   608 0000030A 89C6                        mov si, ax
+   609 0000030C 30E4                        xor ah, ah
+   610 0000030E 88F0                        mov al, dh
+   611 00000310 01F0                        add ax, si             ; AX = cyl*2 + head
+   612 00000312 BE1200                      mov si, DISK_SPT
+   613 00000315 52                          push dx
+   614 00000316 F7E6                        mul si                 ; AX = (cyl*2+head) * 18
+   615 00000318 5A                          pop dx
+   616 00000319 89C6                        mov si, ax
+   617 0000031B 30ED                        xor ch, ch
+   618 0000031D FEC9                        dec cl                 ; sector is 1-based
+   619 0000031F 01CE                        add si, cx             ; SI = LBA
+   620                                  
+   621                                      ; Source segment = DISK_SEG + LBA * 32
+   622 00000321 89F0                        mov ax, si
+   623 00000323 B105                        mov cl, 5
+   624 00000325 D3E0                        shl ax, cl
+   625 00000327 0500D0                      add ax, DISK_SEG
+   626 0000032A 8ED8                        mov ds, ax
+   627 0000032C 31F6                        xor si, si
+   628                                  
+   629                                      ; Destination = ES:BX
+   630 0000032E 89DF                        mov di, bx
+   631                                  
+   632                                      ; Count
+   633 00000330 59                          pop cx
+   634 00000331 5A                          pop dx
+   635 00000332 58                          pop ax
+   636 00000333 30E4                        xor ah, ah
+   637 00000335 89C1                        mov cx, ax
+   638 00000337 51                          push cx
+   639                                  
+   640                                      ; Copy CX sectors * 512 bytes
+   641                                  .read_sector_loop:
+   642 00000338 51                          push cx
+   643 00000339 B90001                      mov cx, 256
+   644                                  .read_word_loop:
+   645 0000033C 8B04                        mov ax, [si]
+   646 0000033E 1E                          push ds
+   647 0000033F 53                          push bx
+   648 00000340 8CC3                        mov bx, es
+   649 00000342 8EDB                        mov ds, bx
+   650 00000344 8905                        mov [di], ax
+   651 00000346 5B                          pop bx
+   652 00000347 1F                          pop ds
+   653 00000348 83C602                      add si, 2
+   654 0000034B 83C702                      add di, 2
+   655 0000034E 49                          dec cx
+   656 0000034F 75EB                        jnz .read_word_loop
+   657 00000351 59                          pop cx
+   658 00000352 49                          dec cx
+   659 00000353 75E3                        jnz .read_sector_loop
+   660                                  
+   661                                      ; Success
+   662 00000355 58                          pop ax                 ; AL = sectors read
+   663 00000356 30E4                        xor ah, ah
+   664 00000358 F8                          clc
+   665 00000359 5F                          pop di
+   666 0000035A 5E                          pop si
+   667 0000035B 1F                          pop ds
+   668 0000035C 5D                          pop bp
+   669 0000035D CF                          iret
+   670                                  
+   671                                  ; ============================================================
+   672                                  ; INT 16h — Keyboard Services (matches reference BIOS contracts)
+   673                                  ; ============================================================
+   674                                  int16h_handler:
+   675 0000035E FB                          sti
+   676 0000035F 53                          push bx
+   677 00000360 1E                          push ds
+   678 00000361 BB4000                      mov bx, BDA_SEG
+   679 00000364 8EDB                        mov ds, bx
+   680 00000366 80FC00                      cmp ah, 0x00
+   681 00000369 741C                        je .read_key
+   682 0000036B 80FC01                      cmp ah, 0x01
+   683 0000036E 742F                        je .check_key
+   684 00000370 80FC02                      cmp ah, 0x02
+   685 00000373 744A                        je .shift_flags
+   686 00000375 80FC10                      cmp ah, 0x10
+   687 00000378 740D                        je .read_key           ; enhanced = same for us
+   688 0000037A 80FC11                      cmp ah, 0x11
+   689 0000037D 7420                        je .check_key          ; enhanced = same for us
+   690 0000037F 80FC12                      cmp ah, 0x12
+   691 00000382 7441                        je .ext_shift_flags
+   692                                      ; Unknown function
+   693 00000384 1F                          pop ds
+   694 00000385 5B                          pop bx
+   695 00000386 CF                          iret
+   696                                  
+   697                                  .read_key:
+   698                                      ; Busy-wait on keyboard buffer at 0000:0500
+   699 00000387 1F                          pop ds
+   700 00000388 5B                          pop bx
+   701 00000389 1E                          push ds
+   702 0000038A 53                          push bx
+   703 0000038B 31DB                        xor bx, bx
+   704 0000038D 8EDB                        mov ds, bx
+   705                                  .key_wait:
+   706 0000038F A10005                      mov ax, [0x0500]
+   707 00000392 85C0                        test ax, ax
+   708 00000394 74F9                        jz .key_wait
+   709 00000396 C70600050000                mov word [0x0500], 0
+   710 0000039C 5B                          pop bx
+   711 0000039D 1F                          pop ds
+   712 0000039E CF                          iret
+   713                                  
+   714                                  .check_key:
+   715                                      ; Check if key is available (non-destructive)
+   716 0000039F 1F                          pop ds
+   717 000003A0 5B                          pop bx
+   718 000003A1 1E                          push ds
+   719 000003A2 53                          push bx
+   720 000003A3 31DB                        xor bx, bx
+   721 000003A5 8EDB                        mov ds, bx
+   722 000003A7 A10005                      mov ax, [0x0500]
+   723 000003AA 5B                          pop bx
+   724 000003AB 1F                          pop ds
+   725 000003AC 85C0                        test ax, ax
+   726 000003AE 55                          push bp
+   727 000003AF 89E5                        mov bp, sp
+   728 000003B1 7406                        jz .ck_none
+   729                                      ; Key available: clear ZF
+   730 000003B3 836606BF                    and word [bp+6], 0xFFBF
+   731 000003B7 EB04                        jmp short .ck_ret
+   732                                  .ck_none:
+   733                                      ; No key: set ZF
+   734 000003B9 834E0640                    or word [bp+6], 0x0040
+   735                                  .ck_ret:
+   736 000003BD 5D                          pop bp
+   737 000003BE CF                          iret
    738                                  
-   739                                  .timer_read:
-   740                                      ; AH=00h: Read tick count
-   741                                      ; Returns: CX=high, DX=low, AL=midnight flag
-   742                                      ; Reference: reads ticks, clears midnight flag via XOR
-   743 000003B8 8B166C00                    mov dx, [ticks_lo]
-   744 000003BC 8B0E6E00                    mov cx, [ticks_hi]
-   745 000003C0 A07000                      mov al, [new_day]
-   746 000003C3 30067000                    xor byte [new_day], al  ; clear midnight flag (reference method)
-   747                                      ; Auto-increment workaround since we have no timer IRQ
-   748 000003C7 83066C0001                  add word [ticks_lo], 1
-   749 000003CC 83166E0000                  adc word [ticks_hi], 0
-   750 000003D1 1F                          pop ds
-   751 000003D2 5B                          pop bx
-   752 000003D3 CF                          iret
+   739                                  .shift_flags:
+   740                                      ; AH=02h: Return shift flags from BDA
+   741 000003BF A01700                      mov al, [kbd_flags_1]
+   742 000003C2 1F                          pop ds
+   743 000003C3 5B                          pop bx
+   744 000003C4 CF                          iret
+   745                                  
+   746                                  .ext_shift_flags:
+   747                                      ; AH=12h: Return extended shift flags
+   748 000003C5 A01700                      mov al, [kbd_flags_1]
+   749 000003C8 8A261800                    mov ah, [kbd_flags_2]
+   750 000003CC 1F                          pop ds
+   751 000003CD 5B                          pop bx
+   752 000003CE CF                          iret
    753                                  
-   754                                  .timer_set:
-   755                                      ; AH=01h: Set tick count
-   756 000003D4 89166C00                    mov [ticks_lo], dx
-   757 000003D8 890E6E00                    mov [ticks_hi], cx
-   758 000003DC C606700000                  mov byte [new_day], 0
-   759 000003E1 1F                          pop ds
-   760 000003E2 5B                          pop bx
-   761 000003E3 CF                          iret
-   762                                  
-   763                                  ; ============================================================
-   764                                  ; INT 08h — Timer Tick (IRQ0)
-   765                                  ; Increments BDA tick count, checks for midnight, calls INT 1Ch.
-   766                                  ; We don't have a real PIT, so this won't fire automatically,
-   767                                  ; but having the handler means any code that triggers INT 08h
-   768                                  ; will work correctly.
-   769                                  ; ============================================================
-   770                                  int08h_handler:
-   771 000003E4 50                          push ax
-   772 000003E5 52                          push dx
-   773 000003E6 1E                          push ds
-   774 000003E7 B84000                      mov ax, BDA_SEG
-   775 000003EA 8ED8                        mov ds, ax
-   776                                      ; Increment tick counter
-   777 000003EC FF066C00                    inc word [ticks_lo]
-   778 000003F0 7504                        jnz .no_overflow
-   779 000003F2 FF066E00                    inc word [ticks_hi]
-   780                                  .no_overflow:
-   781                                      ; Check for midnight rollover (1573042 = 0x18:0x00B2 ticks/day)
-   782 000003F6 833E6E0018                  cmp word [ticks_hi], 0x18
-   783 000003FB 7519                        jnz .no_midnight
-   784 000003FD 813E6C00B200                cmp word [ticks_lo], 0x00B2
-   785 00000403 7511                        jnz .no_midnight
-   786 00000405 C7066E000000                mov word [ticks_hi], 0
-   787 0000040B C7066C000000                mov word [ticks_lo], 0
-   788 00000411 C606700001                  mov byte [new_day], 1
-   789                                  .no_midnight:
-   790 00000416 CD1C                        int 0x1C               ; User timer tick hook
-   791 00000418 1F                          pop ds
-   792 00000419 5A                          pop dx
-   793 0000041A 58                          pop ax
-   794 0000041B CF                          iret
+   754                                  ; ============================================================
+   755                                  ; INT 1Ah — Timer Services (matches reference BIOS contract)
+   756                                  ; ============================================================
+   757                                  int1ah_handler:
+   758 000003CF FB                          sti
+   759 000003D0 53                          push bx
+   760 000003D1 1E                          push ds
+   761 000003D2 BB4000                      mov bx, BDA_SEG
+   762 000003D5 8EDB                        mov ds, bx
+   763 000003D7 80FC00                      cmp ah, 0x00
+   764 000003DA 7408                        je .timer_read
+   765 000003DC 80FC01                      cmp ah, 0x01
+   766 000003DF 741F                        je .timer_set
+   767                                      ; Unknown function
+   768 000003E1 1F                          pop ds
+   769 000003E2 5B                          pop bx
+   770 000003E3 CF                          iret
+   771                                  
+   772                                  .timer_read:
+   773                                      ; AH=00h: Read tick count
+   774                                      ; Returns: CX=high, DX=low, AL=midnight flag
+   775                                      ; Reference: reads ticks, clears midnight flag via XOR
+   776 000003E4 8B166C00                    mov dx, [ticks_lo]
+   777 000003E8 8B0E6E00                    mov cx, [ticks_hi]
+   778 000003EC A07000                      mov al, [new_day]
+   779 000003EF 30067000                    xor byte [new_day], al  ; clear midnight flag (reference method)
+   780                                      ; Auto-increment workaround since we have no timer IRQ
+   781 000003F3 83066C0001                  add word [ticks_lo], 1
+   782 000003F8 83166E0000                  adc word [ticks_hi], 0
+   783 000003FD 1F                          pop ds
+   784 000003FE 5B                          pop bx
+   785 000003FF CF                          iret
+   786                                  
+   787                                  .timer_set:
+   788                                      ; AH=01h: Set tick count
+   789 00000400 89166C00                    mov [ticks_lo], dx
+   790 00000404 890E6E00                    mov [ticks_hi], cx
+   791 00000408 C606700000                  mov byte [new_day], 0
+   792 0000040D 1F                          pop ds
+   793 0000040E 5B                          pop bx
+   794 0000040F CF                          iret
    795                                  
    796                                  ; ============================================================
-   797                                  ; INT 15h — Miscellaneous System Services (matches reference)
-   798                                  ; ============================================================
-   799                                  int15h_handler:
-   800 0000041C FB                          sti
-   801 0000041D 80FC4F                      cmp ah, 0x4F
-   802 00000420 741F                        je .kbd_intercept
-   803 00000422 80FCC0                      cmp ah, 0xC0
-   804 00000425 7429                        je .sys_config
-   805 00000427 80FC88                      cmp ah, 0x88
-   806 0000042A 7419                        je .ext_mem_size
-   807                                      ; AH=90h/91h: OS hooks — return success
-   808 0000042C 80FC90                      cmp ah, 0x90
-   809 0000042F 7411                        je .os_hook
-   810 00000431 80FC91                      cmp ah, 0x91
-   811 00000434 740C                        je .os_hook
-   812                                      ; Unknown function — CF set, AH=86h (like reference)
-   813 00000436 B486                        mov ah, 0x86
-   814 00000438 55                          push bp
-   815 00000439 89E5                        mov bp, sp
-   816 0000043B 804E0601                    or byte [bp+6], 0x01   ; set CF in stacked FLAGS
-   817 0000043F 5D                          pop bp
-   818 00000440 CF                          iret
-   819                                  
-   820                                  .kbd_intercept:
-   821                                      ; AH=4Fh: Keyboard intercept — just IRET (pass through)
-   822 00000441 CF                          iret
-   823                                  
-   824                                  .os_hook:
-   825                                      ; AH=90h/91h: Device busy/interrupt complete — AH=0, IRET
-   826 00000442 B400                        mov ah, 0x00
-   827 00000444 CF                          iret
+   797                                  ; INT 08h — Timer Tick (IRQ0)
+   798                                  ; Increments BDA tick count, checks for midnight, calls INT 1Ch.
+   799                                  ; We don't have a real PIT, so this won't fire automatically,
+   800                                  ; but having the handler means any code that triggers INT 08h
+   801                                  ; will work correctly.
+   802                                  ; ============================================================
+   803                                  int08h_handler:
+   804 00000410 50                          push ax
+   805 00000411 52                          push dx
+   806 00000412 1E                          push ds
+   807 00000413 B84000                      mov ax, BDA_SEG
+   808 00000416 8ED8                        mov ds, ax
+   809                                      ; Increment tick counter
+   810 00000418 FF066C00                    inc word [ticks_lo]
+   811 0000041C 7504                        jnz .no_overflow
+   812 0000041E FF066E00                    inc word [ticks_hi]
+   813                                  .no_overflow:
+   814                                      ; Check for midnight rollover (1573042 = 0x18:0x00B2 ticks/day)
+   815 00000422 833E6E0018                  cmp word [ticks_hi], 0x18
+   816 00000427 7519                        jnz .no_midnight
+   817 00000429 813E6C00B200                cmp word [ticks_lo], 0x00B2
+   818 0000042F 7511                        jnz .no_midnight
+   819 00000431 C7066E000000                mov word [ticks_hi], 0
+   820 00000437 C7066C000000                mov word [ticks_lo], 0
+   821 0000043D C606700001                  mov byte [new_day], 1
+   822                                  .no_midnight:
+   823 00000442 CD1C                        int 0x1C               ; User timer tick hook
+   824 00000444 1F                          pop ds
+   825 00000445 5A                          pop dx
+   826 00000446 58                          pop ax
+   827 00000447 CF                          iret
    828                                  
-   829                                  .ext_mem_size:
-   830                                      ; AH=88h: Extended memory size (above 1MB) — none
-   831 00000445 31C0                        xor ax, ax
-   832 00000447 55                          push bp
-   833 00000448 89E5                        mov bp, sp
-   834 0000044A 806606FE                    and byte [bp+6], 0xFE  ; clear CF
-   835 0000044E 5D                          pop bp
-   836 0000044F CF                          iret
-   837                                  
-   838                                  .sys_config:
-   839                                      ; AH=C0h: Get system configuration table
-   840 00000450 B400                        mov ah, 0x00
-   841 00000452 BB00F0                      mov bx, BIOS_SEG
-   842 00000455 8EC3                        mov es, bx
-   843 00000457 BB[A006]                    mov bx, config_table
-   844 0000045A 55                          push bp
-   845 0000045B 89E5                        mov bp, sp
-   846 0000045D 806606FE                    and byte [bp+6], 0xFE  ; clear CF
-   847 00000461 5D                          pop bp
-   848 00000462 CF                          iret
-   849                                  
-   850                                  ; ============================================================
-   851                                  ; INT 19h — Bootstrap (halt in our system)
-   852                                  ; ============================================================
-   853                                  int19h_handler:
-   854 00000463 1E                          push ds
-   855 00000464 31C0                        xor ax, ax
-   856 00000466 8ED8                        mov ds, ax
-   857 00000468 C606040501                  mov byte [HALT_ADDR], 1
-   858 0000046D 1F                          pop ds
-   859 0000046E EBF3                        jmp int19h_handler
-   860                                  
-   861                                  ; ============================================================
-   862                                  ; INT 20h — Program Terminate (halt)
-   863                                  ; ============================================================
-   864                                  int20h_handler:
-   865 00000470 1E                          push ds
-   866 00000471 31C0                        xor ax, ax
-   867 00000473 8ED8                        mov ds, ax
-   868 00000475 C606040501                  mov byte [HALT_ADDR], 1
-   869 0000047A 1F                          pop ds
-   870 0000047B EBF3                        jmp int20h_handler
-   871                                  
-   872                                  ; ============================================================
-   873                                  ; INT 01h — Single-step trap handler
-   874                                  ; Clears TF from stacked FLAGS so execution resumes normally.
-   875                                  ; ============================================================
-   876                                  int01h_handler:
-   877 0000047D 55                          push bp
-   878 0000047E 89E5                        mov bp, sp
-   879 00000480 816606FFFE                  and word [bp+6], 0xFEFF    ; clear TF (bit 8) in stacked FLAGS
-   880 00000485 5D                          pop bp
-   881 00000486 CF                          iret
+   829                                  ; ============================================================
+   830                                  ; INT 15h — Miscellaneous System Services (matches reference)
+   831                                  ; ============================================================
+   832                                  int15h_handler:
+   833 00000448 FB                          sti
+   834 00000449 80FC4F                      cmp ah, 0x4F
+   835 0000044C 741F                        je .kbd_intercept
+   836 0000044E 80FCC0                      cmp ah, 0xC0
+   837 00000451 7429                        je .sys_config
+   838 00000453 80FC88                      cmp ah, 0x88
+   839 00000456 7419                        je .ext_mem_size
+   840                                      ; AH=90h/91h: OS hooks — return success
+   841 00000458 80FC90                      cmp ah, 0x90
+   842 0000045B 7411                        je .os_hook
+   843 0000045D 80FC91                      cmp ah, 0x91
+   844 00000460 740C                        je .os_hook
+   845                                      ; Unknown function — CF set, AH=86h (like reference)
+   846 00000462 B486                        mov ah, 0x86
+   847 00000464 55                          push bp
+   848 00000465 89E5                        mov bp, sp
+   849 00000467 804E0601                    or byte [bp+6], 0x01   ; set CF in stacked FLAGS
+   850 0000046B 5D                          pop bp
+   851 0000046C CF                          iret
+   852                                  
+   853                                  .kbd_intercept:
+   854                                      ; AH=4Fh: Keyboard intercept — just IRET (pass through)
+   855 0000046D CF                          iret
+   856                                  
+   857                                  .os_hook:
+   858                                      ; AH=90h/91h: Device busy/interrupt complete — AH=0, IRET
+   859 0000046E B400                        mov ah, 0x00
+   860 00000470 CF                          iret
+   861                                  
+   862                                  .ext_mem_size:
+   863                                      ; AH=88h: Extended memory size (above 1MB) — none
+   864 00000471 31C0                        xor ax, ax
+   865 00000473 55                          push bp
+   866 00000474 89E5                        mov bp, sp
+   867 00000476 806606FE                    and byte [bp+6], 0xFE  ; clear CF
+   868 0000047A 5D                          pop bp
+   869 0000047B CF                          iret
+   870                                  
+   871                                  .sys_config:
+   872                                      ; AH=C0h: Get system configuration table
+   873 0000047C B400                        mov ah, 0x00
+   874 0000047E BB00F0                      mov bx, BIOS_SEG
+   875 00000481 8EC3                        mov es, bx
+   876 00000483 BB[CC06]                    mov bx, config_table
+   877 00000486 55                          push bp
+   878 00000487 89E5                        mov bp, sp
+   879 00000489 806606FE                    and byte [bp+6], 0xFE  ; clear CF
+   880 0000048D 5D                          pop bp
+   881 0000048E CF                          iret
    882                                  
    883                                  ; ============================================================
-   884                                  ; int_dummy — Dummy interrupt handler (IRET only)
-   885                                  ; Matches reference BIOS int_dummy at FF53h.
-   886                                  ; ============================================================
-   887                                  int_dummy:
-   888 00000487 CF                          iret
-   889                                  
-   890                                  ; ============================================================
-   891                                  ; default_handler — For unimplemented INTs
-   892                                  ; Returns with CF set to signal "not supported".
-   893                                  ; ============================================================
-   894                                  default_handler:
-   895 00000488 55                          push bp
-   896 00000489 89E5                        mov bp, sp
-   897 0000048B 834E0601                    or word [bp+6], 0x0001     ; set CF in stacked FLAGS
-   898 0000048F 5D                          pop bp
-   899 00000490 CF                          iret
-   900                                  
-   901                                  ; ============================================================
-   902                                  ; Interrupt vector table — offsets only (segment always F000h)
-   903                                  ; Matches reference 8088_bios interrupt_table layout exactly.
-   904                                  ; 32 entries: INT 00h through INT 1Fh.
+   884                                  ; INT 19h — Bootstrap (halt in our system)
+   885                                  ; ============================================================
+   886                                  int19h_handler:
+   887 0000048F 1E                          push ds
+   888 00000490 31C0                        xor ax, ax
+   889 00000492 8ED8                        mov ds, ax
+   890 00000494 C606040501                  mov byte [HALT_ADDR], 1
+   891 00000499 1F                          pop ds
+   892 0000049A EBF3                        jmp int19h_handler
+   893                                  
+   894                                  ; ============================================================
+   895                                  ; INT 20h — Program Terminate (halt)
+   896                                  ; ============================================================
+   897                                  int20h_handler:
+   898 0000049C 1E                          push ds
+   899 0000049D 31C0                        xor ax, ax
+   900 0000049F 8ED8                        mov ds, ax
+   901 000004A1 C606040501                  mov byte [HALT_ADDR], 1
+   902 000004A6 1F                          pop ds
+   903 000004A7 EBF3                        jmp int20h_handler
+   904                                  
    905                                  ; ============================================================
-   906                                  interrupt_table:
-   907 00000491 [8704]                      dw int_dummy            ; INT 00 - Divide by zero
-   908 00000493 [7D04]                      dw int01h_handler       ; INT 01 - Single step (clears TF)
-   909 00000495 [8704]                      dw int_dummy            ; INT 02 - NMI (no-op for us)
-   910 00000497 [8704]                      dw int_dummy            ; INT 03 - Breakpoint
-   911 00000499 [8704]                      dw int_dummy            ; INT 04 - Overflow (INTO)
-   912 0000049B [8704]                      dw int_dummy            ; INT 05 - Print Screen (stub)
-   913 0000049D [8704]                      dw int_dummy            ; INT 06 - Invalid opcode
-   914 0000049F [8704]                      dw int_dummy            ; INT 07 - Coprocessor N/A
-   915 000004A1 [E403]                      dw int08h_handler       ; INT 08 - IRQ0 Timer
-   916 000004A3 [8704]                      dw int_dummy            ; INT 09 - IRQ1 Keyboard (no hw kbd)
-   917 000004A5 [8704]                      dw int_dummy            ; INT 0A - IRQ2
-   918 000004A7 [8704]                      dw int_dummy            ; INT 0B - IRQ3
-   919 000004A9 [8704]                      dw int_dummy            ; INT 0C - IRQ4
-   920 000004AB [8704]                      dw int_dummy            ; INT 0D - IRQ5
-   921 000004AD [8704]                      dw int_dummy            ; INT 0E - IRQ6 Floppy
-   922 000004AF [8704]                      dw int_dummy            ; INT 0F - IRQ7
-   923 000004B1 [0000]                      dw int10h_handler       ; INT 10 - Video Services
-   924 000004B3 [7B02]                      dw int11h_handler       ; INT 11 - Equipment List
-   925 000004B5 [8702]                      dw int12h_handler       ; INT 12 - Memory Size
-   926 000004B7 [9302]                      dw int13h_handler       ; INT 13 - Disk Services
-   927 000004B9 [8804]                      dw default_handler      ; INT 14 - Serial (stub)
-   928 000004BB [1C04]                      dw int15h_handler       ; INT 15 - Misc System Services
-   929 000004BD [3203]                      dw int16h_handler       ; INT 16 - Keyboard Services
-   930 000004BF [8804]                      dw default_handler      ; INT 17 - Printer (stub)
-   931 000004C1 [8704]                      dw int_dummy            ; INT 18 - ROM BASIC (stub)
-   932 000004C3 [6304]                      dw int19h_handler       ; INT 19 - Bootstrap
-   933 000004C5 [A303]                      dw int1ah_handler       ; INT 1A - Timer Services
-   934 000004C7 [8704]                      dw int_dummy            ; INT 1B - Keyboard Break
-   935 000004C9 [8704]                      dw int_dummy            ; INT 1C - User Timer Tick (IRET hook)
-   936 000004CB [8704]                      dw int_dummy            ; INT 1D - Video Parameters (stub)
-   937 000004CD [AA06]                      dw disk_param_table     ; INT 1E - Floppy Parameters (data ptr)
-   938 000004CF [8704]                      dw int_dummy            ; INT 1F - Font (stub)
-   939                                  
-   940                                  ; ============================================================
-   941                                  ; BIOS Init — POST entry point
-   942                                  ; Sets up IVT from interrupt_table, initializes BDA, boots DOS.
-   943                                  ; ============================================================
-   944                                  bios_init:
-   945 000004D1 FA                          cli
-   946 000004D2 FC                          cld
-   947                                  
-   948                                      ; Set up stack at 0030:0100 (reference uses upper IVT area)
-   949                                      ; This is 0x0400 linear, well below kernel at 0x600.
-   950 000004D3 B83000                      mov ax, 0x0030
-   951 000004D6 8ED0                        mov ss, ax
-   952 000004D8 BC0001                      mov sp, 0x0100
-   953                                  
-   954                                      ; --- Initialize interrupt table ---
-   955                                      ; Copy 32 vectors from interrupt_table (like reference BIOS).
-   956                                      ; Reference uses movsw+stosw with DS=CS, ES=0. We can't use
-   957                                      ; string ops easily, so we use a manual loop.
-   958                                      ; First, set DS=0 for IVT writes.
-   959 000004DB 31C0                        xor ax, ax
-   960 000004DD 8ED8                        mov ds, ax
-   961                                  
-   962                                      ; Fill ALL 256 IVT entries with int_dummy:F000 first
-   963                                      ; (like reference fills remaining with int_dummy after the table)
-   964 000004DF 31FF                        xor di, di
-   965 000004E1 B90001                      mov cx, 256
-   966 000004E4 B800F0                      mov ax, BIOS_SEG
-   967                                  .fill_all:
-   968 000004E7 C705[8704]                  mov word [di], int_dummy
-   969 000004EB 894502                      mov word [di+2], ax        ; segment = F000h
-   970 000004EE 83C704                      add di, 4
-   971 000004F1 49                          dec cx
-   972 000004F2 75F3                        jnz .fill_all
-   973                                  
-   974                                      ; Now overwrite INT 00-1F from the interrupt_table
-   975                                      ; We need to read from CS:interrupt_table. Set up BX as table pointer
-   976                                      ; and use DS=CS temporarily to read, then DS=0 to write.
-   977 000004F4 BE[9104]                    mov si, interrupt_table
-   978 000004F7 31FF                        xor di, di             ; IVT offset 0
-   979 000004F9 B92000                      mov cx, 32
-   980                                  .ivt_copy:
-   981                                      ; Read offset from CS:SI
-   982 000004FC 1E                          push ds
-   983 000004FD 0E                          push cs
-   984 000004FE 1F                          pop ds
-   985 000004FF 8B1C                        mov bx, [si]           ; BX = handler offset from table
-   986 00000501 1F                          pop ds                 ; DS = 0 again
-   987                                      ; Write to IVT
-   988 00000502 891D                        mov [di], bx           ; offset
-   989 00000504 C7450200F0                  mov word [di+2], BIOS_SEG  ; segment
-   990 00000509 83C602                      add si, 2
-   991 0000050C 83C704                      add di, 4
-   992 0000050F 49                          dec cx
-   993 00000510 75EA                        jnz .ivt_copy
+   906                                  ; INT 01h — Single-step trap handler
+   907                                  ; Clears TF from stacked FLAGS so execution resumes normally.
+   908                                  ; ============================================================
+   909                                  int01h_handler:
+   910 000004A9 55                          push bp
+   911 000004AA 89E5                        mov bp, sp
+   912 000004AC 816606FFFE                  and word [bp+6], 0xFEFF    ; clear TF (bit 8) in stacked FLAGS
+   913 000004B1 5D                          pop bp
+   914 000004B2 CF                          iret
+   915                                  
+   916                                  ; ============================================================
+   917                                  ; int_dummy — Dummy interrupt handler (IRET only)
+   918                                  ; Matches reference BIOS int_dummy at FF53h.
+   919                                  ; ============================================================
+   920                                  int_dummy:
+   921 000004B3 CF                          iret
+   922                                  
+   923                                  ; ============================================================
+   924                                  ; default_handler — For unimplemented INTs
+   925                                  ; Returns with CF set to signal "not supported".
+   926                                  ; ============================================================
+   927                                  default_handler:
+   928 000004B4 55                          push bp
+   929 000004B5 89E5                        mov bp, sp
+   930 000004B7 834E0601                    or word [bp+6], 0x0001     ; set CF in stacked FLAGS
+   931 000004BB 5D                          pop bp
+   932 000004BC CF                          iret
+   933                                  
+   934                                  ; ============================================================
+   935                                  ; Interrupt vector table — offsets only (segment always F000h)
+   936                                  ; Matches reference 8088_bios interrupt_table layout exactly.
+   937                                  ; 32 entries: INT 00h through INT 1Fh.
+   938                                  ; ============================================================
+   939                                  interrupt_table:
+   940 000004BD [B304]                      dw int_dummy            ; INT 00 - Divide by zero
+   941 000004BF [A904]                      dw int01h_handler       ; INT 01 - Single step (clears TF)
+   942 000004C1 [B304]                      dw int_dummy            ; INT 02 - NMI (no-op for us)
+   943 000004C3 [B304]                      dw int_dummy            ; INT 03 - Breakpoint
+   944 000004C5 [B304]                      dw int_dummy            ; INT 04 - Overflow (INTO)
+   945 000004C7 [B304]                      dw int_dummy            ; INT 05 - Print Screen (stub)
+   946 000004C9 [B304]                      dw int_dummy            ; INT 06 - Invalid opcode
+   947 000004CB [B304]                      dw int_dummy            ; INT 07 - Coprocessor N/A
+   948 000004CD [1004]                      dw int08h_handler       ; INT 08 - IRQ0 Timer
+   949 000004CF [B304]                      dw int_dummy            ; INT 09 - IRQ1 Keyboard (no hw kbd)
+   950 000004D1 [B304]                      dw int_dummy            ; INT 0A - IRQ2
+   951 000004D3 [B304]                      dw int_dummy            ; INT 0B - IRQ3
+   952 000004D5 [B304]                      dw int_dummy            ; INT 0C - IRQ4
+   953 000004D7 [B304]                      dw int_dummy            ; INT 0D - IRQ5
+   954 000004D9 [B304]                      dw int_dummy            ; INT 0E - IRQ6 Floppy
+   955 000004DB [B304]                      dw int_dummy            ; INT 0F - IRQ7
+   956 000004DD [0000]                      dw int10h_handler       ; INT 10 - Video Services
+   957 000004DF [A702]                      dw int11h_handler       ; INT 11 - Equipment List
+   958 000004E1 [B302]                      dw int12h_handler       ; INT 12 - Memory Size
+   959 000004E3 [BF02]                      dw int13h_handler       ; INT 13 - Disk Services
+   960 000004E5 [B404]                      dw default_handler      ; INT 14 - Serial (stub)
+   961 000004E7 [4804]                      dw int15h_handler       ; INT 15 - Misc System Services
+   962 000004E9 [5E03]                      dw int16h_handler       ; INT 16 - Keyboard Services
+   963 000004EB [B404]                      dw default_handler      ; INT 17 - Printer (stub)
+   964 000004ED [B304]                      dw int_dummy            ; INT 18 - ROM BASIC (stub)
+   965 000004EF [8F04]                      dw int19h_handler       ; INT 19 - Bootstrap
+   966 000004F1 [CF03]                      dw int1ah_handler       ; INT 1A - Timer Services
+   967 000004F3 [B304]                      dw int_dummy            ; INT 1B - Keyboard Break
+   968 000004F5 [B304]                      dw int_dummy            ; INT 1C - User Timer Tick (IRET hook)
+   969 000004F7 [B304]                      dw int_dummy            ; INT 1D - Video Parameters (stub)
+   970 000004F9 [D606]                      dw disk_param_table     ; INT 1E - Floppy Parameters (data ptr)
+   971 000004FB [B304]                      dw int_dummy            ; INT 1F - Font (stub)
+   972                                  
+   973                                  ; ============================================================
+   974                                  ; BIOS Init — POST entry point
+   975                                  ; Sets up IVT from interrupt_table, initializes BDA, boots DOS.
+   976                                  ; ============================================================
+   977                                  bios_init:
+   978 000004FD FA                          cli
+   979 000004FE FC                          cld
+   980                                  
+   981                                      ; Set up stack at 0030:0100 (reference uses upper IVT area)
+   982                                      ; This is 0x0400 linear, well below kernel at 0x600.
+   983 000004FF B83000                      mov ax, 0x0030
+   984 00000502 8ED0                        mov ss, ax
+   985 00000504 BC0001                      mov sp, 0x0100
+   986                                  
+   987                                      ; --- Initialize interrupt table ---
+   988                                      ; Copy 32 vectors from interrupt_table (like reference BIOS).
+   989                                      ; Reference uses movsw+stosw with DS=CS, ES=0. We can't use
+   990                                      ; string ops easily, so we use a manual loop.
+   991                                      ; First, set DS=0 for IVT writes.
+   992 00000507 31C0                        xor ax, ax
+   993 00000509 8ED8                        mov ds, ax
    994                                  
-   995                                      ; Overwrite INT 20h with int20h_handler
-   996 00000512 C7068000[7004]              mov word [0x20*4], int20h_handler
-   997 00000518 C706820000F0                mov word [0x20*4+2], BIOS_SEG
-   998                                  
-   999                                      ; INT 21h: default_handler (kernel installs its own)
-  1000 0000051E C7068400[8804]              mov word [0x21*4], default_handler
-  1001 00000524 C706860000F0                mov word [0x21*4+2], BIOS_SEG
-  1002                                  
-  1003                                      ; --- Initialize BDA ---
-  1004                                      ; (Reference: kbd_buffer_init + individual field setup)
-  1005 0000052A B84000                      mov ax, BDA_SEG
-  1006 0000052D 8ED8                        mov ds, ax
-  1007                                  
-  1008                                      ; Equipment list: floppy present + 80x25 color = 0x0021
-  1009 0000052F C70610002100                mov word [equipment_list], 0x0021
-  1010                                  
-  1011                                      ; Memory size: 640 KiB
-  1012 00000535 C70613008002                mov word [memory_size], 640
-  1013                                  
-  1014                                      ; Keyboard buffer initialization (matches kbd_buffer_init)
-  1015 0000053B C7061A001E00                mov word [kbd_buffer_head], kbd_buffer   ; 0x001E
-  1016 00000541 C7061C001E00                mov word [kbd_buffer_tail], kbd_buffer   ; 0x001E (empty)
-  1017 00000547 C70680001E00                mov word [kbd_buffer_start], kbd_buffer  ; 0x001E
-  1018 0000054D B81E00                      mov ax, kbd_buffer
-  1019 00000550 83C020                      add ax, 0x20                             ; buffer size = 32 bytes
-  1020 00000553 A38200                      mov word [kbd_buffer_end], ax            ; 0x003E
-  1021                                  
-  1022                                      ; Clear keyboard flags
-  1023 00000556 C70617000000                mov word [kbd_flags_1], 0       ; flags 1 + flags 2
-  1024 0000055C C606190000                  mov byte [kbd_alt_keypad], 0
-  1025                                  
-  1026                                      ; Video mode and parameters
-  1027 00000561 C606490003                  mov byte [video_mode], 0x03             ; mode 3 = 80x25 text
-  1028 00000566 C7064A005000                mov word [video_columns], 80            ; 80 columns
-  1029 0000056C C7064C000010                mov word [video_page_size], 0x1000      ; 4096 bytes per page
-  1030 00000572 C7064E000000                mov word [video_page_offt], 0x0000      ; page 0 offset
-  1031 00000578 C70650000000                mov word [video_cur_pos], 0x0000        ; cursor at (0,0)
-  1032 0000057E C70652000000                mov word [video_cur_pos+2], 0x0000      ; page 1 cursor
-  1033 00000584 C70654000000                mov word [video_cur_pos+4], 0x0000      ; page 2 cursor
-  1034 0000058A C70656000000                mov word [video_cur_pos+6], 0x0000      ; page 3 cursor
-  1035 00000590 C70660000706                mov word [video_cur_shape], 0x0607      ; cursor shape start=6 end=7
-  1036 00000596 C606620000                  mov byte [video_page], 0x00             ; active page 0
-  1037 0000059B C7066300D403                mov word [video_port], 0x03D4           ; CRT controller port (color)
-  1038 000005A1 C606840018                  mov byte [video_rows], 24               ; rows minus 1
-  1039 000005A6 C70685001000                mov word [video_char_height], 16        ; character height
+   995                                      ; Fill ALL 256 IVT entries with int_dummy:F000 first
+   996                                      ; (like reference fills remaining with int_dummy after the table)
+   997 0000050B 31FF                        xor di, di
+   998 0000050D B90001                      mov cx, 256
+   999 00000510 B800F0                      mov ax, BIOS_SEG
+  1000                                  .fill_all:
+  1001 00000513 C705[B304]                  mov word [di], int_dummy
+  1002 00000517 894502                      mov word [di+2], ax        ; segment = F000h
+  1003 0000051A 83C704                      add di, 4
+  1004 0000051D 49                          dec cx
+  1005 0000051E 75F3                        jnz .fill_all
+  1006                                  
+  1007                                      ; Now overwrite INT 00-1F from the interrupt_table
+  1008                                      ; We need to read from CS:interrupt_table. Set up BX as table pointer
+  1009                                      ; and use DS=CS temporarily to read, then DS=0 to write.
+  1010 00000520 BE[BD04]                    mov si, interrupt_table
+  1011 00000523 31FF                        xor di, di             ; IVT offset 0
+  1012 00000525 B92000                      mov cx, 32
+  1013                                  .ivt_copy:
+  1014                                      ; Read offset from CS:SI
+  1015 00000528 1E                          push ds
+  1016 00000529 0E                          push cs
+  1017 0000052A 1F                          pop ds
+  1018 0000052B 8B1C                        mov bx, [si]           ; BX = handler offset from table
+  1019 0000052D 1F                          pop ds                 ; DS = 0 again
+  1020                                      ; Write to IVT
+  1021 0000052E 891D                        mov [di], bx           ; offset
+  1022 00000530 C7450200F0                  mov word [di+2], BIOS_SEG  ; segment
+  1023 00000535 83C602                      add si, 2
+  1024 00000538 83C704                      add di, 4
+  1025 0000053B 49                          dec cx
+  1026 0000053C 75EA                        jnz .ivt_copy
+  1027                                  
+  1028                                      ; Overwrite INT 20h with int20h_handler
+  1029 0000053E C7068000[9C04]              mov word [0x20*4], int20h_handler
+  1030 00000544 C706820000F0                mov word [0x20*4+2], BIOS_SEG
+  1031                                  
+  1032                                      ; INT 21h: default_handler (kernel installs its own)
+  1033 0000054A C7068400[B404]              mov word [0x21*4], default_handler
+  1034 00000550 C706860000F0                mov word [0x21*4+2], BIOS_SEG
+  1035                                  
+  1036                                      ; --- Initialize BDA ---
+  1037                                      ; (Reference: kbd_buffer_init + individual field setup)
+  1038 00000556 B84000                      mov ax, BDA_SEG
+  1039 00000559 8ED8                        mov ds, ax
   1040                                  
-  1041                                      ; Timer ticks (start at zero)
-  1042 000005AC C7066C000000                mov word [ticks_lo], 0
-  1043 000005B2 C7066E000000                mov word [ticks_hi], 0
-  1044 000005B8 C606700000                  mov byte [new_day], 0
-  1045                                  
-  1046                                      ; Floppy state
-  1047 000005BD C6063E0000                  mov byte [fdc_calib_state], 0
-  1048 000005C2 C6063F0000                  mov byte [fdc_motor_state], 0
-  1049 000005C7 C606400000                  mov byte [fdc_motor_tout], 0
-  1050 000005CC C606410000                  mov byte [fdc_last_error], 0
-  1051                                  
-  1052                                      ; Clear warm boot flag
-  1053 000005D1 C70672000000                mov word [warm_boot], 0
+  1041                                      ; Equipment list: floppy present + 80x25 color = 0x0021
+  1042 0000055B C70610002100                mov word [equipment_list], 0x0021
+  1043                                  
+  1044                                      ; Memory size: 640 KiB
+  1045 00000561 C70613008002                mov word [memory_size], 640
+  1046                                  
+  1047                                      ; Keyboard buffer initialization (matches kbd_buffer_init)
+  1048 00000567 C7061A001E00                mov word [kbd_buffer_head], kbd_buffer   ; 0x001E
+  1049 0000056D C7061C001E00                mov word [kbd_buffer_tail], kbd_buffer   ; 0x001E (empty)
+  1050 00000573 C70680001E00                mov word [kbd_buffer_start], kbd_buffer  ; 0x001E
+  1051 00000579 B81E00                      mov ax, kbd_buffer
+  1052 0000057C 83C020                      add ax, 0x20                             ; buffer size = 32 bytes
+  1053 0000057F A38200                      mov word [kbd_buffer_end], ax            ; 0x003E
   1054                                  
-  1055                                      ; --- BIOS splash screen ---
-  1056                                      ; Write directly to VGA memory at B800:0000
-  1057 000005D7 B800B8                      mov ax, VGA_SEG
-  1058 000005DA 8ED8                        mov ds, ax
-  1059                                  
-  1060                                      ; Clear screen
-  1061 000005DC 31FF                        xor di, di
-  1062 000005DE B9D007                      mov cx, 2000
-  1063 000005E1 B82007                      mov ax, 0x0720
-  1064                                  .splash_clr:
-  1065 000005E4 8905                        mov [di], ax
-  1066 000005E6 83C702                      add di, 2
-  1067 000005E9 49                          dec cx
-  1068 000005EA 75F8                        jnz .splash_clr
-  1069                                  
-  1070                                      ; Write "Gossamer BIOS v1.0" at row 1, col 30 (offset = (1*80+30)*2 = 220)
-  1071 000005EC BFDC00                      mov di, 220
-  1072 000005EF B40F                        mov ah, 0x0F           ; white on black
-  1073 000005F1 BE[5A06]                    mov si, splash_title
-  1074 000005F4 E83000                      call .write_splash_str
-  1075                                  
-  1076                                      ; "640K conventional memory" at row 3, col 28 (offset = (3*80+28)*2 = 536)
-  1077 000005F7 BF1802                      mov di, 536
-  1078 000005FA BE[6D06]                    mov si, splash_mem
-  1079 000005FD E82700                      call .write_splash_str
-  1080                                  
-  1081                                      ; Update cursor position in BDA to row 5 (below splash)
-  1082 00000600 B84000                      mov ax, BDA_SEG
-  1083 00000603 8ED8                        mov ds, ax
-  1084 00000605 C606500000                  mov byte [video_cur_pos], 0     ; col
-  1085 0000060A C606510005                  mov byte [video_cur_pos+1], 5   ; row
-  1086                                  
-  1087                                      ; --- Boot status messages via INT 10h ---
-  1088 0000060F FB                          sti
-  1089 00000610 BE[8606]                    mov si, msg_ivt
-  1090 00000613 E82B00                      call bios_print
-  1091 00000616 BE[8F06]                    mov si, msg_boot
-  1092 00000619 E82500                      call bios_print
-  1093                                  
-  1094                                      ; --- Jump to DOS kernel ---
-  1095                                      ; KERNEL.SYS is pre-loaded at 0060:0000 by the transpiler.
-  1096                                      ; Kernel expects BL = boot drive (0x00 = A:)
-  1097 0000061C 31C0                        xor ax, ax
-  1098 0000061E 8ED8                        mov ds, ax
-  1099 00000620 B300                        mov bl, 0x00
-  1100 00000622 EA00006000                  jmp KERNEL_SEG:0x0000
-  1101                                  
-  1102                                  ; --- Write null-terminated string to VGA at DS:DI ---
-  1103                                  ; AH = attribute byte (preserved). DS=VGA_SEG on entry.
-  1104                                  ; SI points into BIOS ROM (CS segment). Swaps DS to read.
-  1105                                  .write_splash_str:
-  1106 00000627 53                          push bx
-  1107 00000628 8CDB                        mov bx, ds             ; save VGA segment in BX
-  1108                                  .wss_loop:
-  1109                                      ; Read byte from CS:SI
-  1110 0000062A 0E                          push cs
-  1111 0000062B 1F                          pop ds
-  1112 0000062C 8A04                        mov al, [si]
-  1113 0000062E 8EDB                        mov ds, bx             ; restore DS = VGA segment
-  1114 00000630 84C0                        test al, al
-  1115 00000632 740B                        jz .wss_done
-  1116 00000634 8805                        mov [di], al
-  1117 00000636 886501                      mov [di+1], ah
-  1118 00000639 83C702                      add di, 2
-  1119 0000063C 46                          inc si
-  1120 0000063D EBEB                        jmp short .wss_loop
-  1121                                  .wss_done:
-  1122 0000063F 5B                          pop bx
-  1123 00000640 C3                          ret
-  1124                                  
-  1125                                  ; --- BIOS print: print null-terminated string at CS:SI via INT 10h ---
-  1126                                  bios_print:
-  1127 00000641 50                          push ax
-  1128 00000642 53                          push bx
-  1129                                  .bp_loop:
-  1130 00000643 1E                          push ds
-  1131 00000644 0E                          push cs
-  1132 00000645 1F                          pop ds
-  1133 00000646 8A04                        mov al, [si]
-  1134 00000648 1F                          pop ds
-  1135 00000649 84C0                        test al, al
-  1136 0000064B 740A                        jz .bp_done
-  1137 0000064D B40E                        mov ah, 0x0E
-  1138 0000064F BB0700                      mov bx, 0x0007
-  1139 00000652 CD10                        int 0x10
-  1140 00000654 46                          inc si
-  1141 00000655 EBEC                        jmp short .bp_loop
-  1142                                  .bp_done:
-  1143 00000657 5B                          pop bx
-  1144 00000658 58                          pop ax
-  1145 00000659 C3                          ret
-  1146                                  
-  1147                                  ; ============================================================
-  1148                                  ; Data: strings
-  1149                                  ; ============================================================
-  1150 0000065A 476F7373616D657220-     splash_title: db 'Gossamer BIOS v1.0', 0
-  1150 00000663 42494F532076312E30-
-  1150 0000066C 00                 
-  1151 0000066D 3634304B20636F6E76-     splash_mem:   db '640K conventional memory', 0
-  1151 00000676 656E74696F6E616C20-
-  1151 0000067F 6D656D6F727900     
-  1152 00000686 495654204F4B0D0A00      msg_ivt:      db 'IVT OK', 13, 10, 0
-  1153 0000068F 426F6F74696E672044-     msg_boot:     db 'Booting DOS...', 13, 10, 0
-  1153 00000698 4F532E2E2E0D0A00   
-  1154                                  
-  1155                                  ; ============================================================
-  1156                                  ; System configuration table (returned by INT 15h AH=C0h)
-  1157                                  ; Matches reference 8088_bios config_table layout.
-  1158                                  ; ============================================================
-  1159                                  config_table:
-  1160 000006A0 0800                        dw .size               ; bytes 0-1: table size
-  1161                                  .bytes:
-  1162 000006A2 FE                          db 0xFE                ; byte 2: model byte (XT)
-  1163 000006A3 00                          db 0x00                ; byte 3: submodel
-  1164 000006A4 00                          db 0x00                ; byte 4: BIOS revision
-  1165 000006A5 00                          db 0x00                ; byte 5: feature byte 1 (no special hw)
-  1166                                  ;       |||||||`-- dual bus
-  1167                                  ;       ||||||`-- Micro Channel
-  1168                                  ;       |||||`-- EBDA allocated
-  1169                                  ;       ||||`-- wait for event supported
-  1170                                  ;       |||`-- INT 15h/4Fh called on INT 09h
-  1171                                  ;       ||`-- RTC installed
-  1172                                  ;       |`-- 2nd PIC installed
-  1173                                  ;       `-- DMA ch3 used by HDD
-  1174 000006A6 00                          db 0x00                ; byte 6: feature byte 2
-  1175 000006A7 00                          db 0x00                ; byte 7: feature byte 3
-  1176 000006A8 00                          db 0x00                ; byte 8: feature byte 4
-  1177 000006A9 00                          db 0x00                ; byte 9: feature byte 5
-  1178                                  .size equ $ - .bytes
+  1055                                      ; Clear keyboard flags
+  1056 00000582 C70617000000                mov word [kbd_flags_1], 0       ; flags 1 + flags 2
+  1057 00000588 C606190000                  mov byte [kbd_alt_keypad], 0
+  1058                                  
+  1059                                      ; Video mode and parameters
+  1060 0000058D C606490003                  mov byte [video_mode], 0x03             ; mode 3 = 80x25 text
+  1061 00000592 C7064A005000                mov word [video_columns], 80            ; 80 columns
+  1062 00000598 C7064C000010                mov word [video_page_size], 0x1000      ; 4096 bytes per page
+  1063 0000059E C7064E000000                mov word [video_page_offt], 0x0000      ; page 0 offset
+  1064 000005A4 C70650000000                mov word [video_cur_pos], 0x0000        ; cursor at (0,0)
+  1065 000005AA C70652000000                mov word [video_cur_pos+2], 0x0000      ; page 1 cursor
+  1066 000005B0 C70654000000                mov word [video_cur_pos+4], 0x0000      ; page 2 cursor
+  1067 000005B6 C70656000000                mov word [video_cur_pos+6], 0x0000      ; page 3 cursor
+  1068 000005BC C70660000706                mov word [video_cur_shape], 0x0607      ; cursor shape start=6 end=7
+  1069 000005C2 C606620000                  mov byte [video_page], 0x00             ; active page 0
+  1070 000005C7 C7066300D403                mov word [video_port], 0x03D4           ; CRT controller port (color)
+  1071 000005CD C606840018                  mov byte [video_rows], 24               ; rows minus 1
+  1072 000005D2 C70685001000                mov word [video_char_height], 16        ; character height
+  1073                                  
+  1074                                      ; Timer ticks (start at zero)
+  1075 000005D8 C7066C000000                mov word [ticks_lo], 0
+  1076 000005DE C7066E000000                mov word [ticks_hi], 0
+  1077 000005E4 C606700000                  mov byte [new_day], 0
+  1078                                  
+  1079                                      ; Floppy state
+  1080 000005E9 C6063E0000                  mov byte [fdc_calib_state], 0
+  1081 000005EE C6063F0000                  mov byte [fdc_motor_state], 0
+  1082 000005F3 C606400000                  mov byte [fdc_motor_tout], 0
+  1083 000005F8 C606410000                  mov byte [fdc_last_error], 0
+  1084                                  
+  1085                                      ; Clear warm boot flag
+  1086 000005FD C70672000000                mov word [warm_boot], 0
+  1087                                  
+  1088                                      ; --- BIOS splash screen ---
+  1089                                      ; Write directly to VGA memory at B800:0000
+  1090 00000603 B800B8                      mov ax, VGA_SEG
+  1091 00000606 8ED8                        mov ds, ax
+  1092                                  
+  1093                                      ; Clear screen
+  1094 00000608 31FF                        xor di, di
+  1095 0000060A B9D007                      mov cx, 2000
+  1096 0000060D B82007                      mov ax, 0x0720
+  1097                                  .splash_clr:
+  1098 00000610 8905                        mov [di], ax
+  1099 00000612 83C702                      add di, 2
+  1100 00000615 49                          dec cx
+  1101 00000616 75F8                        jnz .splash_clr
+  1102                                  
+  1103                                      ; Write "Gossamer BIOS v1.0" at row 1, col 30 (offset = (1*80+30)*2 = 220)
+  1104 00000618 BFDC00                      mov di, 220
+  1105 0000061B B40F                        mov ah, 0x0F           ; white on black
+  1106 0000061D BE[8606]                    mov si, splash_title
+  1107 00000620 E83000                      call .write_splash_str
+  1108                                  
+  1109                                      ; "640K conventional memory" at row 3, col 28 (offset = (3*80+28)*2 = 536)
+  1110 00000623 BF1802                      mov di, 536
+  1111 00000626 BE[9906]                    mov si, splash_mem
+  1112 00000629 E82700                      call .write_splash_str
+  1113                                  
+  1114                                      ; Update cursor position in BDA to row 5 (below splash)
+  1115 0000062C B84000                      mov ax, BDA_SEG
+  1116 0000062F 8ED8                        mov ds, ax
+  1117 00000631 C606500000                  mov byte [video_cur_pos], 0     ; col
+  1118 00000636 C606510005                  mov byte [video_cur_pos+1], 5   ; row
+  1119                                  
+  1120                                      ; --- Boot status messages via INT 10h ---
+  1121 0000063B FB                          sti
+  1122 0000063C BE[B206]                    mov si, msg_ivt
+  1123 0000063F E82B00                      call bios_print
+  1124 00000642 BE[BB06]                    mov si, msg_boot
+  1125 00000645 E82500                      call bios_print
+  1126                                  
+  1127                                      ; --- Jump to DOS kernel ---
+  1128                                      ; KERNEL.SYS is pre-loaded at 0060:0000 by the transpiler.
+  1129                                      ; Kernel expects BL = boot drive (0x00 = A:)
+  1130 00000648 31C0                        xor ax, ax
+  1131 0000064A 8ED8                        mov ds, ax
+  1132 0000064C B300                        mov bl, 0x00
+  1133 0000064E EA00006000                  jmp KERNEL_SEG:0x0000
+  1134                                  
+  1135                                  ; --- Write null-terminated string to VGA at DS:DI ---
+  1136                                  ; AH = attribute byte (preserved). DS=VGA_SEG on entry.
+  1137                                  ; SI points into BIOS ROM (CS segment). Swaps DS to read.
+  1138                                  .write_splash_str:
+  1139 00000653 53                          push bx
+  1140 00000654 8CDB                        mov bx, ds             ; save VGA segment in BX
+  1141                                  .wss_loop:
+  1142                                      ; Read byte from CS:SI
+  1143 00000656 0E                          push cs
+  1144 00000657 1F                          pop ds
+  1145 00000658 8A04                        mov al, [si]
+  1146 0000065A 8EDB                        mov ds, bx             ; restore DS = VGA segment
+  1147 0000065C 84C0                        test al, al
+  1148 0000065E 740B                        jz .wss_done
+  1149 00000660 8805                        mov [di], al
+  1150 00000662 886501                      mov [di+1], ah
+  1151 00000665 83C702                      add di, 2
+  1152 00000668 46                          inc si
+  1153 00000669 EBEB                        jmp short .wss_loop
+  1154                                  .wss_done:
+  1155 0000066B 5B                          pop bx
+  1156 0000066C C3                          ret
+  1157                                  
+  1158                                  ; --- BIOS print: print null-terminated string at CS:SI via INT 10h ---
+  1159                                  bios_print:
+  1160 0000066D 50                          push ax
+  1161 0000066E 53                          push bx
+  1162                                  .bp_loop:
+  1163 0000066F 1E                          push ds
+  1164 00000670 0E                          push cs
+  1165 00000671 1F                          pop ds
+  1166 00000672 8A04                        mov al, [si]
+  1167 00000674 1F                          pop ds
+  1168 00000675 84C0                        test al, al
+  1169 00000677 740A                        jz .bp_done
+  1170 00000679 B40E                        mov ah, 0x0E
+  1171 0000067B BB0700                      mov bx, 0x0007
+  1172 0000067E CD10                        int 0x10
+  1173 00000680 46                          inc si
+  1174 00000681 EBEC                        jmp short .bp_loop
+  1175                                  .bp_done:
+  1176 00000683 5B                          pop bx
+  1177 00000684 58                          pop ax
+  1178 00000685 C3                          ret
   1179                                  
   1180                                  ; ============================================================
-  1181                                  ; Diskette parameter table (INT 1Eh data, INT 13h AH=08h pointer)
-  1182                                  ; 11 bytes, matches reference 8088_bios int_1E at EFC7h.
-  1183                                  ; Standard values for 1.44MB 3.5" floppy.
-  1184                                  ; ============================================================
-  1185                                  disk_param_table:
-  1186 000006AA AF                          db 0xAF                ; step rate / head unload time
-  1187 000006AB 02                          db 0x02                ; head load time / DMA mode
-  1188 000006AC 25                          db 0x25                ; motor off delay (ticks)
-  1189 000006AD 02                          db 0x02                ; bytes per sector (2 = 512)
-  1190 000006AE 12                          db DISK_SPT            ; sectors per track (18)
-  1191 000006AF 1B                          db 0x1B                ; gap length
-  1192 000006B0 FF                          db 0xFF                ; data length
-  1193 000006B1 50                          db 0x50                ; format gap length
-  1194 000006B2 F6                          db 0xF6                ; fill byte for format
-  1195 000006B3 0F                          db 0x0F                ; head settle time (ms)
-  1196 000006B4 08                          db 0x08                ; motor start time (1/8 sec units)
-  1197                                  
-  1198                                  bios_end:
+  1181                                  ; Data: strings
+  1182                                  ; ============================================================
+  1183 00000686 476F7373616D657220-     splash_title: db 'Gossamer BIOS v1.0', 0
+  1183 0000068F 42494F532076312E30-
+  1183 00000698 00                 
+  1184 00000699 3634304B20636F6E76-     splash_mem:   db '640K conventional memory', 0
+  1184 000006A2 656E74696F6E616C20-
+  1184 000006AB 6D656D6F727900     
+  1185 000006B2 495654204F4B0D0A00      msg_ivt:      db 'IVT OK', 13, 10, 0
+  1186 000006BB 426F6F74696E672044-     msg_boot:     db 'Booting DOS...', 13, 10, 0
+  1186 000006C4 4F532E2E2E0D0A00   
+  1187                                  
+  1188                                  ; ============================================================
+  1189                                  ; System configuration table (returned by INT 15h AH=C0h)
+  1190                                  ; Matches reference 8088_bios config_table layout.
+  1191                                  ; ============================================================
+  1192                                  config_table:
+  1193 000006CC 0800                        dw .size               ; bytes 0-1: table size
+  1194                                  .bytes:
+  1195 000006CE FE                          db 0xFE                ; byte 2: model byte (XT)
+  1196 000006CF 00                          db 0x00                ; byte 3: submodel
+  1197 000006D0 00                          db 0x00                ; byte 4: BIOS revision
+  1198 000006D1 00                          db 0x00                ; byte 5: feature byte 1 (no special hw)
+  1199                                  ;       |||||||`-- dual bus
+  1200                                  ;       ||||||`-- Micro Channel
+  1201                                  ;       |||||`-- EBDA allocated
+  1202                                  ;       ||||`-- wait for event supported
+  1203                                  ;       |||`-- INT 15h/4Fh called on INT 09h
+  1204                                  ;       ||`-- RTC installed
+  1205                                  ;       |`-- 2nd PIC installed
+  1206                                  ;       `-- DMA ch3 used by HDD
+  1207 000006D2 00                          db 0x00                ; byte 6: feature byte 2
+  1208 000006D3 00                          db 0x00                ; byte 7: feature byte 3
+  1209 000006D4 00                          db 0x00                ; byte 8: feature byte 4
+  1210 000006D5 00                          db 0x00                ; byte 9: feature byte 5
+  1211                                  .size equ $ - .bytes
+  1212                                  
+  1213                                  ; ============================================================
+  1214                                  ; Diskette parameter table (INT 1Eh data, INT 13h AH=08h pointer)
+  1215                                  ; 11 bytes, matches reference 8088_bios int_1E at EFC7h.
+  1216                                  ; Standard values for 1.44MB 3.5" floppy.
+  1217                                  ; ============================================================
+  1218                                  disk_param_table:
+  1219 000006D6 AF                          db 0xAF                ; step rate / head unload time
+  1220 000006D7 02                          db 0x02                ; head load time / DMA mode
+  1221 000006D8 25                          db 0x25                ; motor off delay (ticks)
+  1222 000006D9 02                          db 0x02                ; bytes per sector (2 = 512)
+  1223 000006DA 12                          db DISK_SPT            ; sectors per track (18)
+  1224 000006DB 1B                          db 0x1B                ; gap length
+  1225 000006DC FF                          db 0xFF                ; data length
+  1226 000006DD 50                          db 0x50                ; format gap length
+  1227 000006DE F6                          db 0xF6                ; fill byte for format
+  1228 000006DF 0F                          db 0x0F                ; head settle time (ms)
+  1229 000006E0 08                          db 0x08                ; motor start time (1/8 sec units)
+  1230                                  
+  1231                                  bios_end:

@@ -3,17 +3,19 @@
 **This is the single source of truth for project status.** Every agent MUST
 read this before starting work and MUST update it before finishing.
 
-Last updated: 2026-04-14
+Last updated: 2026-04-14 (session 9)
 
 ---
 
 ## Current status
 
-**V4 architecture: boots DOS + bootle.com (hearts on screen).** The v3
-microcode (μOp) rewrite was abandoned — it introduced bugs that prevented
-boot regardless of BIOS configuration. V4 restores the v2 single-cycle
-architecture (every instruction completes in one CSS tick, 8 parallel
-memory write slots) and ports all useful v3 improvements on top of it.
+**V4 architecture boots DOS + bootle.com on master (commit 8c407d9).**
+Rom-disk WIP on `feature/rom-disk` (1f21f76) — disk bytes moved outside
+the 1 MB 8086 space, accessed via `--readDiskByte(--idx)` dispatch and
+a BIOS window at 0xD000:0000. Bootle builds end-to-end (457 MB CSS) but
+calcite compile freezes on the ~68K-branch dispatch because the existing
+compiler has no flat-array fast path for single-parameter literal
+dispatches. Calcite work in flight in sibling repo.
 
 **One BIOS, one build path:** `bios/css-emu-bios.asm` is the assembly
 BIOS. `transpiler/generate-dos.mjs` is the build script. No microcode
@@ -23,7 +25,13 @@ BIOS, no `build.mjs`, no opcode 0xD6 dispatch.
 
 ## Active blocker
 
-None — boot works. Next step is expanding program support.
+Calcite flat-array dispatch optimization. The rom-disk plan's
+`@function --readDiskByte(--idx)` with one branch per disk byte is parse-
+fast but compile-frozen in calcite — it iterates every branch and emits a
+full `Vec<Op>` per entry instead of detecting the "all entries are integer
+literals" pattern and emitting a single `DispatchFlatArray` op backed by a
+`Vec<i32>`. See `docs/architecture/rom-disk-plan.md`. Work in progress in
+the calcite repo.
 
 ## What's working
 
@@ -105,7 +113,85 @@ None — boot works. Next step is expanding program support.
 
 Newest entries first. See `docs/logbook/PROTOCOL.md` for how to write entries.
 
-### 2026-04-14 — Session 8: V4 architecture — abandon μOp rewrite, restore single-cycle
+### 2026-04-14 — Session 9: rom-disk implementation on feature branch
+
+**What:** Implemented the rom-disk plan on a feature branch. Disk bytes no
+longer baked into 8086 memory — they live at CSS addresses outside the 1 MB
+space and are accessed through a 512-byte window at 0xD0000 controlled by
+an LBA register at linear 0x4F0.
+
+Also committed the V4 session 7/8 work as commit `8c407d9` on master before
+branching (previously all uncommitted).
+
+**Commits:**
+- master `8c407d9` — "V4 architecture: restore single-cycle..." (bundles all
+  prior V4 work including the assembly BIOS revival, batched write slots,
+  skipMicrocodeBios flag, session 6/7/8 work that was uncommitted in the
+  working tree).
+- feature/rom-disk `1f21f76` — "WIP: rom-disk — disk bytes outside 1MB..."
+  (rom-disk implementation + `extended186.mjs` 80186 patterns file).
+
+**Files touched (rom-disk branch only):**
+- `bios/css-emu-bios.asm` — `DISK_SEG = 0xD000`; new `disk_lba equ 0x4F0`;
+  `.disk_read` rewritten to write LBA word to physical [0x4F0] then
+  `REP MOVSW` 256 words from 0xD000:0000 → ES:DI, LBA++, sector count--.
+  Used `xor ax,ax; mov ds,ax` for absolute segment (not BDA_SEG — see
+  BDA offset pitfall below).
+- `transpiler/src/emit-css.mjs` — added `emitReadDiskByteStreaming` that
+  emits `@function --readDiskByte(--idx <integer>)` with one
+  `style(--idx: N): byte;` branch per non-zero disk byte. Window addresses
+  0xD0000–0xD01FF dispatch to
+  `--readDiskByte(calc((m1264 + m1265*256) * 512 + off))`.
+- `transpiler/src/memory.mjs` — disk window excluded from stored memory;
+  0x4F0/0x4F1 are normal writable RAM inside the conventional zone.
+- `transpiler/generate-dos.mjs` — `DISK_LINEAR = 0xD0000`; disk bytes passed
+  through `opts.diskBytes` instead of `embData`. Added `--args` flag so
+  CONFIG.SYS can run `FROTZ ZORK1.Z3` etc.
+
+**BDA offset pitfall (documented for future agents):** The original plan
+doc said "BDA offset 0x4F0". The intended location is **linear 0x4F0**
+(inside the BDA intra-application area 0x4F0–0x4FF), reached as
+`0x0000:0x04F0`. Interpreting it as "BDA_SEG (0x40) * 16 + 0x4F0" gives
+linear 0x8F0, which is inside the loaded kernel and would corrupt code.
+The rom-disk-plan.md has been clarified.
+
+**Two-parameter dispatch OOM:** The plan sketched
+`--readDiskByte(--lba, --off)`. Calcite's dispatch compiler cross-products
+parameter domains before pruning — a first bootle build with this shape
+OOM'd trying to allocate 48 GB during compile. Switched to single parameter
+`--idx = lba*512 + off`. Composition happens at the dispatch site
+(`calc((...) * 512 + off)`), so only the ~N disk-byte branches exist, not
+an N×M matrix.
+
+**Single-param still froze calcite (fixed):** With the ~68K single-parameter
+branches from bootle's disk, calcite parsed in 4.5s but froze in compile —
+`compile_dispatch_call` iterated every entry and compiled a full `Vec<Op>`
+per entry. The rom-disk-plan doc previously claimed calcite flattens this
+to a byte array, but that code was aspirational. Fixed in calcite (separate
+repo, uncommitted there): wired up the pre-existing-but-unreachable
+`Op::DispatchFlatArray` op — the fast path fires when a dispatch has
+≤1 parameter, all entries are i32 literals, and key span ≤10M. Now:
+**bootle parse 4.7s, compile 29s, 1 tick in 74µs**; all 88 calcite tests
+pass. This is a generic CSS optimization (no x86 knowledge) and respects
+the cardinal rule.
+
+**Smoke test:** `node transpiler/generate-dos.mjs ../calcite/programs/bootle.com`
+produces a 457 MB CSS file at `calcite/output/bootle-romdisk.css`.
+Verified: one `@function --readDiskByte` definition, 512 window dispatch
+branches at 0xD0000–0xD01FF, LBA composition uses linear 0x4F0 (not 0x8F0),
+first disk bytes `EB 3C 90` match the FAT12 boot sector signature. Boot-
+level validation in calcite/Chrome not yet performed — blocked on calcite
+flat-array work.
+
+**Also included in feature branch:** `transpiler/src/patterns/extended186.mjs`
+(previously untracked) — 80186+ instruction patterns (MUL/DIV imm, PUSH imm,
+ENTER/LEAVE, INS/OUTS) needed for modern DOS toolchain output.
+
+**Also included on master in 8c407d9:** debris files `gossamer-dos.asm`
+and `gossamer-dos.lst` at repo root (legacy build artifacts), plus
+`docs/superpowers/` plans/specs directory.
+
+
 
 **What:** Catalogued every difference between V2 (cc97447, boots) and V3
 (current, doesn't boot). Concluded the v3 μOp microcode architecture was

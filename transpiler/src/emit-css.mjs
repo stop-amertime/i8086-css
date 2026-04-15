@@ -21,6 +21,7 @@ import { emitAllStack } from './patterns/stack.mjs';
 import { emitAllMisc } from './patterns/misc.mjs';
 import { emitAllGroups } from './patterns/group.mjs';
 import { emitAllShifts, emitShiftFlagFunctions, emitShiftByNFlagFunctions } from './patterns/shift.mjs';
+import { emitAll186 } from './patterns/extended186.mjs';
 import { emitCycleCounts } from './cycle-counts.mjs';
 
 /**
@@ -210,7 +211,7 @@ class DispatchTable {
  */
 export function emitCSS(opts, writeStream) {
   const { programBytes, biosBytes, memoryZones, embeddedData, htmlMode, programOffset,
-          initialCS, initialIP } = opts;
+          initialCS, initialIP, diskBytes } = opts;
 
   // Build sorted address array from zones (or fall back to legacy contiguous range)
   let addresses;
@@ -222,7 +223,7 @@ export function emitCSS(opts, writeStream) {
     for (let i = 0; i < memSize; i++) addresses.push(i);
   }
 
-  const memOpts = { addresses, programBytes, biosBytes, embeddedData, programOffset };
+  const memOpts = { addresses, programBytes, biosBytes, embeddedData, programOffset, diskBytes };
   // templateOpts.memSize is used for SP init — derive from the top of the lowest zone
   // (conventional memory area, which is always zones[0] by convention)
   const convEnd = memoryZones ? memoryZones[0][1] : (opts.memSize || 0x10000);
@@ -246,6 +247,7 @@ export function emitCSS(opts, writeStream) {
   emitAllMisc(dispatch);      // HLT/NOP/LODSB/STOSB/MOV r/m imm/flag manip/CBW/CWD/XCHG
   emitAllGroups(dispatch);    // Group FE/F7/F6/80-83
   emitAllShifts(dispatch);    // SHL/SHR/SAR/ROL/ROR (D0-D1)
+  emitAll186(dispatch);       // 80186+: PUSH imm, IMUL imm
   emitCycleCounts(dispatch);  // Per-instruction 8086 cycle costs
 
   const w = (s) => writeStream.write(s + '\n\n');
@@ -386,7 +388,7 @@ function emitMemoryPropertiesStreaming(opts, ws) {
 }
 
 function emitReadMemStreaming(opts, ws) {
-  const { addresses, biosBytes } = opts;
+  const { addresses, biosBytes, diskBytes } = opts;
   ws.write(`@function --readMem(--at <integer>) returns <integer> {\n  result: if(\n`);
   let buf = '';
   let count = 0;
@@ -409,6 +411,39 @@ function emitReadMemStreaming(opts, ws) {
         buf += `    style(--at: ${0xF0000 + i}): ${biosBytes[i]};\n`;
         if (buf.length > 8192) { ws.write(buf); buf = ''; }
       }
+    }
+  }
+  // Rom-disk window: 0xD0000..0xD01FF (512 bytes). Each read is dispatched
+  // to --readDiskByte(lba_word, offset). The LBA register is a normal
+  // writable word at linear 0x4F0 (low = --__1m1264, high = --__1m1265),
+  // composed here as low + high*256 — same pattern as other 16-bit reads.
+  if (diskBytes) {
+    for (let i = 0; i < 512; i++) {
+      const addr = 0xD0000 + i;
+      buf += `    style(--at: ${addr}): --readDiskByte(calc((var(--__1m1264) + var(--__1m1265) * 256) * 512 + ${i}));\n`;
+      if (buf.length > 8192) { ws.write(buf); buf = ''; }
+    }
+  }
+  if (buf) ws.write(buf);
+  ws.write(`  else: 0);\n}\n\n`);
+
+  // Emit the --readDiskByte @function — one branch per non-zero disk byte.
+  if (diskBytes) {
+    emitReadDiskByteStreaming(diskBytes, ws);
+  }
+}
+
+function emitReadDiskByteStreaming(diskBytes, ws) {
+  // Sector-based dispatch: --lba selects a 512-byte sector, --off selects
+  // the byte within. One branch per non-zero disk byte. Calcite flattens
+  // this dispatch into a byte-array lookup.
+  ws.write(`@function --readDiskByte(--idx <integer>) returns <integer> {\n  result: if(\n`);
+  let buf = '';
+  for (let idx = 0; idx < diskBytes.length; idx++) {
+    const b = diskBytes[idx];
+    if (b !== 0) {
+      buf += `    style(--idx: ${idx}): ${b};\n`;
+      if (buf.length > 8192) { ws.write(buf); buf = ''; }
     }
   }
   if (buf) ws.write(buf);

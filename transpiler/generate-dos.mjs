@@ -33,7 +33,7 @@ const CONFIG_SYS = resolve(projectRoot, 'dos', 'config.sys');
 
 // --- Memory layout ---
 const KERNEL_LINEAR = 0x600;     // 0060:0000 — where DOS kernel expects to be loaded
-const DISK_LINEAR = 0xC0000;     // C000:0000 — memory-resident disk image (192 KB window: 0xC0000–0xEFFFF)
+const DISK_LINEAR = 0xD0000;     // D000:0000 — rom-disk WINDOW (512 bytes, CSS dispatches reads by LBA at 0x4F0)
 const BIOS_LINEAR = 0xF0000;     // F000:0000 — BIOS ROM
 
 // --- CLI argument parsing ---
@@ -160,7 +160,10 @@ console.log('Generating CSS...');
 const defaultMem = 0xA0000;
 const memBytes = memOverride != null ? memOverride : defaultMem;
 
-const embData = [{ addr: DISK_LINEAR, bytes: diskBytes }];
+// Disk bytes are no longer embedded in 8086 memory — they live outside the
+// 1 MB address space and are exposed via the rom-disk window at 0xD0000
+// (dispatched by --readDiskByte in emit-css.mjs). Pass via opts.diskBytes.
+const embData = [];
 const memoryZones = dosMemoryZones(kernelBytes, KERNEL_LINEAR, memBytes, embData, prune);
 
 const totalAddresses = memoryZones.reduce((sum, [s, e]) => sum + (e - s), 0);
@@ -175,6 +178,7 @@ emitCSS({
   biosBytes,
   memoryZones,
   embeddedData: embData,
+  diskBytes,                    // rom-disk payload, dispatched via --readDiskByte
   htmlMode,
   programOffset: KERNEL_LINEAR,  // kernel loaded at 0x600
   initialCS: 0xF000,

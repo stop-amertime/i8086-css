@@ -8,7 +8,7 @@
 ;
 ; Backend is memory-mapped (no port I/O):
 ;   - VGA text buffer at B800:0000
-;   - Disk image at D000:0000
+;   - Disk window at D000:0000 (512 bytes, CSS dispatches reads by LBA at 0x004F0)
 ;   - Keyboard input via polling 0000:0500
 ;
 ; DOS kernel (KERNEL.SYS) is pre-loaded at 0060:0000 (linear 0x600)
@@ -24,7 +24,8 @@
 ; ============================================================
 ; Constants
 ; ============================================================
-DISK_SEG    equ 0xC000          ; Disk image loaded here (linear 0xC0000)
+DISK_SEG    equ 0xD000          ; Disk window (linear 0xD0000, 512 bytes, dispatched by CSS)
+disk_lba    equ 0x4F0           ; LBA register, linear 0x4F0 via 0x0000:0x04F0 (BDA intra-app area)
 BDA_SEG     equ 0x0040          ; BIOS Data Area segment
 BIOS_SEG    equ 0xF000          ; BIOS code segment
 VGA_SEG     equ 0xB800          ; VGA text mode segment
@@ -584,8 +585,13 @@ int13h_handler:
     iret
 
 .disk_read:
-    ; AH=02h: Read sectors
+    ; AH=02h: Read sectors via rom-disk window.
     ; AL=count, CH=cylinder, CL=sector(1-based), DH=head, DL=drive, ES:BX=dest
+    ;
+    ; Protocol: for each sector, write current LBA word to physical [0x4F0]
+    ; (linear, via segment 0). CSS dispatches reads to 0xD0000..0xD01FF by
+    ; looking up that LBA word, so a REP MOVSW from DS=0xD000 SI=0 produces
+    ; the sector bytes. Then LBA++, DI advances by 512, loop.
     push bp
     mov bp, sp
     push ds
@@ -595,7 +601,7 @@ int13h_handler:
     push dx
     push cx
 
-    ; Reload from stack since we need all values
+    ; Reload to get dx/cx values
     pop cx
     pop dx
     push dx
@@ -616,50 +622,52 @@ int13h_handler:
     mov si, ax
     xor ch, ch
     dec cl                 ; sector is 1-based
-    add si, cx             ; SI = LBA
+    add si, cx             ; SI = LBA (starting)
 
-    ; Source segment = DISK_SEG + LBA * 32
-    mov ax, si
-    mov cl, 5
-    shl ax, cl
-    add ax, DISK_SEG
-    mov ds, ax
-    xor si, si
+    ; Reclaim original count (AL) from stack
+    pop cx                 ; cx (saved)
+    pop dx                 ; dx (saved)
+    pop ax                 ; ax (saved) — AL = sector count
+    xor ah, ah
+    mov cx, ax             ; CX = sector count
+    push cx                ; preserve original count for return (AL)
 
-    ; Destination = ES:BX
+    ; Destination offset = BX (segment already in ES)
     mov di, bx
 
-    ; Count
-    pop cx
-    pop dx
-    pop ax
-    xor ah, ah
-    mov cx, ax
-    push cx
+    ; SI currently = starting LBA. We'll keep LBA in BX across the loop
+    ; because SI needs to be 0 for MOVSW from the disk window.
+    mov bx, si
 
-    ; Copy CX sectors * 512 bytes
 .read_sector_loop:
-    push cx
-    mov cx, 256
-.read_word_loop:
-    mov ax, [si]
+    ; Write BX (LBA) to linear [0x4F0] as a word via segment 0.
     push ds
-    push bx
-    mov bx, es
-    mov ds, bx
-    mov [di], ax
-    pop bx
+    push ax
+    xor ax, ax
+    mov ds, ax
+    mov [disk_lba], bx     ; word write: low at 0x4F0, high at 0x4F1
+    pop ax
     pop ds
-    add si, 2
-    add di, 2
-    dec cx
-    jnz .read_word_loop
-    pop cx
+
+    ; Copy 256 words from DS=DISK_SEG:SI=0 to ES:DI
+    push cx                ; save outer sector count
+    push ds
+    mov si, DISK_SEG
+    mov ds, si
+    xor si, si
+    mov cx, 256
+    cld
+    rep movsw
+    pop ds
+    pop cx                 ; restore sector count
+
+    ; Next sector: LBA++, DI already advanced by 512 by REP MOVSW
+    inc bx
     dec cx
     jnz .read_sector_loop
 
     ; Success
-    pop ax                 ; AL = sectors read
+    pop ax                 ; AL = sectors read (original count)
     xor ah, ah
     clc
     pop di

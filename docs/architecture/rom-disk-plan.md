@@ -1,9 +1,12 @@
 # ROM Disk Plan
 
-**Status: Designed, not yet implemented.**
+**Status: Working. Bootle booted end-to-end through the rom-disk window on
+`feature/rom-disk` (2026-04-15) after calcite's flat-array dispatch fast
+path landed. Zork+FROTZ not yet retested but expected to work now that the
+O(1) dispatch lookup is in place.**
 
-The DOS boot path currently bakes the FAT12 disk image into 8086 memory at
-0xD0000. This limits disk size to ~128 KB (space between 0xD0000 and 0xEFFFF).
+The DOS boot path used to bake the FAT12 disk image into 8086 memory at
+0xD0000. This limited disk size to ~128 KB (space between 0xD0000 and 0xEFFFF).
 Real software (Doom8088 WAD = 1.3 MB) doesn't fit.
 
 ## The solution
@@ -11,14 +14,20 @@ Real software (Doom8088 WAD = 1.3 MB) doesn't fit.
 Move disk bytes outside the 8086's 1MB address space and access them through
 a memory-mapped window controlled by an LBA register.
 
-| Address   | Size      | Purpose                              |
+| Linear    | Size      | Purpose                              |
 |-----------|-----------|--------------------------------------|
-| 0x004F0   | 2 bytes   | Disk LBA register (in BDA)           |
+| 0x004F0   | 2 bytes   | Disk LBA register                    |
 | 0xD0000   | 512 bytes | Disk window (one sector at a time)   |
 
-The LBA register is a normal writable word in the BDA's intra-application
-communications area (0x4F0-0x4FF). The disk window reads are computed by
-`--readMem` based on the current LBA value + byte offset.
+The LBA register lives at **linear 0x4F0** (reachable as segment:offset
+`0x0000:0x04F0`). This is inside the standard BDA "intra-application
+communications area" (0x4F0–0x4FF). Note: accessing it as
+`0x0040:0x04F0` (BDA_SEG base) would be WRONG — that resolves to linear
+0x8F0, which lives inside the loaded kernel and would corrupt it. Use
+`xor ax,ax; mov ds,ax; mov [0x4F0], ...` in the BIOS handler.
+
+The disk window reads are computed by `--readMem` dispatch based on the
+current LBA value + byte offset within the sector.
 
 ## How reads work
 
@@ -34,10 +43,24 @@ work automatically — DOS calls INT 13h, which uses the window.
 
 ## What changes in the codebase
 
-- `transpiler/src/patterns/bios.mjs` — INT 13h uses LBA register + window
-- `transpiler/src/memory.mjs` — ROM disk zone with `--readDiskByte` function
-- `transpiler/src/emit-css.mjs` — wire dispatch function
-- `transpiler/generate-dos.mjs` — pass disk image to ROM disk emitter
+Implemented on `feature/rom-disk`:
+
+- `bios/css-emu-bios.asm` — `DISK_SEG = 0xD000`, `disk_lba equ 0x4F0`,
+  `.disk_read` rewritten: per-sector, writes LBA word to physical [0x4F0]
+  then `REP MOVSW` 256 words from `0xD000:0000` to `ES:DI`, LBA++.
+- `transpiler/src/emit-css.mjs` — emits `@function --readDiskByte(--idx)`
+  with one `style(--idx: N): byte;` branch per non-zero disk byte; the
+  window addresses 0xD0000–0xD01FF dispatch to
+  `--readDiskByte(calc((m1264 + m1265*256) * 512 + off))`.
+- `transpiler/src/memory.mjs` — disk window excluded from stored memory
+  (dispatch-only, no `--mN` properties for those addresses).
+- `transpiler/generate-dos.mjs` — disk bytes threaded through `opts.diskBytes`
+  instead of `embData`; `DISK_LINEAR = 0xD0000`.
+
+Note: the original plan sketched a two-parameter `--readDiskByte(--lba, --off)`.
+The actual implementation uses a single `--idx` parameter (linear byte
+index = `lba*512 + off`) because calcite's dispatch flattener cross-products
+parameter domains, which OOM'd on the two-parameter form.
 
 ## What it unlocks
 
@@ -57,24 +80,41 @@ This is exactly how a real PC works: the BIOS sector driver is the only layer
 that knows about the physical storage. Everything above (DOS kernel, libc,
 application) uses INT 13h and doesn't care what's behind it.
 
-## CSS implementation sketch
+## CSS implementation (actual)
 
 ```css
-@function --readDiskByte(--lba <integer>, --off <integer>) returns <integer> {
+@function --readDiskByte(--idx <integer>) returns <integer> {
   result: if(
-    style(--lba: 0, --off: 0): 235;    /* sector 0, byte 0 */
-    style(--lba: 0, --off: 1): 60;
-    /* ... one branch per disk byte ... */
-  else: 0);
+    style(--idx: 0): 235;    /* disk byte 0 */
+    style(--idx: 1): 60;
+    style(--idx: 2): 144;
+    /* ... one branch per non-zero disk byte ... */
+    else: 0);
 }
 ```
 
-The disk window addresses (0xD0000-0xD01FF) in `--readMem` dispatch to
-`--readDiskByte` keyed by the current LBA at 0x4F0, instead of returning
-stored bytes.
+The disk window addresses (0xD0000–0xD01FF) dispatch in `--readMem` as:
 
-## Size considerations
+```css
+style(--at: 851968):
+  --readDiskByte(calc((var(--__1m1264) + var(--__1m1265) * 256) * 512 + 0));
+```
 
-A 1.3 MB WAD = ~1.3 million dispatch branches = ~30-50 MB CSS source. Valid
-CSS, but Chrome can't evaluate it at usable speed. Calcite JIT-compiles the
-dispatch into a flat byte array — fast and memory-efficient.
+where `m1264` / `m1265` are the low and high bytes of the LBA register at
+linear 0x4F0 / 0x4F1.
+
+## Size considerations & calcite prerequisite
+
+A 1.3 MB WAD = ~1.3 million dispatch branches. Valid CSS, but:
+
+- Chrome can't evaluate it at usable speed.
+- **Calcite's existing dispatch compiler doesn't flatten this case** —
+  it compiles each branch as a full expression with its own `Vec<Op>`,
+  which freezes compile for ~68K+ branches (bootle) and is projected to
+  be unusable for Zork (284 KB → ~280K branches) or Doom (~1.5M).
+
+The plan calls for calcite to detect the pattern "single-parameter dispatch
+where every entry is an integer literal" and compile to a flat `Vec<i32>`
+with a single `DispatchFlatArray` op. This is generic CSS optimization
+(no x86 knowledge), consistent with the cardinal rule. Work in
+progress — `feature/rom-disk` is blocked on this.

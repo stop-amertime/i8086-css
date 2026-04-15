@@ -91,6 +91,10 @@ export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedDa
   // relocates itself to high memory and its code segment can span a wide
   // range of addresses, so splitting into low/high zones with a gap causes
   // the CPU to execute into unmapped memory.
+  //
+  // Note: the LBA register at linear 0x4F0-0x4F1 (BDA intra-app area) is
+  // naturally inside [0x0000, memBytes] and therefore normal writable
+  // memory — no special handling needed.
   const zones = [];
   zones.push([0x0000, memBytes]);
   if (!prune.gfx) {
@@ -100,7 +104,11 @@ export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedDa
     zones.push([0xB8000, 0xB8FA0]);         // VGA text mode (80x25x2)
   }
 
-  // Include embedded data regions (e.g., disk image at 0xD0000)
+  // Include embedded data regions (non-disk: e.g. data files placed in memory).
+  // The rom-disk window at 0xD0000-0xD01FF is NOT a normal memory zone — it
+  // is dispatched in emitReadMemStreaming to --readDiskByte keyed on the
+  // current LBA. Disk bytes live outside the 8086 address space and must be
+  // passed into emitCSS via opts.diskBytes, not embeddedData.
   for (const { addr, bytes } of (embeddedData || [])) {
     zones.push([addr, addr + bytes.length]);
   }

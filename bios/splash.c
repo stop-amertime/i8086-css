@@ -158,7 +158,9 @@ void splash_show(void) {
     set_mode_13h();
     set_palette();
 
-    /* Dark gray background so the logo's black outline is visible. */
+    /* Fill the screen with dark gray so the logo's black outline is
+       visible. Doubles as a rough performance gate — until the engine
+       is quick, watching this fill is the long pole of splash startup. */
     {
         unsigned int py, px;
         for (py = 0; py < 200; py++) {

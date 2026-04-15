@@ -1,0 +1,19 @@
+# Linker directive for CSS-BIOS
+# Produces a flat binary with entry.asm at offset 0.
+
+format dos com            # flat binary, no relocations
+name   bios.bin
+option quiet
+option map=bios.map
+option start=_start
+order
+    clname CODE
+      segment _TEXT
+        file entry.obj
+        file bios_init.obj
+        file font.obj
+        file splash.obj
+        file logo_data.obj
+        file handlers.obj
+# Additional .obj files appended by build.mjs as they're added:
+#   splash.obj font.obj logo_data.obj

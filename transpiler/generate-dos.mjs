@@ -21,11 +21,10 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { resolve, dirname, extname, basename } from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import { emitCSS } from './src/emit-css.mjs';
 import { dosMemoryZones } from './src/memory.mjs';
 import { createWriteStream, statSync } from 'fs';
-import { buildBiosRom } from './src/patterns/bios.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, '..');
@@ -42,8 +41,6 @@ const BIOS_LINEAR = 0xF0000;     // F000:0000 — BIOS ROM
 const BIOS_SEG = 0xF000;
 const BDA_SEG = 0x0040;
 const BDA_BASE = 0x0400;
-
-const NASM = resolve('C:\\Users\\AdmT9N0CX01V65438A\\AppData\\Local\\bin\\NASM\\nasm.exe');
 
 // --- CLI argument parsing ---
 const args = process.argv.slice(2);
@@ -87,25 +84,13 @@ if (!inputFile) {
 const programName = basename(inputFile).toUpperCase();
 const programName83 = programName.length <= 12 ? programName : programName.substring(0, 12);
 
-// --- Step 1: Build BIOS ROM (init stub + microcode stubs) ---
+// --- Step 1: Build BIOS ROM (C-based: entry.asm + bios_init.c + handlers.asm → bios.bin) ---
 console.log('Building BIOS ROM...');
-const { romBytes: biosRomBytes } = buildBiosRom();
-
-// Assemble the init stub from bios/init.asm
-const initAsmPath = resolve(projectRoot, 'bios', 'init.asm');
-const initBinPath = resolve(projectRoot, 'bios', 'init.bin');
-try {
-  execSync(`"${NASM}" -f bin -o "${initBinPath}" "${initAsmPath}"`, { stdio: 'pipe' });
-} catch (e) {
-  console.error('NASM assembly of init.asm failed:', e.stderr?.toString());
-  process.exit(1);
-}
-const initBytes = [...readFileSync(initBinPath)];
-console.log(`  Init stub: ${initBytes.length} bytes`);
-
-// Concatenate: init stub + D6 microcode stubs = complete BIOS ROM
-const biosBytes = [...initBytes, ...biosRomBytes];
-console.log(`  BIOS ROM: ${biosBytes.length} bytes (${initBytes.length} init + ${biosRomBytes.length} microcode stubs)`);
+const biosBuildScript = resolve(projectRoot, 'bios', 'build.mjs');
+execFileSync('node', [biosBuildScript], { stdio: 'inherit' });
+const biosBinPath = resolve(projectRoot, 'bios', 'build', 'bios.bin');
+const biosBytes = [...readFileSync(biosBinPath)];
+console.log(`  BIOS ROM: ${biosBytes.length} bytes (from ${biosBinPath})`);
 
 // --- Step 2: Build disk image ---
 console.log('Building FAT12 disk image...');

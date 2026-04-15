@@ -60,9 +60,11 @@ def main():
     for y in range(h):
         for x in range(w):
             r, g, b, a = pixels[x, y]
-            # Treat fully-transparent pixels as black background
+            # Fully-transparent pixels get sentinel 0xFF (skipped by the
+            # blitter). True black stays 0 so it's rendered over the
+            # background.
             if a < 128:
-                out[y * w + x] = 0
+                out[y * w + x] = 0xFF
             else:
                 out[y * w + x] = nearest_palette_index(r, g, b)
 
@@ -72,7 +74,7 @@ def main():
     print(f"Wrote {len(out)} bytes ({w}x{h}) to {out_path}")
 
     # Print a tiny histogram so we can sanity-check the quantization
-    hist = [0] * 16
+    hist = [0] * 256
     for b in out:
         hist[b] += 1
     total = sum(hist)

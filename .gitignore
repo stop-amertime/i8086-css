@@ -46,3 +46,9 @@ dos/disk.img
 *.img
 *.zip
 nul
+
+# Ephemeral planning artifacts from superpowers workflow
+docs/superpowers/
+entry.err
+bios/build/
+bios/bios.map

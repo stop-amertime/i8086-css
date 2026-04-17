@@ -296,6 +296,12 @@ const KEYBOARD_KEYS = [
   { label: 'M', scancode: 0x32, ascii: 0x6D },
   { label: '\u2423', scancode: 0x39, ascii: 0x20 },
   { label: 'Esc', scancode: 0x01, ascii: 0x1B },
+  { label: '\u2190', scancode: 0x4B, ascii: 0x00 }, // ←
+  { label: '\u2193', scancode: 0x50, ascii: 0x00 }, // ↓
+  { label: '\u2191', scancode: 0x48, ascii: 0x00 }, // ↑
+  { label: '\u2192', scancode: 0x4D, ascii: 0x00 }, // →
+  { label: 'Tab',   scancode: 0x0F, ascii: 0x09 },
+  { label: 'Bksp',  scancode: 0x0E, ascii: 0x08 },
 ];
 
 /**

@@ -149,13 +149,10 @@ export function emitClockKeyframes() {
 /**
  * Emit the .clock and .cpu base rules (animation setup).
  */
-export function emitClockAndCpuBase(opts = {}) {
-  // In HTML mode, the JS driver controls the clock — no CSS animation.
-  const clockAnimation = opts.htmlMode
-    ? ''
-    : '  animation: anim-play 400ms steps(4, jump-end) infinite;\n';
+export function emitClockAndCpuBase() {
   return `.clock {
-${clockAnimation}  --clock: 0;
+  animation: anim-play 400ms steps(4, jump-end) infinite;
+  --clock: 0;
 }
 
 .cpu {

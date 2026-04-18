@@ -25,6 +25,7 @@ const MIME = {
   '.mjs':  'text/javascript',
   '.json': 'application/json',
   '.bin':  'application/octet-stream',
+  '.wasm': 'application/wasm',
 };
 
 const ALIASES = [
@@ -35,6 +36,8 @@ const ALIASES = [
   ['/tools/',           resolve(repoRoot, 'tools')],
   ['/assets/dos/',      resolve(repoRoot, 'dos', 'bin')],
   ['/player/',          resolve(repoRoot, 'player')],
+  ['/presets/',         resolve(repoRoot, 'builder', 'presets')],
+  ['/calcite/',         resolve(repoRoot, '..', 'calcite', 'web')],
   ['/tests/',           resolve(__dirname, '..', 'tests')],
 ];
 

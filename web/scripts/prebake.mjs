@@ -70,12 +70,30 @@ function bakeGossamer() {
   console.log(`gossamer.bin: ${bytes.length} bytes (copied)`);
 }
 
+function bakeCorduroy() {
+  // Corduroy is C + asm, built by bios/corduroy/build.mjs (needs OpenWatcom).
+  // We assume bios.bin is already built and checked in / available locally.
+  const src = resolve(repoRoot, 'bios', 'corduroy', 'build', 'bios.bin');
+  const dst = join(prebakeDir, 'corduroy.bin');
+  const bytes = readFileSync(src);
+  writeFileSync(dst, bytes);
+  writeFileSync(join(prebakeDir, 'corduroy.meta.json'), JSON.stringify({
+    flavor: 'corduroy',
+    entrySegment: 0xF000,
+    entryOffset: 0x0000,
+    sizeBytes: bytes.length,
+    sourceHash: sha256(bytes),
+  }, null, 2));
+  console.log(`corduroy.bin: ${bytes.length} bytes (copied)`);
+}
+
 function writeManifest() {
   const manifest = {
     generated: new Date().toISOString(),
     bioses: [
       { flavor: 'muslin', binary: 'muslin.bin', meta: 'muslin.meta.json' },
       { flavor: 'gossamer', binary: 'gossamer.bin', meta: 'gossamer.meta.json' },
+      { flavor: 'corduroy', binary: 'corduroy.bin', meta: 'corduroy.meta.json' },
     ],
   };
   writeFileSync(join(prebakeDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
@@ -83,5 +101,6 @@ function writeManifest() {
 
 bakeMuslin();
 bakeGossamer();
+bakeCorduroy();
 writeManifest();
 console.log('prebake done:', prebakeDir);

@@ -3,8 +3,8 @@
 //
 // Usage: node mkfat12.mjs -o disk.img [--file NAME LOCAL_PATH] ...
 //
-// Creates a 1.44MB FAT12 floppy image with the specified files in the
-// root directory. Used to build a bootable DOS disk image for CSS-DOS.
+// Creates a FAT12 floppy image with the specified files in the root directory.
+// Used to build a bootable DOS disk image for CSS-DOS.
 //
 // Supports subdirectories: --file DATA\ZORK1.DAT path/to/zork1.dat
 // will create a DATA subdirectory and place ZORK1.DAT inside it.
@@ -16,267 +16,248 @@
 //     --file MYPROG.COM examples/fib.com \
 //     --file DATA\GAME.DAT examples/game.dat
 
-import { readFileSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
-
-// --- FAT12 geometry — auto-sized to fit content ---
-const SECTOR_SIZE = 512;
-const RESERVED_SECTORS = 1;    // boot sector
-const NUM_FATS = 2;
-const ROOT_DIR_ENTRIES = 16;   // small root dir (16 entries = 1 sector)
-const ROOT_DIR_SECTORS = Math.ceil(ROOT_DIR_ENTRIES * 32 / SECTOR_SIZE); // 1
-
-// --- Parse arguments ---
-const args = process.argv.slice(2);
-let outputFile = null;
-const files = []; // [{name, data}]  name may contain backslash for subdirs
-
-for (let i = 0; i < args.length; i++) {
-  if (args[i] === '-o' && i + 1 < args.length) {
-    outputFile = args[++i];
-  } else if (args[i] === '--file' && i + 2 < args.length) {
-    const name = args[++i].toUpperCase().replace(/\//g, '\\');
-    const path = args[++i];
-    const data = [...readFileSync(resolve(path))];
-    files.push({ name, data });
-  }
-}
-
-if (!outputFile) {
-  console.error('Usage: node mkfat12.mjs -o disk.img [--file NAME PATH] ...');
-  process.exit(1);
-}
-
-// --- Compute disk size from content ---
-// Count total data sectors needed for all files + subdirectory clusters
-let dataSectorsNeeded = 0;
-for (const file of files) {
-  dataSectorsNeeded += Math.ceil(file.data.length / SECTOR_SIZE) || 1;
-}
-// Add 1 cluster per unique subdirectory
-const uniqueDirs = new Set();
-for (const file of files) {
-  const backslash = file.name.indexOf('\\');
-  if (backslash >= 0) uniqueDirs.add(file.name.substring(0, backslash));
-}
-dataSectorsNeeded += uniqueDirs.size;
-
-// FAT12: each FAT sector covers ~341 clusters (512 bytes * 2/3 entries)
-// FAT sectors needed = ceil(dataClusters / 341)
-const dataClusters = dataSectorsNeeded + 2; // +2 for reserved entries
-const FAT_SECTORS = Math.max(1, Math.ceil((dataClusters * 3 / 2) / SECTOR_SIZE));
-const DATA_START_SECTOR = RESERVED_SECTORS + NUM_FATS * FAT_SECTORS + ROOT_DIR_SECTORS;
-
-// Total sectors = overhead + data + 10% headroom (min 64 sectors)
-const TOTAL_SECTORS = Math.max(64, DATA_START_SECTOR + dataSectorsNeeded + Math.ceil(dataSectorsNeeded * 0.1));
-const DISK_SIZE = TOTAL_SECTORS * SECTOR_SIZE;
-
-// Pick a plausible floppy geometry (doesn't matter for CSS-DOS, kernel reads BPB)
-const HEADS = 2;
-const SECTORS_PER_TRACK = 18;
-
-// --- Create disk image ---
-const disk = new Uint8Array(DISK_SIZE);
-
-// --- Boot sector (sector 0) ---
-disk[0] = 0xEB; disk[1] = 0x3C; disk[2] = 0x90;
-writeString(disk, 3, 'CSSDOS  ');
-
-// BIOS Parameter Block (BPB)
-writeWord(disk, 11, SECTOR_SIZE);
-disk[13] = 1;                               // sectors per cluster
-writeWord(disk, 14, RESERVED_SECTORS);
-disk[16] = NUM_FATS;
-writeWord(disk, 17, ROOT_DIR_ENTRIES);
-writeWord(disk, 19, TOTAL_SECTORS);
-disk[21] = 0xF0;                            // media descriptor
-writeWord(disk, 22, FAT_SECTORS);
-writeWord(disk, 24, SECTORS_PER_TRACK);
-writeWord(disk, 26, HEADS);
-writeDword(disk, 28, 0);
-writeDword(disk, 32, 0);
-
-// Extended boot record
-disk[36] = 0x00; disk[37] = 0x00; disk[38] = 0x29;
-writeDword(disk, 39, 0x12345678);
-writeString(disk, 43, 'CSS-DOS    ');
-writeString(disk, 54, 'FAT12   ');
-
-// Boot code
-disk[0x3E] = 0xFA; disk[0x3F] = 0xEB; disk[0x40] = 0xFE;
-disk[510] = 0x55; disk[511] = 0xAA;
-
-// --- Initialize FATs ---
-const fat1Start = RESERVED_SECTORS * SECTOR_SIZE;
-const fat2Start = (RESERVED_SECTORS + FAT_SECTORS) * SECTOR_SIZE;
-disk[fat1Start + 0] = 0xF0;
-disk[fat1Start + 1] = 0xFF;
-disk[fat1Start + 2] = 0xFF;
-disk[fat2Start + 0] = 0xF0;
-disk[fat2Start + 1] = 0xFF;
-disk[fat2Start + 2] = 0xFF;
-
-// --- Write files ---
-let nextCluster = 2; // first data cluster
-const rootDirStart = (RESERVED_SECTORS + NUM_FATS * FAT_SECTORS) * SECTOR_SIZE;
-let rootDirEntryOffset = 0;
-
-// Track subdirectories: dirName -> { cluster, entryOffset (bytes used within cluster) }
-const subdirs = new Map();
-
-// Separate files into root-level and subdirectory files
-const rootFiles = [];
-const subdirFiles = []; // [{dirName, fileName, data}]
-
-for (const file of files) {
-  const backslash = file.name.indexOf('\\');
-  if (backslash >= 0) {
-    const dirName = file.name.substring(0, backslash);
-    const fileName = file.name.substring(backslash + 1);
-    subdirFiles.push({ dirName, fileName, data: file.data });
-  } else {
-    rootFiles.push(file);
-  }
-}
-
-// Write root-level files first
-for (const file of rootFiles) {
-  writeFileToDir(file.name, file.data, 'root');
-}
-
-// Create subdirectories and write their files
-for (const sf of subdirFiles) {
-  ensureSubdir(sf.dirName);
-  writeFileToDir(sf.fileName, sf.data, sf.dirName);
-}
-
-// --- Write volume label in root directory ---
-if (rootDirEntryOffset < ROOT_DIR_ENTRIES * 32) {
-  const entryOff = rootDirStart + rootDirEntryOffset;
-  writeString(disk, entryOff, 'CSS-DOS    '); // 11 chars
-  disk[entryOff + 11] = 0x08;                 // volume label attribute
-  rootDirEntryOffset += 32;
-}
-
-// --- Write disk image ---
-writeFileSync(resolve(outputFile), disk);
-console.log(`Created ${outputFile} (${DISK_SIZE} bytes, ${files.length} files, ${TOTAL_SECTORS} sectors)`);
-
 // ============================================================
-// Directory and file writing
+// Pure function — no fs I/O
 // ============================================================
 
-function ensureSubdir(dirName) {
-  if (subdirs.has(dirName)) return;
+/**
+ * Build a FAT12 floppy disk image in memory.
+ *
+ * @param {Array<{name: string, bytes: Uint8Array}>} files
+ *   Files to include. `name` may use backslash for a single subdirectory
+ *   level, e.g. `"DATA\\ZORK1.DAT"`. Names are uppercased automatically.
+ * @returns {Uint8Array} Raw FAT12 disk image.
+ */
+export function buildFat12Image(files) {
+  // Normalise input: uppercase names, convert / to \
+  const normFiles = files.map(f => ({
+    name: f.name.toUpperCase().replace(/\//g, '\\'),
+    data: f.bytes,
+  }));
 
-  // Allocate one cluster for the directory
-  const dirCluster = nextCluster++;
-  const dirDataOffset = (DATA_START_SECTOR + (dirCluster - 2)) * SECTOR_SIZE;
+  // --- FAT12 geometry — auto-sized to fit content ---
+  const SECTOR_SIZE = 512;
+  const RESERVED_SECTORS = 1;    // boot sector
+  const NUM_FATS = 2;
+  const ROOT_DIR_ENTRIES = 16;   // small root dir (16 entries = 1 sector)
+  const ROOT_DIR_SECTORS = Math.ceil(ROOT_DIR_ENTRIES * 32 / SECTOR_SIZE); // 1
 
-  // Mark cluster as end-of-chain in FAT
-  writeFAT12Entry(disk, fat1Start, dirCluster, 0xFFF);
-  writeFAT12Entry(disk, fat2Start, dirCluster, 0xFFF);
-
-  // Zero the cluster (already zero from Uint8Array init, but be explicit)
-  for (let i = 0; i < SECTOR_SIZE; i++) {
-    disk[dirDataOffset + i] = 0;
+  // --- Compute disk size from content ---
+  let dataSectorsNeeded = 0;
+  for (const file of normFiles) {
+    dataSectorsNeeded += Math.ceil(file.data.length / SECTOR_SIZE) || 1;
   }
-
-  // Write "." entry — points to self
-  const { name83: dotName } = parse83Name('.');
-  const dotOff = dirDataOffset;
-  writeString(disk, dotOff, '.          '); // padded to 11
-  disk[dotOff + 11] = 0x10; // directory attribute
-  writeWord(disk, dotOff + 26, dirCluster);
-
-  // Write ".." entry — points to root (cluster 0 for root)
-  const dotdotOff = dirDataOffset + 32;
-  writeString(disk, dotdotOff, '..         '); // padded to 11
-  disk[dotdotOff + 11] = 0x10;
-  writeWord(disk, dotdotOff + 26, 0); // 0 = root directory
-
-  // Add directory entry in root directory
-  if (rootDirEntryOffset >= ROOT_DIR_ENTRIES * 32) {
-    console.error(`Error: root directory full, cannot create ${dirName}`);
-    process.exit(1);
+  // Add 1 cluster per unique subdirectory
+  const uniqueDirs = new Set();
+  for (const file of normFiles) {
+    const backslash = file.name.indexOf('\\');
+    if (backslash >= 0) uniqueDirs.add(file.name.substring(0, backslash));
   }
-  const { name83 } = parse83Name(dirName);
-  const entryOff = rootDirStart + rootDirEntryOffset;
-  writeString(disk, entryOff, name83);
-  disk[entryOff + 11] = 0x10; // directory attribute
-  writeWord(disk, entryOff + 26, dirCluster);
-  writeDword(disk, entryOff + 28, 0); // directory size = 0 in FAT12
-  rootDirEntryOffset += 32;
+  dataSectorsNeeded += uniqueDirs.size;
 
-  console.log(`  ${dirName}\\ — directory, cluster ${dirCluster}`);
+  // FAT12: each FAT sector covers ~341 clusters (512 bytes * 2/3 entries)
+  const dataClusters = dataSectorsNeeded + 2; // +2 for reserved entries
+  const FAT_SECTORS = Math.max(1, Math.ceil((dataClusters * 3 / 2) / SECTOR_SIZE));
+  const DATA_START_SECTOR = RESERVED_SECTORS + NUM_FATS * FAT_SECTORS + ROOT_DIR_SECTORS;
 
-  subdirs.set(dirName, { cluster: dirCluster, entryOffset: 64 }); // 64 = after . and ..
-}
+  // Total sectors = overhead + data + 10% headroom (min 64 sectors)
+  const TOTAL_SECTORS = Math.max(64, DATA_START_SECTOR + dataSectorsNeeded + Math.ceil(dataSectorsNeeded * 0.1));
+  const DISK_SIZE = TOTAL_SECTORS * SECTOR_SIZE;
 
-function writeFileToDir(name, data, dir) {
-  const fileSize = data.length;
-  const clustersNeeded = Math.ceil(fileSize / SECTOR_SIZE) || 1;
-  const { name83 } = parse83Name(name);
-  const startCluster = nextCluster;
+  // Pick a plausible floppy geometry (doesn't matter for CSS-DOS, kernel reads BPB)
+  const HEADS = 2;
+  const SECTORS_PER_TRACK = 18;
 
-  // Write file data to data region
-  const dataOffset = (DATA_START_SECTOR + (startCluster - 2)) * SECTOR_SIZE;
-  for (let i = 0; i < fileSize; i++) {
-    if (dataOffset + i >= DISK_SIZE) {
-      console.error(`Error: disk full writing ${name}`);
-      process.exit(1);
+  // --- Create disk image ---
+  const disk = new Uint8Array(DISK_SIZE);
+
+  // --- Boot sector (sector 0) ---
+  disk[0] = 0xEB; disk[1] = 0x3C; disk[2] = 0x90;
+  writeString(disk, 3, 'CSSDOS  ');
+
+  // BIOS Parameter Block (BPB)
+  writeWord(disk, 11, SECTOR_SIZE);
+  disk[13] = 1;                               // sectors per cluster
+  writeWord(disk, 14, RESERVED_SECTORS);
+  disk[16] = NUM_FATS;
+  writeWord(disk, 17, ROOT_DIR_ENTRIES);
+  writeWord(disk, 19, TOTAL_SECTORS);
+  disk[21] = 0xF0;                            // media descriptor
+  writeWord(disk, 22, FAT_SECTORS);
+  writeWord(disk, 24, SECTORS_PER_TRACK);
+  writeWord(disk, 26, HEADS);
+  writeDword(disk, 28, 0);
+  writeDword(disk, 32, 0);
+
+  // Extended boot record
+  disk[36] = 0x00; disk[37] = 0x00; disk[38] = 0x29;
+  writeDword(disk, 39, 0x12345678);
+  writeString(disk, 43, 'CSS-DOS    ');
+  writeString(disk, 54, 'FAT12   ');
+
+  // Boot code
+  disk[0x3E] = 0xFA; disk[0x3F] = 0xEB; disk[0x40] = 0xFE;
+  disk[510] = 0x55; disk[511] = 0xAA;
+
+  // --- Initialize FATs ---
+  const fat1Start = RESERVED_SECTORS * SECTOR_SIZE;
+  const fat2Start = (RESERVED_SECTORS + FAT_SECTORS) * SECTOR_SIZE;
+  disk[fat1Start + 0] = 0xF0;
+  disk[fat1Start + 1] = 0xFF;
+  disk[fat1Start + 2] = 0xFF;
+  disk[fat2Start + 0] = 0xF0;
+  disk[fat2Start + 1] = 0xFF;
+  disk[fat2Start + 2] = 0xFF;
+
+  // --- Write files ---
+  let nextCluster = 2; // first data cluster
+  const rootDirStart = (RESERVED_SECTORS + NUM_FATS * FAT_SECTORS) * SECTOR_SIZE;
+  let rootDirEntryOffset = 0;
+
+  // Track subdirectories: dirName -> { cluster, entryOffset (bytes used within cluster) }
+  const subdirs = new Map();
+
+  // Separate files into root-level and subdirectory files
+  const rootFiles = [];
+  const subdirFiles = []; // [{dirName, fileName, data}]
+
+  for (const file of normFiles) {
+    const backslash = file.name.indexOf('\\');
+    if (backslash >= 0) {
+      const dirName = file.name.substring(0, backslash);
+      const fileName = file.name.substring(backslash + 1);
+      subdirFiles.push({ dirName, fileName, data: file.data });
+    } else {
+      rootFiles.push(file);
     }
-    disk[dataOffset + i] = data[i];
   }
 
-  // Write FAT chain
-  for (let c = 0; c < clustersNeeded; c++) {
-    const cluster = startCluster + c;
-    const nextVal = (c === clustersNeeded - 1) ? 0xFFF : cluster + 1;
-    writeFAT12Entry(disk, fat1Start, cluster, nextVal);
-    writeFAT12Entry(disk, fat2Start, cluster, nextVal);
+  // Write root-level files first
+  for (const file of rootFiles) {
+    writeFileToDir(file.name, file.data, 'root');
   }
 
-  // Write directory entry
-  if (dir === 'root') {
+  // Create subdirectories and write their files
+  for (const sf of subdirFiles) {
+    ensureSubdir(sf.dirName);
+    writeFileToDir(sf.fileName, sf.data, sf.dirName);
+  }
+
+  // --- Write volume label in root directory ---
+  if (rootDirEntryOffset < ROOT_DIR_ENTRIES * 32) {
+    const entryOff = rootDirStart + rootDirEntryOffset;
+    writeString(disk, entryOff, 'CSS-DOS    '); // 11 chars
+    disk[entryOff + 11] = 0x08;                 // volume label attribute
+    rootDirEntryOffset += 32;
+  }
+
+  return disk;
+
+  // ============================================================
+  // Directory and file writing (closures over disk, nextCluster, etc.)
+  // ============================================================
+
+  function ensureSubdir(dirName) {
+    if (subdirs.has(dirName)) return;
+
+    // Allocate one cluster for the directory
+    const dirCluster = nextCluster++;
+    const dirDataOffset = (DATA_START_SECTOR + (dirCluster - 2)) * SECTOR_SIZE;
+
+    // Mark cluster as end-of-chain in FAT
+    writeFAT12Entry(disk, fat1Start, dirCluster, 0xFFF);
+    writeFAT12Entry(disk, fat2Start, dirCluster, 0xFFF);
+
+    // Zero the cluster (already zero from Uint8Array init, but be explicit)
+    for (let i = 0; i < SECTOR_SIZE; i++) {
+      disk[dirDataOffset + i] = 0;
+    }
+
+    // Write "." entry — points to self
+    const dotOff = dirDataOffset;
+    writeString(disk, dotOff, '.          '); // padded to 11
+    disk[dotOff + 11] = 0x10; // directory attribute
+    writeWord(disk, dotOff + 26, dirCluster);
+
+    // Write ".." entry — points to root (cluster 0 for root)
+    const dotdotOff = dirDataOffset + 32;
+    writeString(disk, dotdotOff, '..         '); // padded to 11
+    disk[dotdotOff + 11] = 0x10;
+    writeWord(disk, dotdotOff + 26, 0); // 0 = root directory
+
+    // Add directory entry in root directory
     if (rootDirEntryOffset >= ROOT_DIR_ENTRIES * 32) {
-      console.error(`Error: root directory full, cannot add ${name}`);
-      process.exit(1);
+      throw new Error(`root directory full, cannot create ${dirName}`);
     }
+    const { name83 } = parse83Name(dirName);
     const entryOff = rootDirStart + rootDirEntryOffset;
     writeString(disk, entryOff, name83);
-    disk[entryOff + 11] = 0x20; // archive attribute
-    writeWord(disk, entryOff + 26, startCluster);
-    writeDword(disk, entryOff + 28, fileSize);
+    disk[entryOff + 11] = 0x10; // directory attribute
+    writeWord(disk, entryOff + 26, dirCluster);
+    writeDword(disk, entryOff + 28, 0); // directory size = 0 in FAT12
     rootDirEntryOffset += 32;
-  } else {
-    const sub = subdirs.get(dir);
-    if (!sub) {
-      console.error(`Error: subdirectory ${dir} not found`);
-      process.exit(1);
-    }
-    // Check if subdir cluster has space (512 bytes / 32 = 16 entries max per cluster)
-    if (sub.entryOffset >= SECTOR_SIZE) {
-      console.error(`Error: subdirectory ${dir} full (max 14 files per subdir)`);
-      process.exit(1);
-    }
-    const dirDataOffset = (DATA_START_SECTOR + (sub.cluster - 2)) * SECTOR_SIZE;
-    const entryOff = dirDataOffset + sub.entryOffset;
-    writeString(disk, entryOff, name83);
-    disk[entryOff + 11] = 0x20; // archive attribute
-    writeWord(disk, entryOff + 26, startCluster);
-    writeDword(disk, entryOff + 28, fileSize);
-    sub.entryOffset += 32;
+
+    subdirs.set(dirName, { cluster: dirCluster, entryOffset: 64 }); // 64 = after . and ..
   }
 
-  const dirLabel = dir === 'root' ? '' : `${dir}\\`;
-  console.log(`  ${dirLabel}${name} — ${fileSize} bytes, clusters ${startCluster}-${startCluster + clustersNeeded - 1}`);
+  function writeFileToDir(name, data, dir) {
+    const fileSize = data.length;
+    const clustersNeeded = Math.ceil(fileSize / SECTOR_SIZE) || 1;
+    const { name83 } = parse83Name(name);
+    const startCluster = nextCluster;
 
-  nextCluster += clustersNeeded;
+    // Write file data to data region
+    const dataOffset = (DATA_START_SECTOR + (startCluster - 2)) * SECTOR_SIZE;
+    for (let i = 0; i < fileSize; i++) {
+      if (dataOffset + i >= DISK_SIZE) {
+        throw new Error(`disk full writing ${name}`);
+      }
+      disk[dataOffset + i] = data[i];
+    }
+
+    // Write FAT chain
+    for (let c = 0; c < clustersNeeded; c++) {
+      const cluster = startCluster + c;
+      const nextVal = (c === clustersNeeded - 1) ? 0xFFF : cluster + 1;
+      writeFAT12Entry(disk, fat1Start, cluster, nextVal);
+      writeFAT12Entry(disk, fat2Start, cluster, nextVal);
+    }
+
+    // Write directory entry
+    if (dir === 'root') {
+      if (rootDirEntryOffset >= ROOT_DIR_ENTRIES * 32) {
+        throw new Error(`root directory full, cannot add ${name}`);
+      }
+      const entryOff = rootDirStart + rootDirEntryOffset;
+      writeString(disk, entryOff, name83);
+      disk[entryOff + 11] = 0x20; // archive attribute
+      writeWord(disk, entryOff + 26, startCluster);
+      writeDword(disk, entryOff + 28, fileSize);
+      rootDirEntryOffset += 32;
+    } else {
+      const sub = subdirs.get(dir);
+      if (!sub) {
+        throw new Error(`subdirectory ${dir} not found`);
+      }
+      // Check if subdir cluster has space (512 bytes / 32 = 16 entries max per cluster)
+      if (sub.entryOffset >= SECTOR_SIZE) {
+        throw new Error(`subdirectory ${dir} full (max 14 files per subdir)`);
+      }
+      const dirDataOffset = (DATA_START_SECTOR + (sub.cluster - 2)) * SECTOR_SIZE;
+      const entryOff = dirDataOffset + sub.entryOffset;
+      writeString(disk, entryOff, name83);
+      disk[entryOff + 11] = 0x20; // archive attribute
+      writeWord(disk, entryOff + 26, startCluster);
+      writeDword(disk, entryOff + 28, fileSize);
+      sub.entryOffset += 32;
+    }
+
+    nextCluster += clustersNeeded;
+  }
 }
 
 // ============================================================
-// Helpers
+// Helpers (module-level, used by buildFat12Image and CLI)
 // ============================================================
 
 function writeWord(buf, offset, val) {
@@ -325,4 +306,50 @@ function writeFAT12Entry(buf, fatStart, cluster, value) {
     buf[fatStart + offset] = (buf[fatStart + offset] & 0x0F) | ((value << 4) & 0xF0);
     buf[fatStart + offset + 1] = (value >> 4) & 0xFF;
   }
+}
+
+// ============================================================
+// CLI entry point — only runs when invoked directly
+// ============================================================
+
+// Detect whether this module is the entry point (works for both CJS and ESM).
+const isMain = process.argv[1] &&
+  (process.argv[1].endsWith('mkfat12.mjs') || process.argv[1].endsWith('mkfat12'));
+
+if (isMain) {
+  import('fs').then(({ readFileSync, writeFileSync }) => {
+    import('path').then(({ resolve }) => {
+      const args = process.argv.slice(2);
+      let outputFile = null;
+      const cliFiles = []; // [{name, bytes}]
+
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '-o' && i + 1 < args.length) {
+          outputFile = args[++i];
+        } else if (args[i] === '--file' && i + 2 < args.length) {
+          const name = args[++i];
+          const path = args[++i];
+          const bytes = readFileSync(resolve(path));
+          cliFiles.push({ name, bytes });
+        }
+      }
+
+      if (!outputFile) {
+        console.error('Usage: node mkfat12.mjs -o disk.img [--file NAME PATH] ...');
+        process.exit(1);
+      }
+
+      const disk = buildFat12Image(cliFiles);
+
+      // Print layout info (mirrors the old per-file log output)
+      for (const f of cliFiles) {
+        const name = f.name.toUpperCase().replace(/\//g, '\\');
+        console.log(`  ${name} — ${f.bytes.length} bytes`);
+      }
+
+      writeFileSync(resolve(outputFile), disk);
+      const TOTAL_SECTORS = disk.length / 512;
+      console.log(`Created ${outputFile} (${disk.length} bytes, ${cliFiles.length} files, ${TOTAL_SECTORS} sectors)`);
+    });
+  });
 }

@@ -8,16 +8,15 @@
 // Hack carts skip this stage entirely.
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildFat12Image } from '../../tools/mkfat12.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..', '..');
 
 const KERNEL_SYS  = resolve(repoRoot, 'dos', 'bin', 'kernel.sys');
 const COMMAND_COM = resolve(repoRoot, 'dos', 'bin', 'command.com');
-const MKFAT12     = resolve(repoRoot, 'tools', 'mkfat12.mjs');
 
 export function buildFloppy({ cart, manifest, cacheDir }) {
   if (!manifest.disk) {
@@ -54,14 +53,13 @@ export function buildFloppy({ cart, manifest, cacheDir }) {
     layout.push({ name: 'COMMAND.COM', source: 'dos/bin/command.com', path: COMMAND_COM });
   }
 
-  const diskImgPath = join(cacheDir, 'disk.img');
-  let cmd = `node "${MKFAT12}" -o "${diskImgPath}"`;
-  for (const f of layout) {
-    cmd += ` --file ${f.name} "${f.path}"`;
-  }
-  execSync(cmd, { stdio: 'pipe' });
-
-  const bytes = [...readFileSync(diskImgPath)];
+  // Build the FAT12 image in-process (no execSync shell-out).
+  const fatFiles = layout.map(f => ({
+    name: f.name,
+    bytes: readFileSync(f.path),
+  }));
+  const imgBytes = buildFat12Image(fatFiles);
+  const bytes = [...imgBytes];
 
   // Annotate sizes post-hoc.
   for (const f of layout) {

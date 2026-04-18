@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://css-dos.dev/program.schema.json",
+  "title": "CSS-DOS cart manifest",
+  "description": "Declarative spec for a CSS-DOS cart. The builder reads this file (plus the cart's other contents) and produces a cabinet (a .css file runnable in Chrome, calcite-cli, or the static player).",
+
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema":       { "type": "string" },
+
+    "name":          { "type": "string", "description": "Human-readable cart title. Defaults to the cart folder/zip basename." },
+    "version":       { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$", "description": "Semver. Optional. Validated if present." },
+    "author":        { "type": "string", "description": "Cart author. Optional, unused by the builder, preserved in the cabinet header." },
+    "description":   { "type": "string", "description": "Short cart description. Optional, unused by the builder, preserved in the cabinet header." },
+
+    "preset":        { "enum": ["dos-muslin", "dos-corduroy", "hack"], "default": "dos-muslin", "description": "Named preset. Supplies defaults for every other field; the cart's own values override the preset on conflict." },
+
+    "bios":          { "enum": ["gossamer", "muslin", "corduroy"], "description": "Which BIOS to boot. Gossamer is the hack-path shim; Muslin is the current real BIOS; Corduroy is the structured C BIOS (experimental)." },
+
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "conventional": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1024 },
+            { "enum": ["autofit", "4K", "64K", "128K", "256K", "512K", "640K"] }
+          ],
+          "description": "Size of conventional RAM in bytes. String = preset; number = exact bytes; 'autofit' sizes to the program. NOTE: on DOS carts, values below 640K are accepted by the schema but are not currently known to boot — the builder warns. Tracked as a follow-up."
+        },
+        "gfx":     { "type": "boolean", "description": "Include the VGA Mode 13h framebuffer at 0xA0000–0xAFA00." },
+        "textVga": { "type": "boolean", "description": "Include the VGA text buffer at 0xB8000–0xB8FA0." }
+      }
+    },
+
+    "disk": {
+      "oneOf": [
+        { "type": "null", "description": "Hack carts have no disk." },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": ["rom", "embedded"],
+              "default": "rom",
+              "description": "'rom' exposes the disk outside 8086 memory via a 512-byte window (the current default). 'embedded' bakes disk bytes into 8086 memory (hacky, documented footnote, only works for tiny disks)."
+            },
+            "size": {
+              "oneOf": [
+                { "type": "integer", "minimum": 1024 },
+                { "enum": ["autofit", "360K", "720K", "1200K", "1440K", "2880K"] }
+              ],
+              "default": "1440K",
+              "description": "Floppy size. String = standard floppy preset; number = exact bytes; 'autofit' = round up to the smallest preset that fits. NOT YET IMPLEMENTED — today the floppy size is hard-coded in mkfat12.mjs."
+            },
+            "writable": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether INT 13h can write to the disk. Writes go to a RAM shadow; nothing persists across sessions. NOT YET IMPLEMENTED — today INT 13h has no write path in any BIOS."
+            },
+            "files": {
+              "type": "array",
+              "description": "Explicit disk contents. If omitted, the builder auto-discovers files from the cart folder (every file except program.json). KERNEL.SYS and CONFIG.SYS are always added automatically; COMMAND.COM is added when boot.autorun is null.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "source"],
+                "properties": {
+                  "name":   { "type": "string", "description": "8.3 filename as it appears on the floppy (uppercased)." },
+                  "source": { "type": "string", "description": "Path relative to the cart root. Must not escape via '..'." }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+
+    "boot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "autorun": {
+          "oneOf": [
+            { "type": "string", "description": "Filename on the floppy. Becomes 'SHELL=\\<name>' in CONFIG.SYS." },
+            { "type": "null", "description": "Drop to the COMMAND.COM prompt." }
+          ],
+          "description": "DOS carts only. Default: if the cart contains exactly one .COM/.EXE, autorun it; otherwise null (prompt)."
+        },
+        "args": { "type": "string", "default": "", "description": "DOS carts only. Appended to the SHELL= line. e.g. 'ZORK1.Z3' for 'SHELL=\\FROTZ.EXE ZORK1.Z3'." },
+        "raw":  { "type": "string", "description": "Hack carts only. Filename of the .COM to load raw at 0x100. Mutually exclusive with boot.autorun." }
+      }
+    }
+  },
+
+  "allOf": [
+    {
+      "if":   { "properties": { "preset": { "const": "hack" } }, "required": ["preset"] },
+      "then": { "properties": { "disk": { "const": null }, "boot": { "required": ["raw"], "not": { "required": ["autorun"] } } } }
+    }
+  ]
+}

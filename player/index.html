@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>CSS-DOS player</title>
+<style>
+  body { margin: 0; font-family: monospace; background: #000; color: #ccc; }
+  .info { padding: 8px; font-size: 12px; opacity: 0.6; }
+  key-board {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 2px;
+    max-width: 500px;
+    margin: 8px;
+  }
+  key-board button {
+    font-size: 16px;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div class="info">
+  CSS-DOS player. Load a cabinet:
+  <code>?cabinet=path/to/cabinet.css</code>
+</div>
+<div class="clock" style="container-type:inline-size">
+  <div class="cpu">
+    <key-board>
+      <button>0</button><button>1</button><button>2</button><button>3</button><button>4</button><button>5</button><button>6</button><button>7</button><button>8</button><button>9</button>
+      <button>Q</button><button>W</button><button>E</button><button>R</button><button>T</button><button>Y</button><button>U</button><button>I</button><button>O</button><button>P</button>
+      <button>A</button><button>S</button><button>D</button><button>F</button><button>G</button><button>H</button><button>J</button><button>K</button><button>L</button><button>&#8629;</button>
+      <button>Z</button><button>X</button><button>C</button><button>V</button><button>B</button><button>N</button><button>M</button><button>&#9251;</button><button>Esc</button><button>&#8592;</button>
+      <button>&#8595;</button><button>&#8593;</button><button>&#8594;</button><button>Tab</button><button>Bksp</button>
+    </key-board>
+  </div>
+</div>
+
+<script>
+// Dynamic cabinet loader.
+const params = new URLSearchParams(location.search);
+const cabinet = params.get('cabinet');
+if (cabinet) {
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = cabinet;
+  document.head.appendChild(link);
+} else {
+  document.querySelector('.info').innerHTML +=
+    '<br><strong>No cabinet specified.</strong> ' +
+    'Add <code>?cabinet=yourfile.css</code> to the URL.';
+}
+
+// JS clock driver — ticks the CSS machine.
+let clock = 0;
+
+function tickInstruction() {
+  for (let i = 0; i < 4; i++) {
+    document.querySelector(".clock").style = `--clock:${clock}!important`;
+    clock = (clock + 1) % 4;
+    getComputedStyle(document.querySelector(".cpu")).getPropertyValue("--__1IP");
+  }
+}
+
+function animate() {
+  tickInstruction();
+  const ip = parseInt(getComputedStyle(document.querySelector(".cpu")).getPropertyValue("--__1IP"));
+  const halt = parseInt(getComputedStyle(document.querySelector(".cpu")).getPropertyValue("--__1halt"));
+  if (halt === 1 || ip === 0) {
+    const cpu = document.querySelector(".cpu");
+    const cs = getComputedStyle(cpu);
+    const regs = ['AX','BX','CX','DX','SP','BP','SI','DI','CS','DS','ES','SS','IP','flags'];
+    const state = {};
+    for (const r of regs) state[r] = parseInt(cs.getPropertyValue('--__1' + r));
+    console.log('HALT', JSON.stringify(state));
+    return;
+  }
+  requestAnimationFrame(animate);
+}
+
+document.querySelector(".clock").style = "--clock:0!important";
+if (cabinet && !window.__noAutoStart) requestAnimationFrame(animate);
+</script>
+</body>
+</html>

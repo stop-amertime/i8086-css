@@ -3,32 +3,45 @@
 **This is the single source of truth for project status.** Every agent MUST
 read this before starting work and MUST update it before finishing.
 
-Last updated: 2026-04-18 (session 11)
+Last updated: 2026-04-18 (session 11b — the big rename; includes session 11a's Doom8088 readiness work via master merge)
 
 ---
 
 ## Current status
 
-**V4 architecture boots DOS + bootle.com on master (commit 8c407d9).**
-Rom-disk works end-to-end on `feature/rom-disk`: disk bytes moved outside
-the 1 MB 8086 space, accessed via `--readDiskByte(--idx)` dispatch and
-a BIOS window at 0xD000:0000. Bootle boots through the rom-disk path live
-in calcite (2026-04-15) after calcite's single-parameter literal-dispatch
-flat-array fast path landed.
+**Session 11 — repo-wide restructure for release readiness.** All
+top-level paths renamed; vocabulary pinned down (cart / cabinet / floppy /
+Kiln / builder / Gossamer / Muslin / Corduroy / player). New `builder/`
+orchestrator replaces the three `generate-*.mjs` scripts. New
+`program.schema.json` and `docs/cart-format.md` canonicalise the cart
+manifest. Old `transpiler/src/` is now `kiln/`. BIOS files fanned out
+into `bios/gossamer/`, `bios/muslin/`, `bios/corduroy/`. Player HTML
+extracted out of Kiln into `player/index.html`. Ref emulators moved to
+`conformance/` and renamed per BIOS. See `CHANGELOG.md` for the full
+move list.
 
-**Next big target: Doom8088.** Session 11 readiness check (see entry log)
-identified three concrete CSS-side gaps: no PIT-driven INT 08h auto-fire,
-no INT 09h on keyboard edge, and OUT handlers for ports 0x20/0x40-0x43/0x61
-are no-ops. Everything else Doom8088 needs (Mode 13h framebuffer, INT 21h
-file I/O via rom-disk, 640 KB conventional, 8086 ISA with `-march=i8088`,
-port 0x60 IN) already works. Build Doom8088 with `-march=i8088 -nosound
--noxms -noems`.
+**Architecture unchanged.** V4 single-cycle CSS; 8 memory write slots;
+rom-disk window at 0xD0000 dispatching to `--readDiskByte`; Muslin BIOS
+boots EDR-DOS; Calcite's flat-array fast path makes it usable.
 
-**One BIOS, one build path:** `bios/css-emu-bios.asm` is the assembly
-BIOS. `transpiler/generate-dos.mjs` is the build script. No microcode
-BIOS, no `build.mjs`, no opcode 0xD6 dispatch.
+**Next big target: Doom8088.** The session 11a readiness check (PR #24,
+merged into master and carried into this branch) identified three
+concrete CSS-side gaps and delivered Phases 1-3 (PIC/PIT port decode,
+PIT countdown + picPending edge, IRQ delivery). Remaining Doom blockers
+live in the "What's next" section below. Everything else Doom8088 needs
+(Mode 13h framebuffer, INT 21h file I/O via rom-disk, 640 KB
+conventional, 8086 ISA with `-march=i8088`, port 0x60 IN) already
+works. Build Doom8088 with `-march=i8088 -nosound -noxms -noems`.
 
-**Kernel identity:** kernel.sys is EDR-DOS (SvarDOS build), NOT FreeDOS.
+**Build path, post-rename:** `builder/build.mjs` is the orchestrator.
+Cart manifest at `program.json` (see `docs/cart-format.md`). Muslin
+BIOS at `bios/muslin/muslin.asm` is the default for DOS carts. No
+microcode BIOS, no opcode 0xD6 dispatch.
+
+**Kernel identity:** `dos/bin/kernel.sys` is EDR-DOS (SvarDOS build), NOT
+FreeDOS. (Confirmed, repeated here because the v3 `kwc8616.map` was
+misleadingly named after a FreeDOS kernel. The other kernel variants
+were pruned in this session.)
 
 ## Active blocker
 
@@ -113,16 +126,16 @@ parallel/follow-on work.
 ## Uncommitted work
 
 ### CSS-DOS repo
-- V4 architecture replacing V3 (this session)
-- V3 microcode files archived to `legacy/v3/`
-- `tools/ref-asm-bios.mjs` — JS emulator with assembly BIOS
-- (all prior uncommitted work from sessions 1-7 still uncommitted)
+- **`big-rename` branch** — the session 11 restructure, ready to commit as a
+  series of logical commits. See `CHANGELOG.md`.
 
 ### Calcite repo
-- `run.bat` — updated to use `generate-dos.mjs`
-- `crates/calcite-debugger/src/main.rs` — `/watchpoint` endpoint
-- `tools/boot-trace.mjs` — boot progress tracer
-- (all prior uncommitted work from sessions 1-7 still uncommitted)
+- `run.bat` / `run-web.bat` / `run-js.bat` / `serve.mjs` — still reference
+  old CSS-DOS generator paths. Broken by the big rename. Refactor deferred
+  to a separate session — these need rewriting against the new `builder/`,
+  not just path substitutions.
+- Other prior uncommitted work from earlier sessions — unchanged by this
+  session.
 
 ---
 
@@ -130,7 +143,67 @@ parallel/follow-on work.
 
 Newest entries first. See `docs/logbook/PROTOCOL.md` for how to write entries.
 
-### 2026-04-18 — Session 11: Doom8088 readiness audit; starting hardware IRQ work
+### 2026-04-18 — Session 11b: the big rename (repo-wide restructure)
+
+**What:** Repo-wide tidy-up for release readiness. No functional code
+changed — this session is pure restructuring, renaming, and doc-writing.
+Happened on the `big-rename` branch; see `CHANGELOG.md` for the full
+move list.
+
+**Why:** The repo had grown organically across ~10 sessions. Three
+generator scripts (`generate-dos.mjs`, `generate-dos-c.mjs`,
+`generate-hacky.mjs`) did ~80% the same thing. Two BIOSes lived
+side-by-side with no clear "this one is default" signal. Reference
+emulators were scattered across `tools/` and `calcite/tools/`. Nothing
+had a consistent name. A new contributor couldn't tell what was current
+from what was legacy. With release approaching, this became blocking.
+
+**Working-session summary:**
+
+1. **Vocabulary.** A multi-round design conversation (no code) produced
+   the glossary now in `docs/architecture.md`: cart / floppy / cabinet
+   / Kiln / builder / BIOSes (Gossamer / Muslin / Corduroy) / player /
+   Calcite. Each name is a proper noun that says exactly one thing.
+2. **Schema first.** Before any renaming, wrote `program.schema.json`
+   and `docs/cart-format.md`. The schema is the contract between cart
+   authors and the builder. Every field is tagged implemented /
+   partial / aspirational so follow-up agents know what needs plumbing
+   (disk.size, disk.writable, memory knobs on hack carts, sub-640K
+   conventional).
+3. **Filesystem audit** via subagent before moving anything — caught
+   several files I hadn't known about (three kernel variants, a SvarDOS
+   distribution dir, debris at repo root, the critical
+   `tools/lib/bios-symbols.mjs`).
+4. **Moves + deletes.** One atomic branch: see CHANGELOG. No
+   deprecation shims — pre-release, no external callers.
+5. **New builder.** `builder/build.mjs` orchestrates three stages
+   (`bios.mjs`, `floppy.mjs`, `kiln.mjs`) plus cart resolution and
+   preset merging in `builder/lib/`. Three presets: `dos-muslin`,
+   `dos-corduroy`, `hack`.
+6. **Player extracted.** HTML wrapper gone from `kiln/template.mjs`.
+   `player/index.html` is a static file; cabinets are pure CSS.
+7. **Docs rewritten.** `docs/architecture.md` (tight, single-page),
+   `docs/memory-layout.md`, `docs/bios-flavors.md`, `docs/hack-path.md`,
+   `docs/building.md`. Per-folder READMEs for builder/kiln/player/dos/
+   each BIOS/conformance/carts. Old architecture/ and reference/ docs
+   archived to `docs/archive/`.
+
+**Deferred to follow-up agents (listed in CHANGELOG):**
+
+- `calcite/run.bat` / `run-web.bat` / `run-js.bat` / `serve.mjs` still
+  reference old paths. These need full refactors, not just path
+  updates — holding until the v1 release is over.
+- Aspirational schema fields need implementation: `disk.size`,
+  `disk.writable` (INT 13h write path), `memory.gfx`/`textVga` on hack,
+  sub-640K DOS memory.
+- Conformance tool consolidation (`calcite/tools/*.mjs`) into
+  calcite-debugger subcommands.
+- `ref-corduroy.mjs` once Corduroy stabilizes.
+
+**Not touched:** `tests/`, `docs/logbook/*`, `docs/plans/*`,
+`docs/superpowers/*`, Calcite repo, `icons/`. V4 architecture, rom-disk
+mechanism, flat-array fast path all unchanged.
+### 2026-04-18 — Session 11a: Doom8088 readiness audit; starting hardware IRQ work
 
 **What:** Audited CSS-DOS against Doom8088's runtime requirements and
 identified the concrete remaining work. Updated "What's next" to make

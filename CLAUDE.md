@@ -66,44 +66,58 @@ zero x86 knowledge.
   information to calcite. The CSS must pay for itself in Chrome.
 - **If calcite disagrees with Chrome, calcite is wrong.**
 
+## Vocabulary
+
+See [`docs/architecture.md`](docs/architecture.md#vocabulary). In short:
+
+- **cart** — input folder or zip (program + data + optional `program.json`).
+- **floppy** — FAT12 disk image the builder assembles internally.
+- **cabinet** — output `.css` file, runnable in Chrome/Calcite.
+- **Kiln** — the CSS transpiler (`kiln/`).
+- **builder** — the orchestrator (`builder/`).
+- **BIOSes** — Gossamer (hack), Muslin (current), Corduroy (experimental).
+- **player** — static HTML shell for running cabinets in Chrome.
+
 ## Quick orientation
 
-- **Current architecture:** V4 single-cycle (restored from V2). Every instruction
-  completes in one CSS tick with 8 parallel memory write slots. The V3 μOp
-  microcode rewrite was abandoned — it had bugs that prevented boot. V3 files
-  are archived in `legacy/v3/`.
-- **BIOS:** Assembly at `bios/css-emu-bios.asm`. No microcode BIOS.
-- **Build script:** `transpiler/generate-dos.mjs` (single entry point for DOS boot).
-- **Transpiler architecture:** `transpiler/README.md`
-- **How to add instructions:** `transpiler/AGENT-GUIDE.md`
-- **Conformance testing:** `docs/reference/conformance-testing.md`
-- **Debugging workflow:** `docs/debugging/workflow.md`
-- **Project layout:** `docs/reference/project-layout.md`
+- **Current architecture:** V4 single-cycle. Every instruction completes
+  in one CSS tick with 8 parallel memory write slots.
+- **Default BIOS:** Muslin (`bios/muslin/muslin.asm`).
+- **Build entry:** `node builder/build.mjs <cart>`.
+- **Transpiler:** [`kiln/`](kiln/) — see [`kiln/README.md`](kiln/README.md).
+- **How to add instructions:** [`kiln/AGENT-GUIDE.md`](kiln/AGENT-GUIDE.md).
+- **Cart format:** [`docs/cart-format.md`](docs/cart-format.md).
+- **Architecture overview:** [`docs/architecture.md`](docs/architecture.md).
+- **Memory layout:** [`docs/memory-layout.md`](docs/memory-layout.md).
+- **BIOS details:** [`docs/bios-flavors.md`](docs/bios-flavors.md).
+- **Debugging workflow:** [`docs/debugging/workflow.md`](docs/debugging/workflow.md).
 
 ## Tools
 
 **NASM** (assembler): `C:\Users\AdmT9N0CX01V65438A\AppData\Local\bin\NASM\nasm.exe`.
-Not in PATH.
+Not in PATH. Override via `NASM=` env var.
 
-**Calcite debugger:** See `../calcite/docs/debugger.md` and `docs/debugging/calcite-debugger.md`.
+**Calcite debugger:** See `../calcite/docs/debugger.md` and
+[`docs/debugging/calcite-debugger.md`](docs/debugging/calcite-debugger.md).
 
-**Conformance testing:** See `../calcite/docs/conformance-testing.md`.
+**Conformance testing:** See [`conformance/README.md`](conformance/README.md)
+and `../calcite/docs/conformance-testing.md`.
 
-## Conformance testing quick start
+## Build quick start
 
 ```sh
-# Hack path (.COM programs)
-node transpiler/generate-hacky.mjs tests/prog.com --mem 1536 -o tests/prog.css
-node tools/compare.mjs tests/prog.com legacy/gossamer.bin tests/prog.css --ticks=500
+# Build a cabinet from a cart
+node builder/build.mjs carts/rogue -o rogue.css
 
-# DOS boot path
-node transpiler/generate-dos.mjs ../calcite/programs/bootle.com -o ../calcite/output/bootle.css
-cd ../calcite
-target/release/calcite-debugger.exe -i output/bootle.css &
-node tools/fulldiff.mjs --ticks=5000
+# Play it in Chrome
+open player/index.html?cabinet=../rogue.css
+
+# Play it fast via Calcite
+cd ../calcite && target/release/calcite-cli.exe -i ../CSS-DOS/rogue.css
 ```
 
 ## Calcite
 
-Sibling repo at `../calcite`. Read `../calcite/CLAUDE.md` before making changes there.
-See `docs/architecture/calcite.md` for the relationship and Chrome limitations.
+Sibling repo at `../calcite`. Read `../calcite/CLAUDE.md` before making
+changes there. See [`docs/architecture.md`](docs/architecture.md#relationship-to-calcite)
+for the relationship.

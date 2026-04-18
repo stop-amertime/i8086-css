@@ -1,64 +1,78 @@
 # CSS-DOS
 
-An Intel 8086 PC implemented entirely in CSS custom properties and `calc()`.
-The CSS runs in Chrome — no JavaScript, no WebAssembly, just a stylesheet
-executing machine code. The goal: boot DOS from a CSS file.
+**CSS-DOS** is a platform for running DOS programs as pure CSS — an Intel
+8086 PC implemented entirely in CSS custom properties and `calc()`. The
+CSS runs in Chrome. No JavaScript, no WebAssembly — just a stylesheet
+executing machine code.
 
-[Calcite](https://github.com/stop-amertime/calcite) is a JIT compiler that
-makes the CSS fast enough to actually use (~200K+ ticks/sec vs Chrome's
-~1 tick/sec).
+[Calcite](https://github.com/stop-amertime/calcite) is the sibling JIT
+compiler that makes cabinets fast enough to actually use.
 
-## How it works
+## The 30-second version
 
-A transpiler converts a reference JavaScript 8086 emulator into equivalent CSS.
-Every register, flag, and memory byte is a CSS custom property. Every instruction
-is a CSS expression. Each "tick" of CSS evaluation executes one cycle.
+A **cart** (folder or zip) contains a DOS program. The **builder** takes
+a cart, picks a **BIOS**, assembles a **floppy**, feeds it to **Kiln**
+(the transpiler), and produces a **cabinet** — a self-contained `.css`
+file. You play a cabinet in Chrome via the **player**, or fast via
+Calcite.
 
-The output is a self-contained `.css` file (or `.html` with visualization) that
-can be:
-- Opened in Chrome (works, but slowly — one frame per year)
-- Run through calcite for real-time execution
+```
+$ node builder/build.mjs carts/rogue -o rogue.css
+$ open player/index.html?cabinet=../rogue.css
+```
+
+## Vocabulary
+
+| Word | Meaning |
+|---|---|
+| **cart** | Input folder or zip: a program, any data files, optional `program.json`. |
+| **floppy** | FAT12 disk image the builder assembles from a cart. Internal. |
+| **cabinet** | The built artifact — a single `.css` file, runnable. |
+| **Kiln** | The transpiler. Turns an 8086 memory image into CSS. |
+| **builder** | Orchestrator. Wires up BIOS → floppy → Kiln. |
+| **BIOSes** | Three flavors: **Gossamer** (hack-path shim), **Muslin** (current real BIOS), **Corduroy** (structured C BIOS, experimental). |
+| **player** | Static HTML shell. Loads cabinets with `?cabinet=path.css`. |
+| **Calcite** | Sibling repo: the JIT that runs cabinets fast. |
+
+## Start here
+
+- New to the project? → [`docs/architecture.md`](docs/architecture.md)
+- Making a cart? → [`docs/cart-format.md`](docs/cart-format.md) + [`docs/building.md`](docs/building.md)
+- Hacking on the codebase? → [`CLAUDE.md`](CLAUDE.md) + [`docs/INDEX.md`](docs/INDEX.md)
+
+## Repo layout
+
+```
+builder/         Orchestrator CLI and stages
+kiln/            The transpiler (née transpiler/src)
+bios/
+  gossamer/      Hack BIOS
+  muslin/        Current real BIOS
+  corduroy/      Structured C BIOS (experimental)
+player/          Static HTML shell for running cabinets in Chrome
+conformance/     Reference emulators for diff testing
+carts/           Example carts
+dos/             DOS kernel + COMMAND.COM
+tools/           Build utilities (mkfat12, image converters, js8086)
+tests/           Conformance test programs
+docs/            Full documentation
+legacy/          Archived earlier approaches
+```
 
 ## Status
 
-**V3 microcode execution model** — cycle-accurate CSS with micro-operation
-sequences. BIOS handlers are microcode, not assembly. 3740 instructions
-conformant on the DOS boot path.
-
-What works:
-- Full 8086 ISA transpiled to CSS
-- BIOS microcode handlers (INT 08h-20h)
-- PIT timer, PIC interrupt controller, keyboard input
-- Conformance testing infrastructure (reference emulator + tick-by-tick comparison)
-- DOS kernel boot (partial — blocked on a decode bug)
-
-What's next:
-- Fix segment override decode bug (current blocker)
-- Complete DOS boot to COMMAND.COM prompt
-- ROM disk plan for large programs (Doom8088, Wolfenstein 3D)
-
-## Project layout
-
-```
-transpiler/     JS->CSS transpiler (v3 microcode model)
-tools/          Conformance testing (reference emulator + comparison)
-bios/           BIOS init stub (real x86 assembly)
-tests/          Test programs (.asm, .com)
-dos/            DOS kernel and system files
-legacy/         Retired code (v1 JSON approach + old BIOS assembly)
-docs/           Documentation (start at docs/INDEX.md)
-```
-
-See `CLAUDE.md` for detailed architecture and contributor guide.
+See [`docs/logbook/LOGBOOK.md`](docs/logbook/LOGBOOK.md) for the live
+project status. Current default cabinet path boots DOS + the cart's
+program end-to-end. Rom-disk mechanism exposes disks outside 8086
+memory, so cabinet size is no longer bounded by a floppy size.
 
 ## Credits
 
-- [rebane2001](https://github.com/rebane2001) for the original
-  [x86css](https://github.com/rebane2001/x86css)
-- Jane Ori for the
-  [CPU Hack](https://dev.to/janeori/expert-css-the-cpu-hack-4ddj)
-- [emu8](https://github.com/nicknisi/emu8) for the reference 8086 emulator
+- [rebane2001](https://github.com/rebane2001) — the original
+  [x86css](https://github.com/rebane2001/x86css).
+- Jane Ori — the [CPU Hack](https://dev.to/janeori/expert-css-the-cpu-hack-4ddj).
+- [emu8](https://github.com/nicknisi/emu8) — the reference 8086 emulator.
 
 ## License
 
-GNU GPLv3
+GNU GPLv3.

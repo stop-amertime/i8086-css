@@ -1,35 +1,25 @@
-# Conformance testing tools
+# tools
 
-These tools compare CSS-generated 8086 execution against a reference JavaScript
-emulator, tick by tick.
+Utility scripts shared by the builder, conformance emulators, and
+various build-time converters. Not user-facing.
 
 ## Files
 
 | File | Purpose |
-|------|---------|
-| `js8086.js` | Vendored reference 8086 CPU core (emu8 project, ~2700 lines). This is also the source that the transpiler converts to CSS. |
-| `ref-emu.mjs` | Runs the reference emulator on a binary, outputs a JSON register trace. |
-| `compare.mjs` | Automated tick-by-tick comparison: runs reference emulator and compares against calcite's `--trace-json` output. Finds first divergence. |
+|---|---|
+| `mkfat12.mjs`  | Builds a FAT12 floppy image from a list of files. Used by the floppy stage of the builder. |
+| `js8086.js`    | Vendored reference 8086 CPU core. Used by the `conformance/ref-*.mjs` emulators. |
+| `peripherals.mjs` | PIC / PIT / keyboard controller classes that plug into `js8086.js`. |
+| `compare.mjs`  | Tick-by-tick diff between a CSS trace and a JS reference trace. Slated for consolidation into calcite-debugger. |
+| `compare-dos.mjs` | Same, for the DOS boot path. Slated for consolidation. |
+| `bin-to-c.py`  | Converts `.bin` files to C arrays (used by the Corduroy BIOS to embed the logo). |
+| `png-to-vga.py` | Converts PNGs to VGA Mode 13h palette data. |
+| `lib/bios-handlers.mjs` | JS implementations of BIOS INT handlers, bound to the `js8086` emulator. |
+| `lib/bios-symbols.mjs`  | Parses NASM `.lst` files to recover symbol offsets (e.g. `bios_init`). Used by the builder's BIOS stage. |
 
-## Usage
+## Not to be confused with
 
-```sh
-# Generate reference trace for a binary
-node tools/ref-emu.mjs program.bin > ref-trace.json
-
-# Compare calcite output against reference (requires calcite built)
-node tools/compare.mjs program.css ref-trace.json
-
-# Or use calcite's built-in conformance features
-cargo run -p calcite-cli -- program.css --trace-json > calcite-trace.json
-cargo run -p calcite-cli -- program.css --dump-tick 24
-```
-
-## Workflow
-
-1. Generate CSS from a test binary (via transpiler)
-2. Run reference emulator: `node tools/ref-emu.mjs test.bin`
-3. Run calcite on the generated CSS: `calcite test.css --trace-json`
-4. Compare traces: `node tools/compare.mjs`
-5. Fix divergences until they match tick-for-tick
-6. Scale up to more complex programs
+- `conformance/` — reference emulators that use these utilities.
+- `builder/` — the orchestrator. Invokes `mkfat12.mjs` and
+  `lib/bios-symbols.mjs` (indirectly) when building.
+- `kiln/` — the CSS transpiler; unrelated to anything here.

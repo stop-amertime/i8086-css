@@ -1,17 +1,22 @@
-# Generated output
-*.html
-!legacy/base_template.html
+# Generated cabinets (the .css output of the builder)
 *.css
-!legacy/base_template.css
+!player/*.css
 
-# Compiled binaries
+# HTML — we only have the player's index.html; everything else is scratch
+*.html
+!player/*.html
+
+# Compiled binaries and listings
 *.bin
+*.lst
 *.start
 *.o
+!bios/gossamer/gossamer.bin
+!bios/gossamer/gossamer.lst
 
-# Build outputs — binaries are small and needed, track them; listings are regenerable
-!build/*.bin
-build/*.lst
+# Build outputs
+bios/corduroy/build/
+bios/corduroy/bios.map
 
 # Node
 node_modules/
@@ -35,21 +40,20 @@ Thumbs.db
 # Playwright debug artifacts
 .playwright-mcp/
 
-# Trace/conformance artifacts
+# Trace / conformance artifacts (JSON dumps from ref emulators, etc.)
 *.json
 !package.json
 !package-lock.json
-!legacy/*.json
+!program.schema.json
+!carts/**/program.json
 
 # Disk images and archives
-dos/disk.img
 *.img
 *.zip
-nul
+
+# Builder cache
+.cache/
 
 # Ephemeral planning artifacts from superpowers workflow
 docs/superpowers/
 entry.err
-bios/build/
-bios/bios.map
-dos/config.sys

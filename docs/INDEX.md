@@ -1,70 +1,67 @@
-# CSS-DOS Documentation Index
+# CSS-DOS documentation index
 
-Pick the section you need. Don't read everything — read the minimum required
-for your current task.
+Start at the top, go as deep as you need.
 
 ## Start here
 
-| Doc | When to read |
-|-----|-------------|
-| [Logbook](logbook/LOGBOOK.md) | **ALWAYS. Before doing anything.** Current status, active bugs, recent decisions. |
-| [Architecture overview](architecture/overview.md) | When you need to understand how CSS-DOS works |
-| [Calcite relationship](architecture/calcite.md) | When your work touches calcite or CSS evaluation |
+| Doc | For |
+|---|---|
+| [`logbook/LOGBOOK.md`](logbook/LOGBOOK.md) | **Always, before any work.** Current status, active blocker, priorities. |
+| [`architecture.md`](architecture.md) | The tight overview: glossary, pipeline, cardinal rule, memory sketch. |
+| [`cart-format.md`](cart-format.md) | The cart schema. Canonical reference for `program.json`. |
 
-## Architecture (read when you need to understand *how things work*)
+## Building and running
 
-| Doc | Contents |
-|-----|----------|
-| [Overview](architecture/overview.md) | What CSS-DOS is, the cardinal rule, the canonical PC machine |
-| [V3 execution model](architecture/v3-execution-model.md) | uOp microcode, double buffer, cycle counter, memory model |
-| [CSS-BIOS](architecture/css-bios.md) | How BIOS interrupts work as microcode (INT 10h, 13h, 16h, etc.) |
-| [ROM disk plan](architecture/rom-disk-plan.md) | How disk I/O will work for large programs (Doom, etc.) |
-| [Calcite relationship](architecture/calcite.md) | Calcite as JIT for CSS, the cardinal rule from both sides |
-| [Architecture history](architecture/history.md) | v1 JSON, v2 transpiler, v3 microcode — why each transition |
+| Doc | For |
+|---|---|
+| [`building.md`](building.md) | End-to-end walkthrough: cart → cabinet. Covers the five stages and the toolchain. |
+| [`hack-path.md`](hack-path.md) | The raw `.COM` path (no DOS). Conformance testing, tiny demos. |
 
-## Reference (read when you need to *do a specific thing*)
+## The machine
 
-| Doc | Contents |
-|-----|----------|
-| [Transpiler agent guide](../transpiler/AGENT-GUIDE.md) | How to add/modify 8086 instructions in the transpiler |
-| [Conformance testing](reference/conformance-testing.md) | How to run tests, compare traces, find divergences |
-| [Debugging DOS kernel](reference/debugging-dos-kernel.md) | EDR-DOS internals, map file, Ralf Brown's, edrdos source |
-| [Tools reference](reference/tools.md) | NASM path, Playwright, generate-hacky vs generate-dos |
-| [Kernel boot sequence](reference/kernel-boot-sequence.md) | What EDR-DOS does during boot, what BIOS services it needs |
-| [Project layout](reference/project-layout.md) | File tree with what each directory/file does |
+| Doc | For |
+|---|---|
+| [`memory-layout.md`](memory-layout.md) | Every memory zone, rom-disk mechanics, the 0x4F0 pitfall. |
+| [`bios-flavors.md`](bios-flavors.md) | Gossamer / Muslin / Corduroy at a glance. Links to each BIOS's own README. |
+| `../bios/gossamer/README.md` | Gossamer in detail. |
+| `../bios/muslin/README.md` | Muslin in detail. |
+| `../bios/corduroy/README.md` | Corduroy in detail. |
+| `../kiln/README.md` | Kiln's layout + emit entry point. |
+| `../kiln/AGENT-GUIDE.md` | How to add a new instruction. |
 
-## Debugging (read when you're investigating a bug)
+## Debugging
 
-| Doc | Contents |
-|-----|----------|
-| [Debugging workflow](debugging/workflow.md) | Standard process: find divergence, diagnose, fix, verify |
-| [Known bugs & findings](debugging/known-bugs.md) | Bugs found and fixed, patterns to watch for |
-| [Calcite debugger](debugging/calcite-debugger.md) | HTTP API, endpoints, typical debugging sessions |
+| Doc | For |
+|---|---|
+| [`debugging/workflow.md`](debugging/workflow.md) | Standard process: find divergence, diagnose, fix, verify. |
+| [`debugging/calcite-debugger.md`](debugging/calcite-debugger.md) | HTTP API, endpoints, typical sessions. |
+| [`debugging/known-bugs.md`](debugging/known-bugs.md) | Known bugs + patterns to watch for. |
+| [`reference/kernel-boot-sequence.md`](reference/kernel-boot-sequence.md) | What EDR-DOS does during boot; what BIOS services it needs. |
+| [`reference/debugging-dos-kernel.md`](reference/debugging-dos-kernel.md) | EDR-DOS internals, map file, Ralf Brown's, edrdos source. |
+| `../conformance/README.md` | Reference emulators for diff testing. |
 
-## Logbook & coordination (read ALWAYS)
+## Logbook and coordination
 
-| Doc | Contents |
-|-----|----------|
-| **[LOGBOOK.md](logbook/LOGBOOK.md)** | **THE source of truth for project status.** Current state, active work, what's next. |
-| [Logbook protocol](logbook/PROTOCOL.md) | How to write logbook entries (mandatory for all agents) |
+| Doc | For |
+|---|---|
+| [`logbook/LOGBOOK.md`](logbook/LOGBOOK.md) | **THE source of truth for project status.** |
+| [`logbook/PROTOCOL.md`](logbook/PROTOCOL.md) | How to write logbook entries. |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | Repo-wide changelog, starting from the big rename. |
 
-## Plans (read when picking up or continuing a workstream)
+## Plans and archive
 
-Plans live in `docs/plans/`. Each plan is a self-contained task list with checkboxes.
+| Path | For |
+|---|---|
+| `plans/` | Per-workstream task lists. |
+| `archive/` | Completed specs, old plans, historical session notes. |
+| `superpowers/` | Brainstorming and planning artifacts from agent sessions. |
 
-## Archive
+## Calcite (sibling repo)
 
-Completed specs, old plans, and session notes live in `docs/archive/`. Read these
-only if you need historical context for a specific decision.
-
-## Calcite docs (sibling repo)
-
-These live in `../calcite/docs/` and cover the JIT compiler side:
-
-| Doc | Contents |
-|-----|----------|
-| `../calcite/docs/debugger.md` | HTTP debug server API (endpoints, workflows) |
-| `../calcite/docs/conformance-testing.md` | fulldiff.mjs, diagnose.mjs, ref-dos.mjs — full tool reference |
-| `../calcite/docs/codebug.md` | Co-execution debugger for side-by-side JS/calcite comparison |
-| `../calcite/docs/benchmarking.md` | Performance numbers, Chrome comparison |
-| `../calcite/CLAUDE.md` | Calcite architecture, cardinal rule, project layout |
+| Path | For |
+|---|---|
+| `../calcite/CLAUDE.md` | Calcite's architecture and cardinal rule. |
+| `../calcite/docs/debugger.md` | HTTP debug server API. |
+| `../calcite/docs/conformance-testing.md` | `fulldiff.mjs`, `diagnose.mjs`, `ref-dos.mjs`. |
+| `../calcite/docs/codebug.md` | Co-execution debugger for side-by-side JS/calcite comparison. |
+| `../calcite/docs/benchmarking.md` | Performance numbers, Chrome comparison. |

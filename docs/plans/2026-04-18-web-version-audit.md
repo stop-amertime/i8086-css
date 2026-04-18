@@ -14,7 +14,7 @@ files can run in a browser.
 | Category | Count | Meaning |
 |---|---|---|
 | A — move to adapter | 4 | I/O call sites inside shared code; refactor to accept bytes as argument |
-| B — shim | 3 | Small Node builtins with direct browser equivalents; apply globally |
+| B — shim | 2 | Small Node builtins with direct browser equivalents; apply globally |
 | C — leave alone | 25+ | Node-only orchestration code (`builder/build.mjs`, `builder/stages/`, `builder/lib/cart.mjs`) that is never imported by Kiln |
 | Misc | 1 | `mkfat12.mjs` CLI wrapper (process.argv / process.exit); leave in Node or split |
 
@@ -87,7 +87,10 @@ disappears entirely once presets are injected.
 ### builder/lib/config.mjs:7-8
 Calls: `const __dirname = dirname(fileURLToPath(import.meta.url))`  
 Purpose: locates `PRESETS_DIR` relative to the source file.  
-Category: **B — shim** (see note below on `import.meta.url`).
+Category: **A — subsumed** by the A-category refactor directly above. Once
+`resolveManifest()` receives presets as an argument, the `import.meta.url` +
+`path.join` idiom has no callee to locate and disappears on its own. No
+separate shim needed.
 
 ---
 
@@ -159,18 +162,41 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 ```
-Purpose: reads `dos/bin/kernel.sys` and (for hack carts) the `.COM` file from
-disk before calling into Kiln.  
-Category: **A — move to adapter**  
-Fix: `runKiln()` should accept `kernelBytes` and `programBytes` as pre-read
-`Uint8Array` / plain arrays, not load them itself. The Node caller
-(`builder/build.mjs`) reads the files and passes bytes in. The browser caller
-(`web/browser-builder/main.mjs`) gets bytes from the uploaded files or from
-`fetch()`.
+Purpose: reads `dos/bin/kernel.sys` (DOS branch) and the `.COM` file named in
+`manifest.boot.raw` (hack branch) from disk before calling into Kiln.  
+Category: **A — move to adapter**
 
-After this refactor, `builder/stages/kiln.mjs` may be left as a thin Node-side
-wrapper, or it can be turned into a pure function that Kiln's web adapter also
-uses.
+**Public export:** `runKiln({ bios, floppy, manifest, cart, output, header })`
+is the single exported function. It dispatches internally to `runKilnDos` (DOS
+preset) and `runKilnHack` (hack preset), both of which call `readFileSync`
+today. These internal helpers are not exported and callers do not reference
+them by name.
+
+**Two refactor options for Task 3 to choose between:**
+
+Option A — keep `runKiln`'s signature, move `readFileSync` inward:
+- `runKiln` itself reads the required bytes before dispatching:
+  `kernelBytes` from `dos/bin/kernel.sys` (DOS branch) and `programBytes`
+  from `resolve(cart.root, manifest.boot.raw)` (hack branch).
+- Both internal helpers receive the bytes as a parameter instead of calling
+  `readFileSync` themselves.
+- The public signature of `runKiln` is unchanged; the browser adapter still
+  replaces this whole stage with its own entry point that fetches bytes via
+  `fetch()` and calls into Kiln's `emitCSS()` directly.
+- **Pro:** minimal diff; callers don't need to know which bytes are required.
+- **Con:** `builder/stages/kiln.mjs` still owns I/O — the stage is not a pure
+  function and cannot be shared with browser code as-is.
+
+Option B — push `readFileSync` out to the caller (`builder/build.mjs`):
+- `runKiln` gains explicit `kernelBytes` and `programBytes` parameters.
+- `builder/build.mjs` is responsible for reading both files before calling
+  `runKiln`.
+- The browser caller (`web/browser-builder/main.mjs`) also supplies the bytes
+  (from `fetch()` or the uploaded `FileList`).
+- After this refactor, `builder/stages/kiln.mjs` has zero `readFileSync` calls
+  and can be imported by browser code directly if desired.
+- **Pro:** stage becomes a pure function; easier to test; can be shared.
+- **Con:** caller must know in advance which bytes are needed (slight coupling).
 
 ---
 
@@ -214,7 +240,7 @@ template literals (e.g., `` `${dir}/${file}` ``).
 |---|---|---|
 | 1 | `tools/mkfat12.mjs` | Extract `buildFat12Image(files)` pure function; leave CLI shell as Node wrapper |
 | 2 | `builder/lib/config.mjs` | Add `presets` parameter to `resolveManifest()`; callers supply preset JSON |
-| 3 | `builder/stages/kiln.mjs` | Add `kernelBytes` / `programBytes` parameters to `runKilnDos` / `runKilnHack`; remove `readFileSync` calls from the function |
+| 3 | `builder/stages/kiln.mjs` | Remove `readFileSync` from the internal DOS and hack branches; see the two options in the detailed section — Task 3 picks one. Public export `runKiln` unchanged either way. |
 | 4 | `kiln/` (all files) | No changes needed — already browser-compatible |
 | 5 | `builder/lib/cart.mjs` | No changes needed — replaced entirely by browser-side `FileList` handling |
 | 6 | `builder/stages/bios.mjs` | No changes needed — replaced by `prebake-loader.mjs` in browser |

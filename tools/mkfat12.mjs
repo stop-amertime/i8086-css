@@ -49,8 +49,8 @@ export function buildFat12Image(files) {
   const SECTOR_SIZE = 512;
   const RESERVED_SECTORS = 1;    // boot sector
   const NUM_FATS = 2;
-  const ROOT_DIR_ENTRIES = 16;   // small root dir (16 entries = 1 sector)
-  const ROOT_DIR_SECTORS = Math.ceil(ROOT_DIR_ENTRIES * 32 / SECTOR_SIZE); // 1
+  const ROOT_DIR_ENTRIES = 224;  // standard 1.44 MB floppy root dir (14 sectors)
+  const ROOT_DIR_SECTORS = Math.ceil(ROOT_DIR_ENTRIES * 32 / SECTOR_SIZE); // 14
 
   // --- Compute disk size from content ---
   let dataSectorsNeeded = 0;

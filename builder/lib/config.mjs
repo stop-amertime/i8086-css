@@ -19,7 +19,7 @@ const VALID_PRESETS = ['dos-muslin', 'dos-corduroy', 'hack'];
 export function resolveManifest(manifest, files, presets = {}) {
   const errors = [];
 
-  const presetName = manifest.preset ?? 'dos-muslin';
+  const presetName = manifest.preset ?? 'dos-corduroy';
   if (!VALID_PRESETS.includes(presetName)) {
     errors.push(`preset: must be one of ${VALID_PRESETS.join(', ')}; got ${JSON.stringify(presetName)}`);
   } else if (presets[presetName] === undefined) {

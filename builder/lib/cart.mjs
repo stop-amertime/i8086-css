@@ -6,7 +6,7 @@
 //     files: [{ name, path, source }]  (discovered from folder contents),
 //     manifest: program.json (parsed, or {}) }
 
-import { readFileSync, readdirSync, statSync, existsSync, mkdtempSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync, mkdtempSync, copyFileSync } from 'node:fs';
 import { join, resolve, basename, extname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -26,7 +26,12 @@ export function resolveCart(inputPath) {
     root = unzipToTemp(abs);
     displayName = basename(abs, '.zip');
   } else {
-    throw new Error(`cart must be a folder or a .zip: ${abs}`);
+    const ext = extname(abs).toLowerCase();
+    if (ext !== '.com' && ext !== '.exe') {
+      throw new Error(`cart must be a folder, a .zip, or a bare .com/.exe: ${abs}`);
+    }
+    root = wrapBareProgram(abs);
+    displayName = basename(abs, ext);
   }
 
   const manifestPath = join(root, 'program.json');
@@ -65,6 +70,15 @@ function to83(name) {
   const stem = up.slice(0, dot).replace(/[^A-Z0-9_]/g, '').slice(0, 8);
   const ext = up.slice(dot + 1).replace(/[^A-Z0-9]/g, '').slice(0, 3);
   return ext ? `${stem}.${ext}` : stem;
+}
+
+function wrapBareProgram(programPath) {
+  // Synthesise a 1-file cart folder around a loose .com/.exe so the rest of
+  // the pipeline can treat it uniformly. No program.json is written — the
+  // default preset applies, same as any manifest-less cart folder.
+  const out = mkdtempSync(join(tmpdir(), 'cart-bare-'));
+  copyFileSync(programPath, join(out, basename(programPath)));
+  return out;
 }
 
 function unzipToTemp(zipPath) {

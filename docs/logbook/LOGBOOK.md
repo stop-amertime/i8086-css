@@ -3,7 +3,7 @@
 **This is the single source of truth for project status.** Every agent MUST
 read this before starting work and MUST update it before finishing.
 
-Last updated: 2026-04-18 (session 11c — Doom8088 blockers #25/#26/#27/#28 landed)
+Last updated: 2026-04-18 (session 11d — launcher tidy-up, builder defaults, preset tracking)
 
 ---
 
@@ -152,14 +152,12 @@ Recently completed (session 11c, 2026-04-18):
 ## Uncommitted work
 
 ### CSS-DOS repo
-- **`big-rename` branch** — the session 11 restructure, ready to commit as a
-  series of logical commits. See `CHANGELOG.md`.
+- None from this session.
 
 ### Calcite repo
-- `run.bat` / `run-web.bat` / `run-js.bat` / `serve.mjs` — still reference
-  old CSS-DOS generator paths. Broken by the big rename. Refactor deferred
-  to a separate session — these need rewriting against the new `builder/`,
-  not just path substitutions.
+- Session 11d reconnected `run-web.bat` → `builder/build.mjs` via the
+  CLI launcher. `run.bat`, `run-js.bat`, and `serve.mjs` are still the
+  old generator shape and remain deferred.
 - Other prior uncommitted work from earlier sessions — unchanged by this
   session.
 
@@ -168,6 +166,58 @@ Recently completed (session 11c, 2026-04-18):
 ## Entry log
 
 Newest entries first. See `docs/logbook/PROTOCOL.md` for how to write entries.
+
+### 2026-04-18 — Session 11d: launcher tidy-up, builder defaults, preset tracking
+
+**What:** Post-big-rename housekeeping. The calcite launcher was still
+invoking `transpiler/generate-dos.mjs` (gone since session 11b), so every
+cart built via `run-web.bat` / the calcite CLI menu silently failed. Built
+the missing bridge, and while there, cleaned up a few defaults that had
+crept in wrong. Default DOS BIOS is now Corduroy (user request).
+
+**CSS-DOS changes:**
+
+- `.gitignore` — removed blanket `*.json`. It was swallowing `builder/presets/*.json`
+  so fresh checkouts couldn't resolve any DOS preset. Replaced with focused
+  `*-trace.json` / `trace-*.json` / `ref-trace.json` rules plus `.claude/`.
+- `builder/presets/{dos-muslin,dos-corduroy,hack}.json` — now tracked.
+  Also dropped `"autorun": null` from the two DOS presets so auto-detection
+  fires when a cart has exactly one `.com`/`.exe` (the explicit null was
+  satisfying the `=== undefined` check at `config.mjs:40` and preventing
+  auto-run, always landing at a COMMAND.COM prompt).
+- `builder/lib/cart.mjs` — `resolveCart` accepts a bare `.com`/`.exe`. It
+  copies the file into a scratch temp dir and runs the normal cart pipeline
+  from there. Uniform handling; no special `hack-cart-only` path.
+- `builder/lib/config.mjs` — default preset flipped from `dos-muslin` to
+  `dos-corduroy`. Muslin stays available via `"preset": "dos-muslin"`.
+- `tools/mkfat12.mjs` — root directory bumped from 16 entries (1 sector)
+  to 224 (14 sectors, standard 1.44 MB floppy). Sokoban's 84 files plus
+  KERNEL.SYS/CONFIG.SYS/COMMAND.COM overflowed the old 16. BPB's
+  RootEntries field is derived from the same constant, so the kernel
+  reads the new geometry via the BPB; no other code assumes 16.
+
+**Calcite changes (sibling repo):**
+
+- `crates/calcite-cli/src/menu.rs` — `resolve_to_css` now invokes
+  `../CSS-DOS/builder/build.mjs` instead of the gone `generate-dos.mjs`.
+  `Entry::Program` replaces `{ exec, siblings }` with `{ cart, is_dir }`.
+  Subdirectories under `programs/` now surface as one entry each (was
+  one entry per .com/.exe inside, duplicating carts with multiple
+  runnables). Dropped the old `calc-mem.mjs` invocation and the
+  `--data`/`--mem` flags — `builder/build.mjs` discovers files from the
+  cart folder itself.
+- `tools/serve-web.mjs` — tightened `Cache-Control` to match
+  `serve.py`: `no-store, no-cache, must-revalidate, max-age=0` + `Pragma: no-cache`.
+
+**Known limits / deferred:**
+
+- Corduroy can't load COMMAND.COM. CONFIG.SYS `SHELL=\COMMAND.COM` boots
+  fine under Muslin but prints "Bad or missing command interpreter" under
+  Corduroy. Not investigated this session — auto-detect for single-runnable
+  carts sidesteps it (no COMMAND.COM on disk when autorun is set).
+- `calcite/run.bat`, `run-js.bat`, `serve.mjs` (from the session 11b
+  deferred list) still reference old paths. This session only unblocked
+  the `run-web.bat` path.
 
 ### 2026-04-18 — Session 11c: Doom8088 blockers #25/#26/#27/#28
 

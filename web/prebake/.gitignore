@@ -1,0 +1,6 @@
+# Intermediate NASM listing files — not deliverables
+*.lst
+
+# Allow the prebaked binary and JSON artifacts
+!*.bin
+!*.json

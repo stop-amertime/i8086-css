@@ -169,6 +169,7 @@ const calciteCmdParts = [
   '--ticks', String(calciteTicks),
   '--trace-json',
   '--halt=halt',
+  '--screen-interval=0',
 ];
 // Forward --key-events to calcite for keyboard injection
 if (keyEvents.length > 0) {
@@ -188,12 +189,17 @@ try {
   if (e.stderr) console.error('calcite stderr:', e.stderr.slice(0, 500));
 }
 
-// Parse calcite JSON trace (last non-empty line is the JSON array)
+// Parse calcite JSON trace. Calcite emits a single JSON array; --screen-interval=0
+// suppresses per-tick ANSI rendering but a leading ANSI screen-clear (e.g. \x1b[2J\x1b[H)
+// may still prefix the output. Find the first '[' of the array start.
 const calciteTrace = [];
 const lines = calciteOutput.trim().split('\n');
 for (let i = lines.length - 1; i >= 0; i--) {
+  const line = lines[i];
+  const start = line.indexOf('[{');
+  if (start < 0) continue;
   try {
-    const arr = JSON.parse(lines[i]);
+    const arr = JSON.parse(line.slice(start));
     if (Array.isArray(arr)) {
       calciteTrace.push(...arr);
       break;
@@ -223,10 +229,12 @@ function normaliseIP(state) {
 }
 
 // Advance Calcite cursor to match the ref emulator's post-instruction state.
-// This handles both multi-μop instructions (PUSH, INT — uOp > 0 during mid-
-// instruction ticks) and multi-iteration REP (uOp stays 0 but IP doesn't
-// advance until all iterations complete).
-// Strategy: advance until calcite's IP matches the target IP.
+// v4 CSS is single-cycle: every tick is an instruction boundary (uOp is
+// absent from the trace, equivalent to 0). The legacy v3 trace had a uOp
+// field that needed to return to 0 before comparing; we treat missing uOp
+// as 0 for backward compatibility.
+// Also handles multi-iteration REP, where IP doesn't advance until all
+// iterations complete.
 function advanceToIP(trace, cursor, targetIP, limit = 500) {
   let j = cursor;
   const end = Math.min(trace.length, cursor + limit);
@@ -234,7 +242,8 @@ function advanceToIP(trace, cursor, targetIP, limit = 500) {
     const calIP = trace[j].CS > 0
       ? trace[j].CS * 16 + trace[j].IP
       : trace[j].IP;
-    if (calIP === targetIP && trace[j].uOp === 0) {
+    const uOp = trace[j].uOp ?? 0;
+    if (calIP === targetIP && uOp === 0) {
       return j;
     }
     j++;

@@ -1,0 +1,6 @@
+{
+  "bios": "gossamer",
+  "memory": { "conventional": "autofit", "gfx": false, "textVga": true },
+  "disk":   null,
+  "boot":   {}
+}

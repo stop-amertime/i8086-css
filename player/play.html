@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CSS-DOS player</title>
+  <link rel="stylesheet" href="assets/player.css">
+  <link rel="stylesheet" href="/cabinet.css">
+</head>
+<body>
+  <div id="debug-log" style="position:fixed;top:0;left:0;right:0;background:#ff0;color:#000;font-family:monospace;font-size:11px;padding:4px;z-index:9999;max-height:40vh;overflow:auto;white-space:pre-wrap;"></div>
+  <script>
+    const log = (m) => { document.getElementById('debug-log').textContent += m + '\n'; console.log(m); };
+    log('play.html loaded at ' + location.href);
+    log('document.styleSheets count: ' + document.styleSheets.length);
+    window.addEventListener('load', () => {
+      log('---window load fired---');
+      for (const s of document.styleSheets) {
+        try {
+          log('sheet href=' + s.href + ' rules=' + s.cssRules.length + ' disabled=' + s.disabled);
+        } catch (e) {
+          log('sheet href=' + s.href + ' ERROR: ' + e.message);
+        }
+      }
+      const body = getComputedStyle(document.body);
+      log('body bg=' + body.backgroundColor + ' color=' + body.color);
+      const cpu = document.querySelector('.cpu');
+      if (cpu) {
+        const cs = getComputedStyle(cpu);
+        log('.cpu bg=' + cs.backgroundColor + ' display=' + cs.display + ' w=' + cs.width + ' h=' + cs.height);
+      } else { log('.cpu NOT FOUND'); }
+      const screen = document.querySelector('.screen');
+      if (screen) {
+        const cs = getComputedStyle(screen);
+        log('.screen bg=' + cs.backgroundColor + ' w=' + cs.width + ' h=' + cs.height);
+      } else { log('.screen NOT FOUND'); }
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        log('SW regs: ' + regs.length);
+        regs.forEach(r => log(' SW scope=' + r.scope + ' active=' + !!r.active));
+      });
+      fetch('/cabinet.css').then(r => {
+        log('/cabinet.css status=' + r.status + ' type=' + r.headers.get('content-type'));
+        return r.text();
+      }).then(t => log('/cabinet.css bytes=' + t.length + ' first80=' + t.slice(0, 80)));
+      fetch('assets/player.css').then(r => log('assets/player.css status=' + r.status));
+    });
+  </script>
+  <div class="clock">
+    <div class="cpu">
+      <div class="screen"></div>
+      <key-board class="kb-layout">
+        <div class="kb-main">
+          <!-- number row -->
+          <button id="kb-1">1</button><button id="kb-2">2</button><button id="kb-3">3</button><button id="kb-4">4</button><button id="kb-5">5</button>
+          <button id="kb-6">6</button><button id="kb-7">7</button><button id="kb-8">8</button><button id="kb-9">9</button><button id="kb-0">0</button>
+          <!-- QWERTY -->
+          <button id="kb-q">Q</button><button id="kb-w">W</button><button id="kb-e">E</button><button id="kb-r">R</button><button id="kb-t">T</button>
+          <button id="kb-y">Y</button><button id="kb-u">U</button><button id="kb-i">I</button><button id="kb-o">O</button><button id="kb-p">P</button>
+          <!-- ASDF -->
+          <button id="kb-a">A</button><button id="kb-s">S</button><button id="kb-d">D</button><button id="kb-f">F</button><button id="kb-g">G</button>
+          <button id="kb-h">H</button><button id="kb-j">J</button><button id="kb-k">K</button><button id="kb-l">L</button><button id="kb-enter" class="kb-wide">&#8629;</button>
+          <!-- ZXCV -->
+          <button id="kb-z">Z</button><button id="kb-x">X</button><button id="kb-c">C</button><button id="kb-v">V</button><button id="kb-b">B</button>
+          <button id="kb-n">N</button><button id="kb-m">M</button><button id="kb-space" class="kb-space">&#9251;</button>
+        </div>
+        <div class="kb-side">
+          <div class="kb-mods">
+            <button id="kb-esc">Esc</button><button id="kb-tab">Tab</button><button id="kb-bksp">Bksp</button>
+          </div>
+          <div class="kb-arrows">
+            <button id="kb-up">&#8593;</button>
+            <button id="kb-left">&#8592;</button><button id="kb-down">&#8595;</button><button id="kb-right">&#8594;</button>
+          </div>
+        </div>
+      </key-board>
+    </div>
+  </div>
+</body>
+</html>

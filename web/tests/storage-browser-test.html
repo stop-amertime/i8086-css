@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<title>storage.mjs manual test</title>
+<script type="module">
+import { saveCabinet, hasCabinet, getCabinet, deleteCabinet } from '../browser-builder/storage.mjs';
+
+const results = document.body;
+function log(msg, pass) {
+  const p = document.createElement('p');
+  p.textContent = (pass ? 'PASS: ' : 'FAIL: ') + msg;
+  p.style.color = pass ? 'green' : 'red';
+  results.appendChild(p);
+}
+
+async function run() {
+  await deleteCabinet();
+  log('initial hasCabinet is false', !(await hasCabinet()));
+  const b = new Blob(['.foo { color: red; }'], { type: 'text/css' });
+  await saveCabinet(b);
+  log('after save, hasCabinet is true', await hasCabinet());
+  const r = await getCabinet();
+  log('retrieved response is ok', r && r.ok);
+  const text = await r.text();
+  log('retrieved content matches', text === '.foo { color: red; }');
+  await deleteCabinet();
+  log('after delete, hasCabinet is false', !(await hasCabinet()));
+}
+run();
+</script>

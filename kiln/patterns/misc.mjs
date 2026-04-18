@@ -541,7 +541,12 @@ export function picPendingDefaultExpr() {
  * Compute properties for IRQ delivery. Emitted as standalone lines in
  * the .cpu rule — not dispatch-routed.
  *
- *   --_kbdEdge:     1 iff --keyboard went from 0 last tick to non-zero now.
+ *   --_kbdPress:    1 iff --keyboard went 0 → non-zero this tick (make code).
+ *   --_kbdRelease:  1 iff --keyboard went non-zero → 0 this tick (break code).
+ *   --_kbdEdge:     --_kbdPress | --_kbdRelease — either raises IRQ 1.
+ *   --_kbdPort60:   what port 0x60 IN returns on this tick. Normally the
+ *                   current scancode (high byte of --keyboard). On a release
+ *                   tick, the previous scancode with bit 7 set (break code).
  *   --_picEffective: pending-and-unmasked IRQs, masked to 0 when another
  *                    IRQ is already in service (prevents nesting).
  *   --_ifFlag:      interrupt-enable flag (bit 9 of FLAGS).
@@ -554,12 +559,29 @@ export function picPendingDefaultExpr() {
  * Phase 3 only handles IRQ 0 (timer) and IRQ 1 (keyboard) — the only ones
  * Doom8088 cares about. Adding more IRQs would generalize --picVector
  * and --_irqBit through a lowestBit helper like v3's irq.mjs did.
+ *
+ * Break-scancode synthesis (#27): Doom8088 tracks held keys via the high bit
+ * of scancodes read from port 0x60. On a release tick we fire IRQ 1 and port
+ * 0x60 must return the *previous* scancode with bit 7 set.
  */
 export function emitIRQCompute() {
-  const kbdEdge = `if(
+  const kbdPress = `if(
     style(--keyboard: 0): 0;
     style(--__1prevKeyboard: 0): 1;
     else: 0
+  )`;
+  const kbdRelease = `if(
+    style(--__1prevKeyboard: 0): 0;
+    style(--keyboard: 0): 1;
+    else: 0
+  )`;
+  // On a release tick --keyboard is 0, so port 0x60 would normally return 0.
+  // Substitute prevKeyboard_scancode | 0x80 instead. On a non-release tick
+  // return the current scancode. Guard against a release with prevKeyboard=0
+  // (can't happen by construction of --_kbdRelease, but keep it defensive).
+  const kbdPort60 = `if(
+    style(--_kbdRelease: 1): --or(--rightShift(var(--__1prevKeyboard), 8), 128);
+    else: --rightShift(var(--keyboard), 8)
   )`;
   const picEffective = `if(
     style(--__1picInService: 0): --and(var(--__1picPending), --not(var(--__1picMask)));
@@ -567,7 +589,10 @@ export function emitIRQCompute() {
   )`;
   return [
     `  /* IRQ delivery state */`,
-    `  --_kbdEdge: ${kbdEdge};`,
+    `  --_kbdPress: ${kbdPress};`,
+    `  --_kbdRelease: ${kbdRelease};`,
+    `  --_kbdEdge: --or(var(--_kbdPress), var(--_kbdRelease));`,
+    `  --_kbdPort60: ${kbdPort60};`,
     `  --_picEffective: ${picEffective};`,
     `  --_ifFlag: --bit(var(--__1flags), 9);`,
     `  --_irqActive: if(style(--_ifFlag: 0): 0; style(--_picEffective: 0): 0; else: 1);`,
@@ -581,7 +606,9 @@ export function emitIRQCompute() {
  * I/O port instructions: IN and OUT.
  *
  * Reads:
- *   Port 0x60 (keyboard) returns the low byte of --keyboard (scancode).
+ *   Port 0x21 (PIC data) returns --picMask. Programs that do the standard
+ *     read-modify-write (in al,0x21; and al,~bit; out 0x21,al) rely on this.
+ *   Port 0x60 (keyboard) returns the scancode (high byte of --keyboard).
  *   All other ports return 0.
  *
  * Writes (state lives in --picMask/--picInService/--pitMode/--pitReload/
@@ -616,28 +643,37 @@ export function emitIRQCompute() {
 export function emitIO(dispatch) {
   // --- Reads ---
 
-  // IN AL, imm8 (0xE4): port 0x60 → scancode = rightShift(keyboard, 8)
+  // IN AL, imm8 (0xE4):
+  //   port 0x21 → picMask (so programs can read-modify-write the mask)
+  //   port 0x60 → scancode = rightShift(keyboard, 8)
+  //   other    → 0
   dispatch.addEntry('AX', 0xE4,
-    `--mergelow(var(--__1AX), if(style(--q1: 96): --rightShift(var(--__1keyboard), 8); else: 0))`,
-    `IN AL, imm8 (port 0x60=scancode)`);
+    `--mergelow(var(--__1AX), if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--_kbdPort60); else: 0))`,
+    `IN AL, imm8 (0x21=picMask, 0x60=kbdPort60)`);
   dispatch.addEntry('IP', 0xE4, `calc(var(--__1IP) + 2)`, `IN AL, imm8`);
 
-  // IN AX, imm8 (0xE5): port 0x60 → full keyboard word
+  // IN AX, imm8 (0xE5):
+  //   port 0x21 → picMask
+  //   port 0x60 → full keyboard word
   dispatch.addEntry('AX', 0xE5,
-    `if(style(--q1: 96): var(--__1keyboard); else: 0)`,
-    `IN AX, imm8 (port 0x60=keyboard)`);
+    `if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--__1keyboard); else: 0)`,
+    `IN AX, imm8 (0x21=picMask, 0x60=keyboard)`);
   dispatch.addEntry('IP', 0xE5, `calc(var(--__1IP) + 2)`, `IN AX, imm8`);
 
-  // IN AL, DX (0xEC): DX=0x60 → scancode
+  // IN AL, DX (0xEC):
+  //   DX=0x21 → picMask
+  //   DX=0x60 → scancode
   dispatch.addEntry('AX', 0xEC,
-    `--mergelow(var(--__1AX), if(style(--__1DX: 96): --rightShift(var(--__1keyboard), 8); else: 0))`,
-    `IN AL, DX (port 0x60=scancode)`);
+    `--mergelow(var(--__1AX), if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--_kbdPort60); else: 0))`,
+    `IN AL, DX (0x21=picMask, 0x60=kbdPort60)`);
   dispatch.addEntry('IP', 0xEC, `calc(var(--__1IP) + 1)`, `IN AL, DX`);
 
-  // IN AX, DX (0xED): DX=0x60 → keyboard word
+  // IN AX, DX (0xED):
+  //   DX=0x21 → picMask
+  //   DX=0x60 → full keyboard word
   dispatch.addEntry('AX', 0xED,
-    `if(style(--__1DX: 96): var(--__1keyboard); else: 0)`,
-    `IN AX, DX (port 0x60=keyboard)`);
+    `if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--__1keyboard); else: 0)`,
+    `IN AX, DX (0x21=picMask, 0x60=keyboard)`);
   dispatch.addEntry('IP', 0xED, `calc(var(--__1IP) + 1)`, `IN AX, DX`);
 
   // --- Writes ---

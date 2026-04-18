@@ -6,6 +6,7 @@
 
 global int01h_handler
 global int08h_handler
+global int09h_handler
 global int10h_handler
 global int11h_handler
 global int12h_handler
@@ -26,7 +27,8 @@ section _TEXT public align=1 class=CODE use16
 ; ============================================================
 ; Constants
 ; ============================================================
-DISK_SEG    equ 0xD000          ; Disk image loaded here (linear 0xD0000)
+DISK_SEG    equ 0xD000          ; Disk window (linear 0xD0000, 512 bytes, dispatched by CSS)
+disk_lba    equ 0x4F0           ; LBA register, linear 0x4F0 via 0x0000:0x04F0 (BDA intra-app area)
 BDA_SEG     equ 0x0040          ; BIOS Data Area segment
 BIOS_SEG    equ 0xF000          ; BIOS code segment
 VGA_SEG     equ 0xB800          ; VGA text mode segment
@@ -586,8 +588,13 @@ int13h_handler:
     iret
 
 .disk_read:
-    ; AH=02h: Read sectors
+    ; AH=02h: Read sectors via rom-disk window.
     ; AL=count, CH=cylinder, CL=sector(1-based), DH=head, DL=drive, ES:BX=dest
+    ;
+    ; Protocol: for each sector, write current LBA word to physical [0x4F0]
+    ; (linear, via segment 0). CSS dispatches reads to 0xD0000..0xD01FF by
+    ; looking up that LBA word, so a REP MOVSW from DS=0xD000 SI=0 produces
+    ; the sector bytes. Then LBA++, DI advances by 512, loop.
     push bp
     mov bp, sp
     push ds
@@ -597,7 +604,7 @@ int13h_handler:
     push dx
     push cx
 
-    ; Reload from stack since we need all values
+    ; Reload to get dx/cx values
     pop cx
     pop dx
     push dx
@@ -618,50 +625,52 @@ int13h_handler:
     mov si, ax
     xor ch, ch
     dec cl                 ; sector is 1-based
-    add si, cx             ; SI = LBA
+    add si, cx             ; SI = LBA (starting)
 
-    ; Source segment = DISK_SEG + LBA * 32
-    mov ax, si
-    mov cl, 5
-    shl ax, cl
-    add ax, DISK_SEG
-    mov ds, ax
-    xor si, si
+    ; Reclaim original count (AL) from stack
+    pop cx                 ; cx (saved)
+    pop dx                 ; dx (saved)
+    pop ax                 ; ax (saved) — AL = sector count
+    xor ah, ah
+    mov cx, ax             ; CX = sector count
+    push cx                ; preserve original count for return (AL)
 
-    ; Destination = ES:BX
+    ; Destination offset = BX (segment already in ES)
     mov di, bx
 
-    ; Count
-    pop cx
-    pop dx
-    pop ax
-    xor ah, ah
-    mov cx, ax
-    push cx
+    ; SI currently = starting LBA. We'll keep LBA in BX across the loop
+    ; because SI needs to be 0 for MOVSW from the disk window.
+    mov bx, si
 
-    ; Copy CX sectors * 512 bytes
 .read_sector_loop:
-    push cx
-    mov cx, 256
-.read_word_loop:
-    mov ax, [si]
+    ; Write BX (LBA) to linear [0x4F0] as a word via segment 0.
     push ds
-    push bx
-    mov bx, es
-    mov ds, bx
-    mov [di], ax
-    pop bx
+    push ax
+    xor ax, ax
+    mov ds, ax
+    mov [disk_lba], bx     ; word write: low at 0x4F0, high at 0x4F1
+    pop ax
     pop ds
-    add si, 2
-    add di, 2
-    dec cx
-    jnz .read_word_loop
-    pop cx
+
+    ; Copy 256 words from DS=DISK_SEG:SI=0 to ES:DI
+    push cx                ; save outer sector count
+    push ds
+    mov si, DISK_SEG
+    mov ds, si
+    xor si, si
+    mov cx, 256
+    cld
+    rep movsw
+    pop ds
+    pop cx                 ; restore sector count
+
+    ; Next sector: LBA++, DI already advanced by 512 by REP MOVSW
+    inc bx
     dec cx
     jnz .read_sector_loop
 
     ; Success
-    pop ax                 ; AL = sectors read
+    pop ax                 ; AL = sectors read (original count)
     xor ah, ah
     clc
     pop di
@@ -822,8 +831,74 @@ int08h_handler:
     mov byte [new_day], 1
 .no_midnight:
     int 0x1C               ; User timer tick hook
+    ; EOI to PIC (IRQ 0) — must be last so a nested exception during INT 1Ch
+    ; still sees picInService set and clears its own bit cleanly.
+    mov al, 0x20
+    out 0x20, al
     pop ds
     pop dx
+    pop ax
+    iret
+
+; ============================================================
+; INT 09h — Keyboard IRQ (IRQ1)
+; Reads scancode from port 0x60, pushes (scancode<<8 | ascii) into the BDA
+; ring buffer so INT 16h works, toggles port 0x61 bit 7 to ack the keyboard
+; controller, then EOIs the PIC. The --keyboard CSS property already packs
+; (scancode<<8 | ascii) into the low word: port 0x60 IN returns the scancode
+; (high byte), and we look up ASCII via scancode2ascii[] since we can't read
+; the low byte directly from the port.
+; ============================================================
+int09h_handler:
+    push ax
+    push bx
+    push cx
+    push ds
+    mov ax, BDA_SEG
+    mov ds, ax
+
+    ; Read scancode from keyboard port.
+    in al, 0x60            ; AL = scancode
+    mov ah, al             ; keep a copy in AH for BDA word high byte
+    xor bh, bh
+    mov bl, al             ; BX = scancode (for ASCII LUT)
+    cmp bl, 0x80
+    jae .ack               ; break code (high bit set) — don't buffer
+
+    ; Look up ASCII in table; entries are 1 byte each, indexed by scancode.
+    mov al, [cs:scancode2ascii + bx]
+    ; AH = scancode, AL = ASCII → AX = BIOS key word.
+
+    ; Append to BDA ring buffer if there's space.
+    mov bx, [kbd_buffer_tail]
+    mov cx, bx
+    add cx, 2
+    cmp cx, [kbd_buffer_end]
+    jb .no_wrap
+    mov cx, [kbd_buffer_start]
+.no_wrap:
+    cmp cx, [kbd_buffer_head]
+    je .ack                ; buffer full — drop the key
+    mov [bx], ax
+    mov [kbd_buffer_tail], cx
+
+.ack:
+    ; Ack keyboard controller: pulse port 0x61 bit 7 high then low. Real PCs
+    ; need this; in CSS it's a harmless OUT to an unhandled port.
+    in al, 0x61
+    mov ah, al
+    or al, 0x80
+    out 0x61, al
+    mov al, ah
+    out 0x61, al
+
+    ; EOI to PIC (IRQ 1) — last, as with INT 08h.
+    mov al, 0x20
+    out 0x20, al
+
+    pop ds
+    pop cx
+    pop bx
     pop ax
     iret
 
@@ -947,7 +1022,7 @@ interrupt_table:
     dw int_dummy            ; INT 06 - Invalid opcode
     dw int_dummy            ; INT 07 - Coprocessor N/A
     dw int08h_handler       ; INT 08 - IRQ0 Timer
-    dw int_dummy            ; INT 09 - IRQ1 Keyboard (no hw kbd)
+    dw int09h_handler       ; INT 09 - IRQ1 Keyboard
     dw int_dummy            ; INT 0A - IRQ2
     dw int_dummy            ; INT 0B - IRQ3
     dw int_dummy            ; INT 0C - IRQ4
@@ -1013,4 +1088,26 @@ disk_param_table:
     db 0xF6                ; fill byte for format
     db 0x0F                ; head settle time (ms)
     db 0x08                ; motor start time (1/8 sec units)
+
+; ============================================================
+; Scancode → ASCII lookup for INT 09h.
+; 128 entries, indexed by make-code (0x00-0x7F). Unassigned = 0.
+; Matches the (scancode, ascii) pairs in kiln/template.mjs KEYBOARD_KEYS —
+; only keys the CSS :active keyboard can produce are mapped; everything
+; else is 0 (a non-character scancode that INT 16h callers treat as "no
+; ASCII", e.g. arrow keys).
+; ============================================================
+scancode2ascii:
+    db 0x00, 0x1B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00   ; 00 Esc
+    db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x09   ; 0E Bksp, 0F Tab
+    db 0x71, 0x77, 0x65, 0x72, 0x74, 0x79, 0x75, 0x69   ; 10-17 QWERTYUI
+    db 0x6F, 0x70, 0x00, 0x00, 0x0D, 0x00, 0x61, 0x73   ; 18 O, 19 P, 1C Enter, 1E A, 1F S
+    db 0x64, 0x66, 0x67, 0x68, 0x6A, 0x6B, 0x6C, 0x00   ; 20-27 DFGHJKL
+    db 0x00, 0x00, 0x00, 0x00, 0x7A, 0x78, 0x63, 0x76   ; 2C-2F ZXCV
+    db 0x62, 0x6E, 0x6D, 0x00, 0x00, 0x00, 0x00, 0x00   ; 30-32 BNM
+    db 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00   ; 39 Space
+    db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00   ; 40-47
+    db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00   ; 48 Up, 4B Left, 4D Right (all ASCII=0)
+    db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00   ; 50 Down
+    times 0x80 - ($ - scancode2ascii) db 0x00
 

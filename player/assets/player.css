@@ -1,0 +1,110 @@
+/* player.css — keyboard grid + beveled button look for CSS-DOS player */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #000;
+  color: #ccc;
+  font-family: monospace;
+}
+
+/* ---- Screen ---- */
+.clock { container-type: inline-size; }
+
+.screen {
+  width: 640px;
+  height: 400px;
+  background: #000;
+  display: block;
+}
+
+/* ---- Keyboard outer layout ---- */
+key-board.kb-layout {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: #a0a0a0;
+  width: fit-content;
+}
+
+/* ---- Shared button style ---- */
+key-board button {
+  font-family: monospace;
+  font-size: 11px;
+  background: #c0c0c0;
+  color: #000;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  min-width: 28px;
+  min-height: 28px;
+  line-height: 1;
+  text-align: center;
+  /* beveled up — light top/left, dark bottom/right */
+  border-top:    2px solid #ffffff;
+  border-left:   2px solid #ffffff;
+  border-right:  2px solid #808080;
+  border-bottom: 2px solid #808080;
+  user-select: none;
+}
+
+key-board button:active {
+  /* beveled down — invert borders */
+  border-top:    2px solid #808080;
+  border-left:   2px solid #808080;
+  border-right:  2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+}
+
+/* ---- Main key block: 10-column QWERTY grid ---- */
+.kb-main {
+  display: grid;
+  grid-template-columns: repeat(10, 28px);
+  gap: 3px;
+}
+
+/* Number row: 1..9,0 — order in HTML is 1..0, so 0 wraps to position 10 */
+
+/* Wide enter key spans 1 column visually but is larger */
+#kb-enter {
+  min-width: 40px;
+}
+
+/* Space bar spans 3 columns */
+#kb-space {
+  grid-column: span 3;
+  min-width: 88px;
+}
+
+/* ---- Side panel ---- */
+.kb-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Mod keys: Esc, Tab, Bksp stacked */
+.kb-mods {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#kb-esc, #kb-tab, #kb-bksp {
+  min-width: 44px;
+}
+
+/* Arrow keys: inverted-T layout */
+.kb-arrows {
+  display: grid;
+  grid-template-columns: 28px 28px 28px;
+  grid-template-rows: 28px 28px;
+  gap: 3px;
+}
+
+#kb-up    { grid-column: 2; grid-row: 1; }
+#kb-left  { grid-column: 1; grid-row: 2; }
+#kb-down  { grid-column: 2; grid-row: 2; }
+#kb-right { grid-column: 3; grid-row: 2; }

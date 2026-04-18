@@ -3,7 +3,7 @@
 **This is the single source of truth for project status.** Every agent MUST
 read this before starting work and MUST update it before finishing.
 
-Last updated: 2026-04-18 (session 11b — the big rename; includes session 11a's Doom8088 readiness work via master merge)
+Last updated: 2026-04-18 (session 11d — launcher tidy-up, builder defaults, preset tracking)
 
 ---
 
@@ -45,10 +45,9 @@ were pruned in this session.)
 
 ## Active blocker
 
-None for rom-disk — bootle boots through it. Next: retest Zork+FROTZ (larger
-disk, exercises more of the dispatch), then merge `feature/rom-disk` → master.
-Active blocker for Doom8088: no hardware IRQ delivery in V4 CSS (v3 had it,
-was abandoned with μOps; must be re-introduced as single-cycle).
+None known. All CSS-side Doom8088 blockers (#24 + #25 + #26 + #27 + #28)
+are closed. Next concrete step is to actually build an upstream Doom8088
+cart and attempt to boot it, then deal with whatever comes up.
 
 ## What's working
 
@@ -68,33 +67,60 @@ was abandoned with μOps; must be re-introduced as single-cycle).
 - Boot trace tool (`calcite/tools/boot-trace.mjs`)
 - Hack path (.COM programs) fully working
 - Conformance tests passing: timer-irq, rep-stosb, bcd, keyboard-irq
+- Hardware IRQ delivery (PR #24 + session 11c): PIT fires IRQ 0 through
+  IVT[8]; keyboard press/release each fire IRQ 1 through IVT[9]; port
+  0x60 IN returns make scancode on press ticks, break scancode on
+  release ticks; port 0x21 IN returns --picMask
+- C BIOS (corduroy) has a real INT 09h handler + EOI on INT 08h/INT 09h
 
 ## What's next (in priority order)
 
 Doom8088 is the driving target. Items 1-5 are its blockers. Items 6+ are
 parallel/follow-on work.
 
-1. **C BIOS INT 09h + EOI (#25, #26)** — before session 11's PIC/PIT
-   plumbing (PR #24) can actually run Doom, the C BIOS needs to install
-   an INT 09h handler and both INT 08h and INT 09h need to send `OUT
-   0x20, 0x20` before IRET. Without these, the first BIOS-served IRQ
-   latches `picInService` and wedges the PIC. Doom replaces the handlers
-   itself, but there's a startup window where the BIOS handler runs.
-2. **Conformance diff for PIC/PIT (#28)** — run `tools/compare.mjs` on
-   `keyboard-irq.com` / `timer-irq.asm` to confirm CSS matches
-   `tools/peripherals.mjs` tick-for-tick.
-3. **Keyboard break scancodes (#27)** — Doom8088 tracks held keys via
-   release scancodes (high bit set). `--_kbdEdge` fires press-only;
-   release edges need IRQ + synthesized break scancode on port 0x60.
-4. **INT 13h hard disk rejection** — kernel currently probes hard disks
+1. **INT 13h hard disk rejection** — kernel currently probes hard disks
    and gets floppy geometry, which happens to work. Proper rejection
    (DL >= 0x80 → CF=1) causes a stall after the version string — the
-   kernel hits a timeout loop that requires real PIT ticks. Should
-   unblock itself once items 1-2 land and the PIT actually fires.
-5. **Rom-disk WAD validation** — retest Zork+FROTZ (~284 KB), then
+   kernel hits a timeout loop that requires real PIT ticks. With the PIT
+   now actually firing (PR #24 + the follow-ups below), should self-unblock.
+2. **Rom-disk WAD validation** — retest Zork+FROTZ (~284 KB), then
    attempt Doom8088's processed WAD (hundreds of KB). Confirms calcite's
    flat-array dispatch scales to larger disks.
-6. **More programs** — rogue and other DOS programs.
+3. **Build + boot Doom8088 end-to-end** — compile upstream with
+   `-march=i8088 -nosound -noxms -noems`, pack the WAD + EXE into a
+   DOS-corduroy cart, boot through the C BIOS. All known CSS-side
+   blockers (#25/#26/#27/#28) now resolved; next unknown is whatever
+   Doom hits at runtime.
+4. **More programs** — rogue and other DOS programs.
+
+Recently completed (session 11c, 2026-04-18):
+- **#25 C BIOS INT 09h handler** — `bios/corduroy/handlers.asm` now has
+  `int09h_handler` (reads port 0x60, packs scancode+ASCII into BDA ring
+  buffer via an in-ROM scancode2ascii LUT, acks port 0x61 bit 7, EOIs,
+  IRETs). `bios_init.c` installs IVT[9], and the interrupt_table entry
+  was flipped from int_dummy. Still TODO in muslin.asm — corduroy only.
+- **#26 EOI on INT 08h** — tick handler now sends `OUT 0x20, 0x20`
+  before IRET. Same EOI added to the new INT 09h handler.
+- **#27 Break scancodes on release** — kiln's `emitIRQCompute` now emits
+  `--_kbdPress`, `--_kbdRelease`, `--_kbdEdge` (OR of both), and
+  `--_kbdPort60` (returns `prevKeyboard_scancode | 0x80` on release ticks,
+  current scancode otherwise). Port 0x60 IN paths in `emitIO` read
+  `--_kbdPort60`. Verified via per-tick trace: pressing raises IRQ 1
+  with picPending=2; releasing raises IRQ 1 with picPending=2 (and prev
+  scancode now readable with the break-bit set).
+- **#28 Conformance diff** — ran `tools/compare.mjs` on keyboard-irq +
+  timer-irq against `tools/peripherals.mjs`. Two compare.mjs bugs fixed:
+  (a) stale v3 `uOp === 0` check now falls back to 0 for v4's single-
+  cycle model; (b) calcite's ANSI screen-clear prefix stripped from the
+  JSON line, and `--screen-interval=0` passed to suppress mid-trace
+  redraws. Also found a real CSS gap: port 0x21 IN was returning 0 (a
+  `read current mask → and → write back` pattern would zero the mask).
+  Fixed in kiln/patterns/misc.mjs: 0x21 IN now returns `--picMask`.
+  First 5-15 instructions of both tests match tick-for-tick with the
+  reference. Subsequent divergence is structural (ref's INT 16h spins
+  while CSS really delivers IRQ 1; ref's PIT advances by 1 per
+  instruction while CSS advances by cycleCount/4 — issue #28 flagged
+  this as the expected divergence shape).
 
 ## Recent decisions
 
@@ -126,14 +152,12 @@ parallel/follow-on work.
 ## Uncommitted work
 
 ### CSS-DOS repo
-- **`big-rename` branch** — the session 11 restructure, ready to commit as a
-  series of logical commits. See `CHANGELOG.md`.
+- None from this session.
 
 ### Calcite repo
-- `run.bat` / `run-web.bat` / `run-js.bat` / `serve.mjs` — still reference
-  old CSS-DOS generator paths. Broken by the big rename. Refactor deferred
-  to a separate session — these need rewriting against the new `builder/`,
-  not just path substitutions.
+- Session 11d reconnected `run-web.bat` → `builder/build.mjs` via the
+  CLI launcher. `run.bat`, `run-js.bat`, and `serve.mjs` are still the
+  old generator shape and remain deferred.
 - Other prior uncommitted work from earlier sessions — unchanged by this
   session.
 
@@ -142,6 +166,125 @@ parallel/follow-on work.
 ## Entry log
 
 Newest entries first. See `docs/logbook/PROTOCOL.md` for how to write entries.
+
+### 2026-04-18 — Session 11d: launcher tidy-up, builder defaults, preset tracking
+
+**What:** Post-big-rename housekeeping. The calcite launcher was still
+invoking `transpiler/generate-dos.mjs` (gone since session 11b), so every
+cart built via `run-web.bat` / the calcite CLI menu silently failed. Built
+the missing bridge, and while there, cleaned up a few defaults that had
+crept in wrong. Default DOS BIOS is now Corduroy (user request).
+
+**CSS-DOS changes:**
+
+- `.gitignore` — removed blanket `*.json`. It was swallowing `builder/presets/*.json`
+  so fresh checkouts couldn't resolve any DOS preset. Replaced with focused
+  `*-trace.json` / `trace-*.json` / `ref-trace.json` rules plus `.claude/`.
+- `builder/presets/{dos-muslin,dos-corduroy,hack}.json` — now tracked.
+  Also dropped `"autorun": null` from the two DOS presets so auto-detection
+  fires when a cart has exactly one `.com`/`.exe` (the explicit null was
+  satisfying the `=== undefined` check at `config.mjs:40` and preventing
+  auto-run, always landing at a COMMAND.COM prompt).
+- `builder/lib/cart.mjs` — `resolveCart` accepts a bare `.com`/`.exe`. It
+  copies the file into a scratch temp dir and runs the normal cart pipeline
+  from there. Uniform handling; no special `hack-cart-only` path.
+- `builder/lib/config.mjs` — default preset flipped from `dos-muslin` to
+  `dos-corduroy`. Muslin stays available via `"preset": "dos-muslin"`.
+- `tools/mkfat12.mjs` — root directory bumped from 16 entries (1 sector)
+  to 224 (14 sectors, standard 1.44 MB floppy). Sokoban's 84 files plus
+  KERNEL.SYS/CONFIG.SYS/COMMAND.COM overflowed the old 16. BPB's
+  RootEntries field is derived from the same constant, so the kernel
+  reads the new geometry via the BPB; no other code assumes 16.
+
+**Calcite changes (sibling repo):**
+
+- `crates/calcite-cli/src/menu.rs` — `resolve_to_css` now invokes
+  `../CSS-DOS/builder/build.mjs` instead of the gone `generate-dos.mjs`.
+  `Entry::Program` replaces `{ exec, siblings }` with `{ cart, is_dir }`.
+  Subdirectories under `programs/` now surface as one entry each (was
+  one entry per .com/.exe inside, duplicating carts with multiple
+  runnables). Dropped the old `calc-mem.mjs` invocation and the
+  `--data`/`--mem` flags — `builder/build.mjs` discovers files from the
+  cart folder itself.
+- `tools/serve-web.mjs` — tightened `Cache-Control` to match
+  `serve.py`: `no-store, no-cache, must-revalidate, max-age=0` + `Pragma: no-cache`.
+
+**Known limits / deferred:**
+
+- Corduroy can't load COMMAND.COM. CONFIG.SYS `SHELL=\COMMAND.COM` boots
+  fine under Muslin but prints "Bad or missing command interpreter" under
+  Corduroy. Not investigated this session — auto-detect for single-runnable
+  carts sidesteps it (no COMMAND.COM on disk when autorun is set).
+- `calcite/run.bat`, `run-js.bat`, `serve.mjs` (from the session 11b
+  deferred list) still reference old paths. This session only unblocked
+  the `run-web.bat` path.
+
+### 2026-04-18 — Session 11c: Doom8088 blockers #25/#26/#27/#28
+
+**What:** Closed out all four open Doom8088-blocking issues identified in
+PR #24. The C BIOS (corduroy) now installs a real INT 09h handler and
+sends EOI from both INT 08h and INT 09h. Kiln synthesizes break scancodes
+on key release and exposes the full press/release edge pair through a new
+`--_kbdPort60` computed property. Port 0x21 IN gap found during
+conformance and fixed. `tools/compare.mjs` updated for v4.
+
+**Files touched:**
+
+- `bios/corduroy/handlers.asm` — added `int09h_handler` (read 0x60, pack
+  scancode+ASCII via new in-ROM `scancode2ascii` LUT, push into BDA ring
+  buffer, ack port 0x61 bit 7, EOI, IRET); added `OUT 0x20, 0x20` before
+  IRET in `int08h_handler`; flipped interrupt_table entry for INT 09h
+  from `int_dummy` to `int09h_handler`; added `global int09h_handler`.
+- `bios/corduroy/bios_init.c` — added extern, `#pragma aux`, and IVT
+  install line for `int09h_handler`.
+- `kiln/patterns/misc.mjs` — `emitIRQCompute()` now emits `--_kbdPress`,
+  `--_kbdRelease`, `--_kbdEdge` (OR of both), and `--_kbdPort60` (break
+  scancode on release). `emitIO()` — port 0x21 IN now returns
+  `--picMask` for all four IN shapes (0xE4/0xE5/0xEC/0xED); port 0x60
+  IN now reads `--_kbdPort60` instead of the raw keyboard high byte.
+- `tools/compare.mjs` — trace parser strips ANSI prefix and locates
+  `[{` anywhere in the line (calcite's single-array output can be
+  preceded by a screen-clear escape); `--screen-interval=0` added to
+  the calcite invocation to suppress ANSI mid-trace; `advanceToIP`
+  treats missing `uOp` as 0 (v4 single-cycle trace has no uOp field).
+
+**Findings from conformance (#28):**
+
+- The read-modify-write mask pattern in `tests/keyboard-irq.asm`
+  (`in al, 0x21; and al, 0xFD; out 0x21, al`) was reading 0 instead of
+  the real mask. That would have caused every program that unmasks a
+  specific IRQ to accidentally unmask *all* IRQs. Fixed by routing
+  port 0x21 IN to `var(--__1picMask)`. First 5 instructions of
+  keyboard-irq and 15 instructions of timer-irq now match the JS
+  reference tick-for-tick.
+- Beyond that, the two emulators diverge by design:
+  - `keyboard-irq`: the JS reference's `createBiosHandlers` intercepts
+    INT 16h synchronously, so the reference never takes the IRQ path.
+    CSS now really delivers IRQ 1 through IVT[9]. Different machine
+    shape, not a CSS bug.
+  - `timer-irq`: JS's `PIT.tick()` advances by 1 per instruction; CSS
+    advances by `floor(cycleCount/4)` per instruction, which is faster
+    for multi-cycle instructions. Issue #28 predicted this and listed
+    it as expected.
+
+**Verified via per-tick trace:** keyboard press at tick 50 raises IRQ 1
+(picPending = 2, prevKeyboard latches the current scancode); release at
+tick 100 raises IRQ 1 again (picPending = 2, --_kbdPort60 returns
+scancode | 0x80). Rogue cart still builds cleanly (regression check).
+
+**Still open / deferred:**
+
+- Muslin (default DOS BIOS) still has `int_dummy` for INT 09h and no
+  EOI in INT 08h. Not blocking Doom — Doom ships with its own ISRs —
+  but any DOS program that relies on BIOS keyboard IRQ while running
+  under Muslin will hit the same #25 + #26 shape. Separate issue when
+  relevant; not opening now.
+- `IN AX, port` reads return the full `--keyboard` word (not the
+  `--_kbdPort60`-synthesized break word). Doom uses byte-wide reads,
+  so this is fine; noting for the next program that cares.
+- `ref-muslin.mjs` hasn't been updated for the new port-0x21 IN
+  semantics — if someone diffs against it they may see a mismatch in
+  the PIC-mask read. ref-hack.mjs also untouched.
 
 ### 2026-04-18 — Session 11b: the big rename (repo-wide restructure)
 

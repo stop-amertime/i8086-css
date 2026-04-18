@@ -1,32 +1,32 @@
 // Resolve a cart's manifest against its preset, fill in defaults, validate.
 
-import { readFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const PRESETS_DIR = join(__dirname, '..', 'presets');
-
 const VALID_BIOSES = ['gossamer', 'muslin', 'corduroy'];
 const VALID_PRESETS = ['dos-muslin', 'dos-corduroy', 'hack'];
 
 /**
- * Given a raw cart manifest (possibly empty) and discovered cart files,
- * return a resolved manifest with defaults filled in and preset merged.
- * Throws an AggregateError with every validation failure.
+ * Given a raw cart manifest (possibly empty), discovered cart files, and
+ * pre-loaded preset JSON objects, return a resolved manifest with defaults
+ * filled in and preset merged.
+ *
+ * `presets` must be an object keyed by preset name, e.g.:
+ *   { 'dos-muslin': {...}, 'dos-corduroy': {...}, 'hack': {...} }
+ *
+ * The caller (builder/build.mjs on Node; web/browser-builder/main.mjs in the
+ * browser) is responsible for loading or bundling the preset JSON.
+ *
+ * Throws an Error with an `.errors` array listing every validation failure.
  */
-export function resolveManifest(manifest, files) {
+export function resolveManifest(manifest, files, presets = {}) {
   const errors = [];
 
-  const presetName = manifest.preset ?? 'dos-muslin';
+  const presetName = manifest.preset ?? 'dos-corduroy';
   if (!VALID_PRESETS.includes(presetName)) {
     errors.push(`preset: must be one of ${VALID_PRESETS.join(', ')}; got ${JSON.stringify(presetName)}`);
+  } else if (presets[presetName] === undefined) {
+    throw new Error(`preset "${presetName}" was not loaded by the caller; pass presets[${JSON.stringify(presetName)}] when calling resolveManifest`);
   }
 
-  const presetPath = join(PRESETS_DIR, `${presetName}.json`);
-  const preset = existsSync(presetPath)
-    ? JSON.parse(readFileSync(presetPath, 'utf8'))
-    : {};
+  const preset = presets[presetName] ?? {};
 
   // Deep-merge preset ← manifest (manifest wins).
   const merged = deepMerge(preset, manifest);

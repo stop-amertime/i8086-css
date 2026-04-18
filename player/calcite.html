@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSS-DOS player (calcite)</title>
+  <style>
+    @font-face {
+      font-family: 'DOS';
+      src: local('Perfect DOS VGA 437'), local('Fixedsys'), local('Terminal');
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'DOS', 'Fixedsys', 'Terminal', monospace;
+      font-size: 14px;
+      background: #008080;
+      color: #000;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px;
+      cursor: default;
+      image-rendering: pixelated;
+    }
+    .window {
+      background: #c0c0c0;
+      border-top: 2px solid #fff;
+      border-left: 2px solid #fff;
+      border-right: 2px solid #808080;
+      border-bottom: 2px solid #808080;
+      box-shadow: 1px 1px 0 #000;
+      width: 720px;
+      max-width: 100%;
+    }
+    .title-bar {
+      background: #000080;
+      color: #fff;
+      padding: 2px 4px;
+      font-size: 13px;
+      user-select: none;
+    }
+    .window-body { padding: 6px; }
+    .field-dark {
+      border-top: 1px solid #808080;
+      border-left: 1px solid #808080;
+      border-right: 1px solid #fff;
+      border-bottom: 1px solid #fff;
+      background: #000;
+      color: #33ff33;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px;
+      white-space: pre;
+      line-height: 1.15;
+      min-height: 200px;
+      overflow-y: auto;
+    }
+    .status-bar {
+      border-top: 1px solid #808080;
+      border-left: 1px solid #808080;
+      border-right: 1px solid #fff;
+      border-bottom: 1px solid #fff;
+      background: #c0c0c0;
+      padding: 2px 4px;
+      font-size: 11px;
+      margin-top: 4px;
+      color: #000;
+    }
+    .keyboard {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      margin-top: 8px;
+      user-select: none;
+    }
+    .kb-main { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; }
+    .kb-right-stack { display: grid; grid-template-rows: auto 1fr auto; gap: 2px; justify-items: end; }
+    .kb-enter { background: #d8c898; }
+    .kb-enter:active, .kb-enter.pressed { background: #b8a878; }
+    .kb-modifiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+    .kb-arrows {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: 34px 34px;
+      gap: 2px;
+      width: 165px;
+      grid-row: 3;
+    }
+    .kb-key {
+      background: #c0c0c0;
+      border-top: 2px solid #fff;
+      border-left: 2px solid #fff;
+      border-right: 2px solid #808080;
+      border-bottom: 2px solid #808080;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 0;
+      height: 34px;
+      cursor: pointer;
+      color: #000;
+      touch-action: none;
+    }
+    .kb-key:active, .kb-key.pressed {
+      border-top: 2px solid #808080;
+      border-left: 2px solid #808080;
+      border-right: 2px solid #fff;
+      border-bottom: 2px solid #fff;
+    }
+    .kb-space { grid-column: 1 / -1; height: 28px; font-size: 11px; }
+    .kb-up    { grid-column: 2; grid-row: 1; }
+    .kb-left  { grid-column: 1; grid-row: 2; }
+    .kb-down  { grid-column: 2; grid-row: 2; }
+    .kb-right { grid-column: 3; grid-row: 2; }
+    .kb-arrow { font-size: 16px; }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <div class="title-bar"><span>CSS-DOS · calcite</span></div>
+    <div class="window-body">
+      <div id="output" class="field-dark"></div>
+      <canvas
+        id="screen-canvas"
+        width="320"
+        height="200"
+        style="display:none; width: 640px; height: 400px; background:#000; image-rendering: pixelated; border-top: 1px solid #808080; border-left: 1px solid #808080; border-right: 1px solid #fff; border-bottom: 1px solid #fff;"
+      ></canvas>
+      <div class="status-bar">
+        <span id="status">Loading cabinet...</span>
+        <span style="float:right" id="stats"></span>
+      </div>
+      <div class="keyboard">
+        <div class="kb-main">
+          <button class="kb-key" data-key="0x0231">1</button><button class="kb-key" data-key="0x0332">2</button><button class="kb-key" data-key="0x0433">3</button><button class="kb-key" data-key="0x0534">4</button><button class="kb-key" data-key="0x0635">5</button>
+          <button class="kb-key" data-key="0x0736">6</button><button class="kb-key" data-key="0x0837">7</button><button class="kb-key" data-key="0x0938">8</button><button class="kb-key" data-key="0x0A39">9</button><button class="kb-key" data-key="0x0B30">0</button>
+          <button class="kb-key" data-key="0x1071">Q</button><button class="kb-key" data-key="0x1177">W</button><button class="kb-key" data-key="0x1265">E</button><button class="kb-key" data-key="0x1372">R</button><button class="kb-key" data-key="0x1474">T</button>
+          <button class="kb-key" data-key="0x1579">Y</button><button class="kb-key" data-key="0x1675">U</button><button class="kb-key" data-key="0x1769">I</button><button class="kb-key" data-key="0x186F">O</button><button class="kb-key" data-key="0x1970">P</button>
+          <button class="kb-key" data-key="0x1E61">A</button><button class="kb-key" data-key="0x1F73">S</button><button class="kb-key" data-key="0x2064">D</button><button class="kb-key" data-key="0x2166">F</button><button class="kb-key" data-key="0x2267">G</button>
+          <button class="kb-key" data-key="0x2368">H</button><button class="kb-key" data-key="0x246A">J</button><button class="kb-key" data-key="0x256B">K</button><button class="kb-key" data-key="0x266C">L</button><button class="kb-key kb-enter" data-key="0x1C0D">Enter</button>
+          <button class="kb-key" data-key="0x2C7A">Z</button><button class="kb-key" data-key="0x2D78">X</button><button class="kb-key" data-key="0x2E63">C</button><button class="kb-key" data-key="0x2F76">V</button><button class="kb-key" data-key="0x3062">B</button>
+          <button class="kb-key" data-key="0x316E">N</button><button class="kb-key" data-key="0x326D">M</button><button class="kb-key" data-key="0x332C">,</button><button class="kb-key" data-key="0x342E">.</button><button class="kb-key" data-key="0x352F">/</button>
+          <button class="kb-key kb-space" data-key="0x3920">&#x2423;</button>
+        </div>
+        <div class="kb-right-stack">
+          <div class="kb-modifiers">
+            <button class="kb-key" data-key="0x011B">Esc</button><button class="kb-key" data-key="0x0F09">Tab</button><button class="kb-key" data-key="0x0E08">Bksp</button>
+          </div>
+          <div class="kb-arrows">
+            <button class="kb-key kb-arrow kb-up"    data-key="0x4800">&#x2191;</button>
+            <button class="kb-key kb-arrow kb-left"  data-key="0x4B00">&#x2190;</button>
+            <button class="kb-key kb-arrow kb-down"  data-key="0x5000">&#x2193;</button>
+            <button class="kb-key kb-arrow kb-right" data-key="0x4D00">&#x2192;</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const worker = new Worker('/calcite/calcite-worker.js', { type: 'module' });
+    const status = document.getElementById('status');
+    const output = document.getElementById('output');
+    const canvas = document.getElementById('screen-canvas');
+    const ctx = canvas.getContext('2d');
+    const stats = document.getElementById('stats');
+    const REAL_8086_HZ = 4_772_727;
+
+    function formatHz(hz) {
+      if (hz >= 1_000_000) return (hz / 1_000_000).toFixed(2) + ' MHz';
+      if (hz >= 1_000)     return (hz / 1_000).toFixed(1) + ' KHz';
+      return hz.toFixed(0) + ' Hz';
+    }
+
+    let running = false;
+    let totalTicks = 0;
+    let totalCycles = 0;
+    let startTime = 0;
+    let engineReady = false;
+    const TARGET_MS = 14;
+    const EMA_ALPHA = 0.3;
+    const MIN_BATCH = 50;
+    const MAX_BATCH = 10000;
+    let batchCount = 200;
+    let batchSentAt = 0;
+    let batchMsEma = TARGET_MS;
+    let video = { text: null, gfx: null };
+    let gfxImageData = null;
+    let currentVideoMode = null;
+
+    function dispatchBatch() {
+      batchCount = Math.max(MIN_BATCH, Math.min(MAX_BATCH, Math.round(batchCount)));
+      batchSentAt = performance.now();
+      worker.postMessage({ type: 'tick', count: batchCount });
+    }
+    function updateBatchSize() {
+      const dt = performance.now() - batchSentAt;
+      if (dt <= 0) return;
+      batchMsEma = batchMsEma * (1 - EMA_ALPHA) + dt * EMA_ALPHA;
+      const ratio = Math.max(0.5, Math.min(2.0, TARGET_MS / batchMsEma));
+      batchCount = batchCount * ratio;
+    }
+
+    worker.onmessage = ({ data }) => {
+      switch (data.type) {
+        case 'ready': {
+          engineReady = true;
+          video = data.video || { text: null, gfx: null };
+          if (video.gfx) {
+            canvas.width = video.gfx.width;
+            canvas.height = video.gfx.height;
+            canvas.style.width = (video.gfx.width * 2) + 'px';
+            canvas.style.height = (video.gfx.height * 2) + 'px';
+            gfxImageData = ctx.createImageData(video.gfx.width, video.gfx.height);
+          }
+          canvas.style.display = 'none';
+          output.style.display = 'none';
+          running = true;
+          startTime = performance.now();
+          totalTicks = 0;
+          totalCycles = 0;
+          status.textContent = 'Running...';
+          dispatchBatch();
+          break;
+        }
+        case 'tick-result': {
+          updateBatchSize();
+          totalTicks += data.ticks;
+          totalCycles = data.cycles != null ? data.cycles : totalCycles;
+          const elapsed = (performance.now() - startTime) / 1000;
+          const tps = elapsed > 0 ? totalTicks / elapsed : 0;
+          const cps = elapsed > 0 ? totalCycles / elapsed : 0;
+          const pct = cps / REAL_8086_HZ * 100;
+          stats.textContent = `${totalTicks.toLocaleString()} ticks | ${formatHz(cps)} (${pct.toFixed(1)}% of 4.77 MHz)`;
+
+          const isGfxMode = (data.videoMode === 0x13);
+          const wasGfxMode = (currentVideoMode === 0x13);
+          if (currentVideoMode === null || isGfxMode !== wasGfxMode) {
+            if (isGfxMode) { canvas.style.display = ''; output.style.display = 'none'; }
+            else { canvas.style.display = 'none'; output.style.display = ''; output.style.minHeight = '0'; }
+          }
+          currentVideoMode = data.videoMode;
+
+          if (data.gfxBytes && gfxImageData) {
+            const src = new Uint8Array(data.gfxBytes);
+            gfxImageData.data.set(src);
+            ctx.putImageData(gfxImageData, 0, 0);
+          }
+          if (!isGfxMode && data.screen != null) {
+            output.innerHTML = data.screen;
+          } else if (!isGfxMode && !video.text && data.stringProperties) {
+            const parts = [];
+            for (const [_, v] of Object.entries(data.stringProperties)) if (v) parts.push(v);
+            if (parts.length > 0) {
+              const text = parts.join('\n');
+              const lines = text.split('\n');
+              output.textContent = lines.length > 50 ? lines.slice(-50).join('\n') : text;
+              output.scrollTop = output.scrollHeight;
+            }
+          }
+          if (running) dispatchBatch();
+          break;
+        }
+        case 'error':
+          status.textContent = `Error: ${data.message}`;
+          running = false;
+          break;
+      }
+    };
+
+    function sendKey(code) {
+      if (!engineReady) return;
+      worker.postMessage({ type: 'keyboard', key: code });
+    }
+    for (const btn of document.querySelectorAll('.kb-key')) {
+      const code = parseInt(btn.dataset.key, 16);
+      btn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        btn.setPointerCapture(e.pointerId);
+        sendKey(code);
+      });
+      btn.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
+    // Auto-load /cabinet.css (service worker serves it from Cache Storage).
+    (async () => {
+      try {
+        status.textContent = 'Fetching cabinet...';
+        const r = await fetch('/cabinet.css');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const css = await r.text();
+        if (!css || css.trim().length === 0) {
+          status.textContent = 'No cabinet in cache. Build one first at /build.html.';
+          return;
+        }
+        status.textContent = `Compiling ${(css.length / 1024 / 1024).toFixed(1)} MB...`;
+        worker.postMessage({ type: 'init', css });
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
+      }
+    })();
+  </script>
+</body>
+</html>

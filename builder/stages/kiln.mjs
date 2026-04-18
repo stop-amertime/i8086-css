@@ -1,30 +1,31 @@
 // Stage 3 — invoke Kiln (the transpiler) to emit CSS.
 //
-// Input:  { bios, floppy (nullable for hack), manifest, cart, output, header }
-// Output: writes CSS to `output` (a WriteStream).
+// Input:  { bios, floppy (nullable for hack), manifest, kernelBytes,
+//           programBytes, output, header }
+//
+//   kernelBytes   — DOS branch only: contents of dos/bin/kernel.sys as an
+//                   Array<number>. The caller (builder/build.mjs on Node;
+//                   web/browser-builder/main.mjs in the browser) loads these.
+//   programBytes  — hack branch only: contents of the .COM file named in
+//                   manifest.boot.raw as an Array<number>. Same ownership.
+//
+// Output: writes CSS to `output` (any object with a .write(string) method).
 
-import { readFileSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { emitCSS } from '../../kiln/emit-css.mjs';
 import { comMemoryZones, dosMemoryZones, buildIVTData } from '../../kiln/memory.mjs';
 import { resolveMemorySize } from '../lib/sizes.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(__dirname, '..', '..');
-
 const KERNEL_LINEAR = 0x600; // DOS kernel load address
 
-export function runKiln({ bios, floppy, manifest, cart, output, header }) {
+export function runKiln({ bios, floppy, manifest, kernelBytes, programBytes, output, header }) {
   const isHack = manifest.preset === 'hack';
   return isHack
-    ? runKilnHack({ bios, manifest, cart, output, header })
-    : runKilnDos({ bios, floppy, manifest, cart, output, header });
+    ? runKilnHack({ bios, manifest, programBytes, output, header })
+    : runKilnDos({ bios, floppy, manifest, kernelBytes, output, header });
 }
 
-function runKilnDos({ bios, floppy, manifest, cart, output, header }) {
-  const kernelBytes = [...readFileSync(resolve(repoRoot, 'dos', 'bin', 'kernel.sys'))];
-
+function runKilnDos({ bios, floppy, manifest, kernelBytes, output, header }) {
+  if (!kernelBytes) throw new Error('runKilnDos: kernelBytes is required');
   const memBytes = resolveMemorySize(manifest.memory?.conventional ?? '640K');
   const prune = {
     gfx:     manifest.memory?.gfx === false,
@@ -50,10 +51,8 @@ function runKilnDos({ bios, floppy, manifest, cart, output, header }) {
   }, output);
 }
 
-function runKilnHack({ bios, manifest, cart, output, header }) {
-  const raw = manifest.boot?.raw;
-  if (!raw) throw new Error('hack cart missing boot.raw');
-  const programBytes = [...readFileSync(resolve(cart.root, raw))];
+function runKilnHack({ bios, manifest, programBytes, output, header }) {
+  if (!programBytes) throw new Error('hack cart missing programBytes');
   const programOffset = 0x100;
 
   const autofitBytes = Math.max(0x600, programOffset + programBytes.length + 0x100);

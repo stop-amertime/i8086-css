@@ -36,6 +36,7 @@
 extern void int_dummy(void);
 extern void int01h_handler(void);
 extern void int08h_handler(void);
+extern void int09h_handler(void);
 extern void int10h_handler(void);
 extern void int11h_handler(void);
 extern void int12h_handler(void);
@@ -50,6 +51,7 @@ extern void default_handler(void);
 #pragma aux int_dummy       "*"
 #pragma aux int01h_handler  "*"
 #pragma aux int08h_handler  "*"
+#pragma aux int09h_handler  "*"
 #pragma aux int10h_handler  "*"
 #pragma aux int11h_handler  "*"
 #pragma aux int12h_handler  "*"
@@ -81,6 +83,7 @@ static void install_ivt(void) {
 
     ivt[0x01 * 2] = HANDLER_OFF(int01h_handler);
     ivt[0x08 * 2] = HANDLER_OFF(int08h_handler);
+    ivt[0x09 * 2] = HANDLER_OFF(int09h_handler);
     ivt[0x10 * 2] = HANDLER_OFF(int10h_handler);
     ivt[0x11 * 2] = HANDLER_OFF(int11h_handler);
     ivt[0x12 * 2] = HANDLER_OFF(int12h_handler);

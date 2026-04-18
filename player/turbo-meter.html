@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CSS-DOS player (turbo + meter)</title>
+  <link rel="stylesheet" href="assets/player.css">
+  <link rel="stylesheet" href="/cabinet.css">
+</head>
+<body>
+  <div class="clock">
+    <div class="cpu">
+      <div class="screen"></div>
+      <key-board class="kb-layout">
+        <div class="kb-main">
+          <!-- number row -->
+          <button id="kb-1">1</button><button id="kb-2">2</button><button id="kb-3">3</button><button id="kb-4">4</button><button id="kb-5">5</button>
+          <button id="kb-6">6</button><button id="kb-7">7</button><button id="kb-8">8</button><button id="kb-9">9</button><button id="kb-0">0</button>
+          <!-- QWERTY -->
+          <button id="kb-q">Q</button><button id="kb-w">W</button><button id="kb-e">E</button><button id="kb-r">R</button><button id="kb-t">T</button>
+          <button id="kb-y">Y</button><button id="kb-u">U</button><button id="kb-i">I</button><button id="kb-o">O</button><button id="kb-p">P</button>
+          <!-- ASDF -->
+          <button id="kb-a">A</button><button id="kb-s">S</button><button id="kb-d">D</button><button id="kb-f">F</button><button id="kb-g">G</button>
+          <button id="kb-h">H</button><button id="kb-j">J</button><button id="kb-k">K</button><button id="kb-l">L</button><button id="kb-enter" class="kb-wide">&#8629;</button>
+          <!-- ZXCV -->
+          <button id="kb-z">Z</button><button id="kb-x">X</button><button id="kb-c">C</button><button id="kb-v">V</button><button id="kb-b">B</button>
+          <button id="kb-n">N</button><button id="kb-m">M</button><button id="kb-space" class="kb-space">&#9251;</button>
+        </div>
+        <div class="kb-side">
+          <div class="kb-mods">
+            <button id="kb-esc">Esc</button><button id="kb-tab">Tab</button><button id="kb-bksp">Bksp</button>
+          </div>
+          <div class="kb-arrows">
+            <button id="kb-up">&#8593;</button>
+            <button id="kb-left">&#8592;</button><button id="kb-down">&#8595;</button><button id="kb-right">&#8594;</button>
+          </div>
+        </div>
+      </key-board>
+    </div>
+  </div>
+  <script src="assets/turbo.js"></script>
+  <script src="assets/meter.js"></script>
+</body>
+</html>

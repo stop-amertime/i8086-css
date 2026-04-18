@@ -1,31 +1,54 @@
 # player
 
-Static HTML shell that runs a cabinet in Chrome. No build step; just a
-static file.
+Static HTML shell that runs a cabinet in Chrome. No build step.
+
+## Four variants
+
+| File | Description |
+|---|---|
+| `play.html` | Pure CSS — zero `<script>` tags. The clock advances via a CSS animation. Proves the source-of-truth claim: the CSS is the machine. |
+| `turbo.html` | `play.html` + `turbo.js`. Overrides `--clock` via `requestAnimationFrame` so ticks run as fast as Chrome can evaluate them. Much faster than the CSS animation rate. |
+| `meter.html` | `play.html` + `meter.js`. Adds a small badge (top-right) showing effective 8086 Hz sampled once per second from `--__1cycleCount`. |
+| `turbo-meter.html` | `play.html` + both scripts. Fast execution with the Hz meter. |
 
 ## Usage
 
+The dev server (or Vercel) serves cabinets at `/cabinet.css`. Open whichever
+variant you want:
+
 ```
-open player/index.html?cabinet=../mycart.css
+/play.html
+/turbo.html
+/meter.html
+/turbo-meter.html
 ```
 
-The query string points the player at a cabinet. The player `<link>`s
-the CSS into the page and drives the clock with a tiny JS loop.
+For local file use, point a static server at the project root and load the
+cabinet via the server's `/cabinet.css` route.
 
-## Why a separate player
+## Assets
 
-Cabinets are pure CSS. Chrome loads the CSS, the CSS is the machine.
-The player is what ticks the CSS clock and surfaces the video buffer.
-It's the same HTML for every cabinet — you swap the cabinet via the
-URL, the player never changes.
+| File | Description |
+|---|---|
+| `assets/player.css` | Keyboard grid + beveled button styling. |
+| `assets/turbo.js` | Clock accelerator (~20 lines). |
+| `assets/meter.js` | Hz meter badge (~20 lines). |
 
-This replaces the old `--html` mode where Kiln inlined an HTML wrapper
-into the cabinet itself. Cabinets are now pure CSS; the wrapper is
-static.
+## Keyboard
+
+Buttons use stable IDs (`id="kb-a"`, `id="kb-enter"`, etc.) that match the
+`:has(#kb-X:active)` selectors Kiln emits. HTML layout is free — button order
+in the DOM does not need to match Kiln's `KEYBOARD_KEYS` array.
+
+## Why four variants instead of one
+
+`play.html` is the purity proof — the CSS runs with zero JavaScript. The turbo
+and meter scripts are optional enhancements that require JS. Keeping them
+separate means the pure-CSS claim is always verifiable with a simple
+`grep -c "<script" player/play.html`.
 
 ## Not to be confused with
 
-Calcite's browser frontend (`calcite/web/`) is a different thing — it
-loads cabinets into the Calcite WASM engine for speed. The player
-here is pure Chrome, slow, and exists to prove the CSS-as-source-of-truth
-claim. Both are legitimate browser targets.
+Calcite's browser frontend (`calcite/web/`) loads cabinets into the Calcite
+WASM engine for speed. The player here is pure Chrome and exists to prove the
+CSS-as-source-of-truth claim. Both are legitimate browser targets.

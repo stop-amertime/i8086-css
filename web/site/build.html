@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSS-DOS · build</title>
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+  <div class="window">
+    <div class="title-bar">
+      <span>CSS-DOS builder</span>
+    </div>
+    <div class="window-body">
+
+      <!-- Step 1: upload -->
+      <section id="upload">
+        <div class="group">
+          <span class="group-label">1. Pick your program</span>
+          <div class="row">
+            <label class="btn file-label" for="com-file">Open file</label>
+            <input type="file" id="com-file" accept=".com,.exe">
+            <label class="btn file-label" for="dir-file">Open folder</label>
+            <input type="file" id="dir-file" webkitdirectory directory multiple>
+            <span id="file-name" class="dim">No file selected</span>
+          </div>
+          <div class="row">
+            <label for="preset">Preset:</label>
+            <select id="preset" class="field">
+              <option value="dos-corduroy" selected>DOS + Corduroy BIOS</option>
+              <option value="dos-muslin">DOS + Muslin BIOS</option>
+              <option value="hack">hack (.com direct, no DOS)</option>
+            </select>
+          </div>
+          <div class="row" id="autorun-row" hidden>
+            <label for="autorun">Autorun:</label>
+            <select id="autorun" class="field">
+              <option value="">(none — drop to COMMAND.COM prompt)</option>
+            </select>
+          </div>
+          <div class="row">
+            <button id="start" class="btn" disabled>Build cabinet</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Step 2: progress -->
+      <section id="progress" hidden>
+        <div class="group">
+          <span class="group-label">2. Assembling your cabinet</span>
+          <ol id="stages"></ol>
+          <pre id="log" class="log-pre"></pre>
+        </div>
+      </section>
+
+      <!-- Step 3: result -->
+      <section id="result" hidden>
+        <div class="group">
+          <span class="group-label">3. Your cabinet is ready</span>
+          <p id="size" class="dim"></p>
+          <div class="row">
+            <a id="play-link" class="btn" href="/player/calcite.html" target="_blank">Play</a>
+            <a id="play-css-link" class="btn" href="/player/play.html" target="_blank">Play (pure CSS)</a>
+            <a id="turbo-link" class="btn" href="/player/turbo.html" target="_blank">Play (turbo)</a>
+            <a id="meter-link" class="btn" href="/player/meter.html" target="_blank">Play (meter)</a>
+            <a id="download" class="btn" download="cabinet.css">Download .css</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- Step 4: paginated source viewer -->
+      <section id="source-viewer" hidden>
+        <div class="group">
+          <span class="group-label">4. Source (paginated)</span>
+          <p class="pager-info">
+            Page <span id="page-num">1</span> of <span id="page-total">0</span>
+            &middot; <span id="page-bytes"></span>
+          </p>
+          <div class="row pager-controls">
+            <button id="page-prev" class="btn">&#171; Prev</button>
+            <input id="page-jump" class="field page-jump-input" type="number" min="1" value="1">
+            <button id="page-next" class="btn">Next &#187;</button>
+          </div>
+          <pre id="source-pre" class="source-pre"></pre>
+        </div>
+      </section>
+
+    </div><!-- /window-body -->
+  </div><!-- /window -->
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    }
+  </script>
+  <script type="module" src="/assets/build.js"></script>
+</body>
+</html>

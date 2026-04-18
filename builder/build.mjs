@@ -15,7 +15,7 @@
 //
 // See docs/cart-format.md for the full cart schema.
 
-import { createWriteStream, statSync, mkdirSync } from 'node:fs';
+import { createWriteStream, statSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, extname, resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -28,6 +28,17 @@ import { runKiln } from './stages/kiln.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
+
+// Load preset JSON files once at startup so resolveManifest() receives plain
+// objects rather than doing I/O itself (keeping config.mjs browser-safe).
+const PRESETS_DIR = join(__dirname, 'presets');
+const PRESET_NAMES = ['dos-muslin', 'dos-corduroy', 'hack'];
+const PRESETS = Object.fromEntries(
+  PRESET_NAMES.map(name => [
+    name,
+    JSON.parse(readFileSync(join(PRESETS_DIR, `${name}.json`), 'utf8')),
+  ])
+);
 
 function parseArgs(argv) {
   const args = { input: null, output: null, cacheDir: null };
@@ -55,7 +66,7 @@ function parseArgs(argv) {
 const USAGE = `Usage: node builder/build.mjs <cart> [-o output.css] [--cache-dir path]
 
   <cart>            Path to a cart folder or .zip.
-  -o output.css     Output path. Default: <cartname>.css in cwd.
+  -o output.css     Output path. Default: out/<cartname>.css.
   --cache-dir path  Scratch dir for intermediate artifacts. Default: tmp.
 
 Environment:
@@ -74,7 +85,7 @@ async function main() {
 
   console.log(`[cart]   "${cart.name}" (${cart.files.length} file${cart.files.length === 1 ? '' : 's'})`);
 
-  const manifest = resolveManifest(cart.manifest, cart.files);
+  const manifest = resolveManifest(cart.manifest, cart.files, PRESETS);
   console.log(`[cart]   preset: ${manifest.preset}, bios: ${manifest.bios}`);
 
   const cacheDir = args.cacheDir
@@ -93,14 +104,29 @@ async function main() {
     console.log(`[floppy] ${floppy.bytes.length} bytes, ${floppy.layout.length} files`);
   }
 
-  // Output path
-  const outputPath = args.output ?? `${cart.name}.css`;
+  // Output path. Default lands in ./out/ so cabinets don't clutter the repo root
+  // and the .gitignore can be scoped to one directory.
+  const outputPath = args.output ?? join('out', `${cart.name}.css`);
+  mkdirSync(dirname(resolve(outputPath)), { recursive: true });
   const outStream = createWriteStream(resolve(outputPath), { encoding: 'utf-8' });
 
   const header = buildCabinetHeader({ cart, manifest, bios, floppy });
 
+  // Load the bytes that Kiln needs. DOS carts need the kernel binary;
+  // hack carts need the .COM program. Both are read here so kiln.mjs
+  // stays free of any Node fs calls (browser-safe).
+  let kernelBytes = null;
+  let programBytes = null;
+  if (manifest.preset === 'hack') {
+    const raw = manifest.boot?.raw;
+    if (!raw) throw new Error('hack cart missing boot.raw');
+    programBytes = [...readFileSync(resolve(cart.root, raw))];
+  } else {
+    kernelBytes = [...readFileSync(resolve(repoRoot, 'dos', 'bin', 'kernel.sys'))];
+  }
+
   console.log(`[kiln]   emitting CSS to ${outputPath}...`);
-  runKiln({ bios, floppy, manifest, cart, output: outStream, header });
+  runKiln({ bios, floppy, manifest, kernelBytes, programBytes, output: outStream, header });
 
   await new Promise(done => outStream.end(done));
   const size = statSync(resolve(outputPath)).size;

@@ -478,22 +478,43 @@ export function emitLAHF_SAHF(dispatch) {
 /**
  * I/O port instructions: IN and OUT.
  *
- * Most ports have no hardware — IN returns 0 and OUT is a no-op.
- * Exception: port 0x60 (keyboard scancode) reads the low byte of --keyboard
- * (the scancode), enabling games that poll the keyboard controller directly.
+ * Reads:
+ *   Port 0x60 (keyboard) returns the low byte of --keyboard (scancode).
+ *   All other ports return 0.
  *
- * IN AL, imm8  (0xE4): 2-byte, port in q1. Returns scancode if port=0x60.
- * IN AX, imm8  (0xE5): 2-byte, port in q1. Returns keyboard word if port=0x60.
- * OUT imm8, AL (0xE6): 2-byte, no-op.
- * OUT imm8, AX (0xE7): 2-byte, no-op.
- * IN AL, DX   (0xEC): 1-byte, port in DX. Returns scancode if DX=0x60.
- * IN AX, DX   (0xED): 1-byte, port in DX. Returns keyboard word if DX=0x60.
- * OUT DX, AL  (0xEE): 1-byte, no-op.
- * OUT DX, AX  (0xEF): 1-byte, no-op.
+ * Writes (state lives in --picMask/--picInService/--pitMode/--pitReload/
+ * --pitCounter/--pitWriteState — declared in template.mjs STATE_VARS):
+ *   Port 0x20 (PIC command): EOI clears the lowest-priority in-service bit.
+ *     Phase 1 treats any write as a non-specific EOI (Doom8088 only sends
+ *     0x20, which is the correct encoding).
+ *   Port 0x21 (PIC data):    writes AL to --picMask.
+ *   Port 0x40 (PIT ch0 data): lo/hi sequenced write to --pitReload; the
+ *     hi-byte write also loads --pitCounter.
+ *   Port 0x43 (PIT control): sets --pitMode from bits 3-1 of AL and resets
+ *     reload/counter/writeState. Channel select (bits 7-6) is ignored for
+ *     Phase 1 — we only track channel 0.
+ *
+ * Unhandled ports (speaker 0x61, CRTC 0x3D4/0x3D5, palette DAC 0x3C8/0x3C9,
+ * secondary PIC 0xA0/0xA1, PIT ch1/ch2 0x41/0x42) remain no-ops.
+ *
+ * Dispatch entries on OUT opcodes fall back to var(--__1NAME) when the port
+ * doesn't match — the entry fires on every OUT of this opcode shape, so it
+ * must explicitly hold the state for unrelated ports.
+ *
+ * Opcode shapes:
+ *   IN AL, imm8  (0xE4): 2-byte, port in q1.
+ *   IN AX, imm8  (0xE5): 2-byte, port in q1.
+ *   OUT imm8, AL (0xE6): 2-byte, port in q1.
+ *   OUT imm8, AX (0xE7): 2-byte, port in q1, AX written (no PIC/PIT effect).
+ *   IN AL, DX   (0xEC): 1-byte, port in --__1DX.
+ *   IN AX, DX   (0xED): 1-byte, port in --__1DX.
+ *   OUT DX, AL  (0xEE): 1-byte, port in --__1DX.
+ *   OUT DX, AX  (0xEF): 1-byte, port in --__1DX, no PIC/PIT effect.
  */
 export function emitIO(dispatch) {
-  // IN AL, imm8 (0xE4): port number is q1 (byte after opcode)
-  // Port 0x60 → scancode = rightShift(keyboard, 8)
+  // --- Reads ---
+
+  // IN AL, imm8 (0xE4): port 0x60 → scancode = rightShift(keyboard, 8)
   dispatch.addEntry('AX', 0xE4,
     `--mergelow(var(--__1AX), if(style(--q1: 96): --rightShift(var(--__1keyboard), 8); else: 0))`,
     `IN AL, imm8 (port 0x60=scancode)`);
@@ -505,24 +526,101 @@ export function emitIO(dispatch) {
     `IN AX, imm8 (port 0x60=keyboard)`);
   dispatch.addEntry('IP', 0xE5, `calc(var(--__1IP) + 2)`, `IN AX, imm8`);
 
-  dispatch.addEntry('IP', 0xE6, `calc(var(--__1IP) + 2)`, `OUT imm8, AL`);
-  dispatch.addEntry('IP', 0xE7, `calc(var(--__1IP) + 2)`, `OUT imm8, AX`);
-
-  // IN AL, DX (0xEC): port number is in DX register
-  // DX=0x60 (96 decimal) → scancode = rightShift(keyboard, 8)
+  // IN AL, DX (0xEC): DX=0x60 → scancode
   dispatch.addEntry('AX', 0xEC,
     `--mergelow(var(--__1AX), if(style(--__1DX: 96): --rightShift(var(--__1keyboard), 8); else: 0))`,
     `IN AL, DX (port 0x60=scancode)`);
   dispatch.addEntry('IP', 0xEC, `calc(var(--__1IP) + 1)`, `IN AL, DX`);
 
-  // IN AX, DX (0xED): port 0x60 → full keyboard word
+  // IN AX, DX (0xED): DX=0x60 → keyboard word
   dispatch.addEntry('AX', 0xED,
     `if(style(--__1DX: 96): var(--__1keyboard); else: 0)`,
     `IN AX, DX (port 0x60=keyboard)`);
   dispatch.addEntry('IP', 0xED, `calc(var(--__1IP) + 1)`, `IN AX, DX`);
 
+  // --- Writes ---
+
+  dispatch.addEntry('IP', 0xE6, `calc(var(--__1IP) + 2)`, `OUT imm8, AL`);
+  dispatch.addEntry('IP', 0xE7, `calc(var(--__1IP) + 2)`, `OUT imm8, AX`);
   dispatch.addEntry('IP', 0xEE, `calc(var(--__1IP) + 1)`, `OUT DX, AL`);
   dispatch.addEntry('IP', 0xEF, `calc(var(--__1IP) + 1)`, `OUT DX, AX`);
+
+  // AL, inline (can't use --AL alias in the state-var expressions below
+  // because we read it across many different --__1AX values — the alias
+  // would need to be re-derived per tick anyway and the cost is identical).
+  const al = `--lowerBytes(var(--__1AX), 8)`;
+
+  // Non-specific EOI on OUT 0x20 (any value). Clear the lowest-priority
+  // in-service bit using the (x & (x-1)) bit-clear-lowest trick. When
+  // picInService=0 this yields 0 (no effect), which is correct.
+  const picEoiExpr = `--and(var(--__1picInService), calc(var(--__1picInService) - 1))`;
+
+  // picInService: OUT to 0x20 → EOI. Other ports → hold.
+  dispatch.addEntry('picInService', 0xE6,
+    `if(style(--q1: 32): ${picEoiExpr}; else: var(--__1picInService))`,
+    `OUT 0x20: non-specific EOI`);
+  dispatch.addEntry('picInService', 0xEE,
+    `if(style(--__1DX: 32): ${picEoiExpr}; else: var(--__1picInService))`,
+    `OUT DX=0x20: non-specific EOI`);
+
+  // picMask: OUT to 0x21 → AL becomes the new mask. Other ports → hold.
+  dispatch.addEntry('picMask', 0xE6,
+    `if(style(--q1: 33): ${al}; else: var(--__1picMask))`,
+    `OUT 0x21: set PIC mask`);
+  dispatch.addEntry('picMask', 0xEE,
+    `if(style(--__1DX: 33): ${al}; else: var(--__1picMask))`,
+    `OUT DX=0x21: set PIC mask`);
+
+  // pitMode: OUT to 0x43 (control word) → bits 3-1 of AL.
+  const pitModeExpr = `--lowerBytes(--rightShift(--and(${al}, 14), 1), 3)`;
+  dispatch.addEntry('pitMode', 0xE6,
+    `if(style(--q1: 67): ${pitModeExpr}; else: var(--__1pitMode))`,
+    `OUT 0x43: PIT control word`);
+  dispatch.addEntry('pitMode', 0xEE,
+    `if(style(--__1DX: 67): ${pitModeExpr}; else: var(--__1pitMode))`,
+    `OUT DX=0x43: PIT control word`);
+
+  // pitWriteState: toggled by OUT 0x40, reset by OUT 0x43. Hold otherwise.
+  dispatch.addEntry('pitWriteState', 0xE6,
+    `if(style(--q1: 67): 0; style(--q1: 64): calc(1 - var(--__1pitWriteState)); else: var(--__1pitWriteState))`,
+    `OUT 0x43/0x40: PIT writeState`);
+  dispatch.addEntry('pitWriteState', 0xEE,
+    `if(style(--__1DX: 67): 0; style(--__1DX: 64): calc(1 - var(--__1pitWriteState)); else: var(--__1pitWriteState))`,
+    `OUT DX=0x43/0x40: PIT writeState`);
+
+  // pitReload: OUT 0x43 resets to 0. OUT 0x40 with writeState=0 sets lo byte,
+  // writeState=1 sets hi byte. Hold otherwise.
+  const pitReloadImm = `if(
+    style(--q1: 67): 0;
+    style(--q1: 64) and style(--__1pitWriteState: 0): calc(--and(var(--__1pitReload), 65280) + ${al});
+    style(--q1: 64) and style(--__1pitWriteState: 1): calc(--and(var(--__1pitReload), 255) + ${al} * 256);
+    else: var(--__1pitReload)
+  )`;
+  const pitReloadDx = `if(
+    style(--__1DX: 67): 0;
+    style(--__1DX: 64) and style(--__1pitWriteState: 0): calc(--and(var(--__1pitReload), 65280) + ${al});
+    style(--__1DX: 64) and style(--__1pitWriteState: 1): calc(--and(var(--__1pitReload), 255) + ${al} * 256);
+    else: var(--__1pitReload)
+  )`;
+  dispatch.addEntry('pitReload', 0xE6, pitReloadImm, `OUT 0x40/0x43: PIT reload`);
+  dispatch.addEntry('pitReload', 0xEE, pitReloadDx, `OUT DX=0x40/0x43: PIT reload`);
+
+  // pitCounter: OUT 0x43 resets to 0. OUT 0x40 with writeState=1 loads the
+  // new full reload into the counter (matches real PIT behavior — the counter
+  // starts ticking only after both bytes are written). Phase 2 adds the
+  // cycleCount-driven decrement; for Phase 1 the counter just holds.
+  const pitCounterImm = `if(
+    style(--q1: 67): 0;
+    style(--q1: 64) and style(--__1pitWriteState: 1): calc(--and(var(--__1pitReload), 255) + ${al} * 256);
+    else: var(--__1pitCounter)
+  )`;
+  const pitCounterDx = `if(
+    style(--__1DX: 67): 0;
+    style(--__1DX: 64) and style(--__1pitWriteState: 1): calc(--and(var(--__1pitReload), 255) + ${al} * 256);
+    else: var(--__1pitCounter)
+  )`;
+  dispatch.addEntry('pitCounter', 0xE6, pitCounterImm, `OUT 0x40/0x43: PIT counter load`);
+  dispatch.addEntry('pitCounter', 0xEE, pitCounterDx, `OUT DX=0x40/0x43: PIT counter load`);
 }
 
 /**

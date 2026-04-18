@@ -25,6 +25,25 @@ export const STATE_VARS = [
   { name: 'halt', init: 0, debug: true },
   { name: 'cycleCount', init: 0, debug: false },
   { name: '_tfPending', init: 0, debug: false },
+
+  // PIC (i8259) state — see transpiler/src/patterns/misc.mjs emitIO().
+  // picMask: IMR. Bit set = IRQ masked. Init 0xFF (all masked) matches real
+  // BIOS POST before the OS unmasks IRQ 0/1.
+  // picPending: IRR. Bit set = IRQ requested, not yet acknowledged.
+  // picInService: ISR. Bit set = IRQ currently being serviced (cleared by EOI).
+  { name: 'picMask', init: 0xFF, debug: false },
+  { name: 'picPending', init: 0, debug: false },
+  { name: 'picInService', init: 0, debug: false },
+
+  // PIT (i8253) channel 0 state — see transpiler/src/patterns/misc.mjs emitIO().
+  // pitMode: counting mode (0..5 from control word bits 3-1).
+  // pitReload: 16-bit reload latch, loaded by OUT 0x40 lo/hi sequence.
+  // pitCounter: running countdown; reloads from pitReload on zero crossing.
+  // pitWriteState: lo/hi toggle for OUT 0x40 (0 = lo byte next, 1 = hi byte next).
+  { name: 'pitMode', init: 0, debug: false },
+  { name: 'pitReload', init: 0, debug: false },
+  { name: 'pitCounter', init: 0, debug: false },
+  { name: 'pitWriteState', init: 0, debug: false },
 ];
 
 /**

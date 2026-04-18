@@ -297,7 +297,11 @@ export function emitCSS(opts, writeStream) {
   writeStream.write('  /* Each register\'s next value is selected by opcode via a\n');
   writeStream.write('     giant if(style(--instId: N)) dispatch. This is the CPU. */\n');
   const regOrder = ['AX', 'CX', 'DX', 'BX', 'SP', 'BP', 'SI', 'DI',
-                    'CS', 'DS', 'ES', 'SS', 'IP', 'flags', 'halt', 'cycleCount'];
+                    'CS', 'DS', 'ES', 'SS', 'IP', 'flags', 'halt', 'cycleCount',
+                    // PIC/PIT state — updated by OUT handlers in patterns/misc.mjs.
+                    // Vars with no dispatch entries fall through to defaultExpr (hold).
+                    'picMask', 'picPending', 'picInService',
+                    'pitMode', 'pitReload', 'pitCounter', 'pitWriteState'];
   for (const reg of regOrder) {
     const defaultExpr = `var(--__1${reg})`;
     writeStream.write(dispatch.emitRegisterDispatch(reg, defaultExpr) + '\n');

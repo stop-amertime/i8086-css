@@ -60,6 +60,9 @@ $('start').addEventListener('click', async () => {
         $('log').textContent += message + '\n';
       },
     });
+
+    // Save to Cache Storage so /play.html can load it via the service worker.
+    await saveCabinet(blob);
   } catch (err) {
     const li = document.createElement('li');
     li.textContent = 'Error: ' + err.message;
@@ -70,9 +73,6 @@ $('start').addEventListener('click', async () => {
     $('start').disabled = false;
     return;
   }
-
-  // Save to Cache Storage so /play.html can load it via the service worker.
-  await saveCabinet(blob);
 
   // Show result section.
   $('result').hidden = false;

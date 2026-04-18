@@ -1,0 +1,15 @@
+{
+  "generated": "2026-04-18T16:49:55.860Z",
+  "bioses": [
+    {
+      "flavor": "muslin",
+      "binary": "muslin.bin",
+      "meta": "muslin.meta.json"
+    },
+    {
+      "flavor": "gossamer",
+      "binary": "gossamer.bin",
+      "meta": "gossamer.meta.json"
+    }
+  ]
+}

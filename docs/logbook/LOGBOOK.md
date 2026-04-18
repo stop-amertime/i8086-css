@@ -3,7 +3,7 @@
 **This is the single source of truth for project status.** Every agent MUST
 read this before starting work and MUST update it before finishing.
 
-Last updated: 2026-04-15 (session 10)
+Last updated: 2026-04-18 (session 11)
 
 ---
 
@@ -16,6 +16,14 @@ a BIOS window at 0xD000:0000. Bootle boots through the rom-disk path live
 in calcite (2026-04-15) after calcite's single-parameter literal-dispatch
 flat-array fast path landed.
 
+**Next big target: Doom8088.** Session 11 readiness check (see entry log)
+identified three concrete CSS-side gaps: no PIT-driven INT 08h auto-fire,
+no INT 09h on keyboard edge, and OUT handlers for ports 0x20/0x40-0x43/0x61
+are no-ops. Everything else Doom8088 needs (Mode 13h framebuffer, INT 21h
+file I/O via rom-disk, 640 KB conventional, 8086 ISA with `-march=i8088`,
+port 0x60 IN) already works. Build Doom8088 with `-march=i8088 -nosound
+-noxms -noems`.
+
 **One BIOS, one build path:** `bios/css-emu-bios.asm` is the assembly
 BIOS. `transpiler/generate-dos.mjs` is the build script. No microcode
 BIOS, no `build.mjs`, no opcode 0xD6 dispatch.
@@ -26,6 +34,8 @@ BIOS, no `build.mjs`, no opcode 0xD6 dispatch.
 
 None for rom-disk — bootle boots through it. Next: retest Zork+FROTZ (larger
 disk, exercises more of the dispatch), then merge `feature/rom-disk` → master.
+Active blocker for Doom8088: no hardware IRQ delivery in V4 CSS (v3 had it,
+was abandoned with μOps; must be re-introduced as single-cycle).
 
 ## What's working
 
@@ -48,17 +58,30 @@ disk, exercises more of the dispatch), then merge `feature/rom-disk` → master.
 
 ## What's next (in priority order)
 
-1. **INT 13h hard disk rejection** — currently the kernel probes hard
-   disks and gets floppy geometry back, which happens to work. Properly
-   rejecting hard disks (DL >= 0x80 → CF=1) causes a stall after the
-   version string. This needs investigation — likely the kernel hits a
-   timeout loop that requires real PIT ticks to exit.
-2. **PIT timer** — real PIT counter driven by `--cycleCount`. The
-   `cycleCount` register is already accumulating; need to derive PIT
-   countdown from it and fire INT 08h when it crosses zero.
-3. **More programs** — test with rogue, other DOS programs.
-4. **Rewrite BIOS in C** — assembly is hard for Claude to reason about. OpenWatcom
-   targeting 8086 real mode. Spec-driven, not a translation of gossamer.
+Doom8088 is the driving target. Items 1-5 are its blockers. Items 6+ are
+parallel/follow-on work.
+
+1. **C BIOS INT 09h + EOI (#25, #26)** — before session 11's PIC/PIT
+   plumbing (PR #24) can actually run Doom, the C BIOS needs to install
+   an INT 09h handler and both INT 08h and INT 09h need to send `OUT
+   0x20, 0x20` before IRET. Without these, the first BIOS-served IRQ
+   latches `picInService` and wedges the PIC. Doom replaces the handlers
+   itself, but there's a startup window where the BIOS handler runs.
+2. **Conformance diff for PIC/PIT (#28)** — run `tools/compare.mjs` on
+   `keyboard-irq.com` / `timer-irq.asm` to confirm CSS matches
+   `tools/peripherals.mjs` tick-for-tick.
+3. **Keyboard break scancodes (#27)** — Doom8088 tracks held keys via
+   release scancodes (high bit set). `--_kbdEdge` fires press-only;
+   release edges need IRQ + synthesized break scancode on port 0x60.
+4. **INT 13h hard disk rejection** — kernel currently probes hard disks
+   and gets floppy geometry, which happens to work. Proper rejection
+   (DL >= 0x80 → CF=1) causes a stall after the version string — the
+   kernel hits a timeout loop that requires real PIT ticks. Should
+   unblock itself once items 1-2 land and the PIT actually fires.
+5. **Rom-disk WAD validation** — retest Zork+FROTZ (~284 KB), then
+   attempt Doom8088's processed WAD (hundreds of KB). Confirms calcite's
+   flat-array dispatch scales to larger disks.
+6. **More programs** — rogue and other DOS programs.
 
 ## Recent decisions
 
@@ -106,6 +129,118 @@ disk, exercises more of the dispatch), then merge `feature/rom-disk` → master.
 ## Entry log
 
 Newest entries first. See `docs/logbook/PROTOCOL.md` for how to write entries.
+
+### 2026-04-18 — Session 11: Doom8088 readiness audit; starting hardware IRQ work
+
+**What:** Audited CSS-DOS against Doom8088's runtime requirements and
+identified the concrete remaining work. Updated "What's next" to make
+Doom8088 the driving target. Started on the port-decode refactor that
+underlies all the IRQ work.
+
+**Doom8088 requirements (summary, source: upstream github.com/FrenkelS/Doom8088):**
+- CPU: default build targets i286 (gcc-ia16 `CPU=i286`), but an i8088 variant
+  exists (`-march=i8088`) that emits pure 8086 ISA — matches V4 patterns.
+- Input: installs a custom **INT 09h handler** (`I_KeyboardISR`), reads port
+  0x60 directly, clears with port 0x61 (bit 7 toggle), EOIs with `OUT 0x20, 0x20`.
+  Does NOT use INT 16h for gameplay.
+- Timing: installs custom **INT 08h handler** (`TS_ServiceSchedule`),
+  reprograms PIT via `OUT 0x43, 0x36` then reload LO/HI to port 0x40.
+  Chains to the BIOS tick counter every 65536 ticks. EOI via 0x20.
+- Video: default is **Mode 13h** (framebuffer 0xA000, palette 0x3C8/0x3C9).
+  A text-mode variant exists (`bt80x25.sh`, framebuffer 0xB8000) and an MDA
+  variant (`bmda.sh`, framebuffer 0xB000). Text variants are simplest for
+  first-run validation; Mode 13h is the "real" experience.
+- Memory: ~450 KB conventional. EMS/XMS are **optional** (`-noems`, `-noxms`).
+- Disk: WAD loaded via `fopen`/`fread` (INT 21h file I/O) — rom-disk path
+  handles this.
+- Sound: PC speaker only (port 0x61 toggling, PIT channel 2). Disable
+  with `-nosound`.
+- Binary: ~90-130 KB unpacked, smaller with LZEXE.
+
+**Current CSS-DOS capability vs Doom8088:**
+
+Already works:
+- 8086 ISA matches i8088 build. PUSH imm, IMUL imm, BCD, FAR indirect
+  CALL/JMP all covered. (80186 extras in `extended186.mjs`; i286 build
+  would hit gaps at 0xC0/0xC1/0x60/0x61/0xC8/0xC9/0x62/0x6C-0x6F.)
+- Mode 13h framebuffer zone (0xA0000-0xAFA00) emitted by memory.mjs.
+- Rom-disk (feature branch) handles WAD-sized images.
+- INT 21h file I/O through EDR-DOS kernel.
+- 640 KB conventional memory contiguous.
+- Port 0x60 IN returns scancode.
+
+Gaps (Doom8088 blockers):
+- No PIT-driven INT 08h auto-fire. `--cycleCount` accumulates but nothing
+  derives a tick countdown from it.
+- No INT 09h on keyboard edge. `--keyboard` updates via :active but no
+  IRQ is raised.
+- No port 0x20/0x21/0x40-0x43/0x61 OUT handlers — `emitIO()` in misc.mjs
+  makes all OUT a no-op.
+- No palette register writes (port 0x3C8/0x3C9) — Doom's damage-flash
+  palette changes would be silent. Acceptable for first validation.
+
+**Historical note:** V3 had all of this — `legacy/v3/transpiler/src/patterns/pit.mjs`
+and `irq.mjs` (via 0xF1 sentinel opcode). V3 was abandoned because the
+μOp sequencer had unrelated bugs that prevented boot. The PIT/IRQ designs
+themselves were sound. V4 port: same state and port-decode logic, but
+single-cycle (no μOp split) — mirror what the V4 0xCD handler does in
+one tick with 8 write slots.
+
+**Stale-doc check:** Issue #6 ("Road to DOS games") still captures the
+right three priorities (keyboard port, PIC EOI, timer IRQ). Will leave
+open with a scope-update comment rather than rewrite.
+
+**Delivered this session (3 commits on `claude/doom8088-readiness-check-6BRWJ`):**
+
+Phase 1 — port decode + state vars (`5afa52e`):
+- New STATE_VARS in template.mjs: picMask (init 0xFF), picPending,
+  picInService, pitMode, pitReload, pitCounter, pitWriteState.
+- emitIO() in patterns/misc.mjs dispatches OUT 0x20/0x21/0x40/0x43
+  to the right state var per port. Non-specific EOI on OUT 0x20 uses
+  the `(x & (x-1))` trick to clear the lowest in-service bit.
+- Dispatch entries fall through to `var(--__1NAME)` (hold) for
+  unrelated ports — the entry fires per-opcode, so the hold is explicit.
+
+Phase 2 — PIT countdown + picPending edge (`27c972a`):
+- emit-css.mjs learns per-register customDefaults so pitCounter/picPending
+  can opt into tick/edge expressions instead of default hold.
+- --_pitTicks (cycleCount/4 delta), --_pitDecrement (×2 in mode 3),
+  --_pitFired (zero-crossing guarded by pitReload != 0).
+- pitCounter decrements by --_pitDecrement each tick; reloads on zero
+  crossing. Port-write dispatch entries fall through to the same tick
+  expression (an OUT to port 0x21 must not stall the PIT).
+- picPending default ORs --_pitFired into bit 0. No IRQ delivery yet.
+
+Phase 3 — IRQ delivery + keyboard edge (`4bd502e`):
+- Single-cycle "sentinel" override, parallel to TF. No 0xF1 opcode —
+  the override fires on the instruction-boundary tick, reusing slot 0-5
+  memory writes for the FLAGS/CS/IP push while register dispatches land
+  the new IVT values.
+- prevKeyboard state var + --_kbdEdge on press (0 → non-zero).
+- --_picEffective / --_ifFlag / --_irqActive / --picVector / --_irqBit
+  computed in the .cpu rule (emitIRQCompute).
+- IRQ_OVERRIDES for SP/IP/CS/flags/cycleCount/picPending/picInService.
+- Fixed latent bug: TF trap used to still fire normal-instruction writes
+  in slots 6-7. Now both TF and IRQ suppress (-1, 0) in unused slots.
+
+**What works now (in principle):**
+- PIT channel 0 actually counts down and fires IRQ 0 if Doom programs it.
+- OUT 0x21 sets picMask, OUT 0x20 acks.
+- Keyboard press raises IRQ 1, IP/CS/FLAGS pushed, jumped to IVT[9] vector.
+- --_cycleCount feeds the PIT naturally, so no separate real-time clock.
+
+**Known limits / follow-ups:**
+1. Only IRQs 0 and 1 wired (no lowestBit helper). Sufficient for Doom8088.
+2. --_kbdEdge fires only on press. Doom8088 reads break codes (high-bit
+   set) on release to track held keys — without those, WASD held-movement
+   breaks. Next session: inject break scancode on keyboard→0 transitions,
+   or expose released-key snapshot in --_kbdRelease.
+3. No palette port 0x3C8/0x3C9 writes — Mode 13h damage-flash is silent.
+4. No validation yet that a build actually runs — the transpiler emits
+   correct-shaped CSS, but no conformance diff has been run (`gossamer.bin`
+   not present in this checkout). Running the `keyboard-irq.asm` test
+   through `compare.mjs` is the next logical step; it exercises OUT 0x21
+   and INT 16h round-trip via the BDA buffer.
 
 ### 2026-04-15 — Session 10: rom-disk end-to-end working; calcite fast path + CLI menu
 

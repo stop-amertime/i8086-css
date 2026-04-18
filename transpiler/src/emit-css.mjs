@@ -18,7 +18,7 @@ import { emitMOV_RegImm16, emitMOV_RegImm8, emitMOV_RegRM, emitMOV_SegRM, emitMO
 import { emitAllALU } from './patterns/alu.mjs';
 import { emitAllControl } from './patterns/control.mjs';
 import { emitAllStack } from './patterns/stack.mjs';
-import { emitAllMisc } from './patterns/misc.mjs';
+import { emitAllMisc, emitPeripheralCompute, emitIRQCompute, pitCounterDefaultExpr, picPendingDefaultExpr } from './patterns/misc.mjs';
 import { emitAllGroups } from './patterns/group.mjs';
 import { emitAllShifts, emitShiftFlagFunctions, emitShiftByNFlagFunctions } from './patterns/shift.mjs';
 import { emitAll186 } from './patterns/extended186.mjs';
@@ -89,24 +89,30 @@ class DispatchTable {
    */
   emitRegisterDispatch(reg, defaultExpr) {
     const entries = this.regEntries.get(reg);
-    if (!entries || entries.size === 0) {
-      return `  --${reg}: ${defaultExpr};`;
-    }
+    const hasEntries = entries && entries.size > 0;
 
-    // Build the normal instruction dispatch
+    // Build the normal instruction dispatch.
     const wrapIP = (reg === 'IP');
-    const dispatchLines = [];
-    const sorted = [...entries.entries()].sort(([a], [b]) => a - b);
-    for (const [opcode, { expr, comment }] of sorted) {
-      const commentStr = comment ? ` /* ${comment} */` : '';
-      dispatchLines.push(`    style(--opcode: ${opcode}): ${expr};${commentStr}`);
-    }
-
     let normalExpr;
-    if (wrapIP) {
-      normalExpr = `calc(if(\n${dispatchLines.join('\n')}\n  else: ${defaultExpr}) + var(--prefixLen))`;
+    if (!hasEntries) {
+      // No dispatch entries → the "normal path" is just the default.
+      // We still wrap with TF/IRQ overrides below so interrupt delivery can
+      // override registers that only have custom-default behavior (e.g.
+      // picPending latches edges by default but clears --_irqBit on ack).
+      // IP always has entries so prefixLen wrapping doesn't apply here.
+      normalExpr = defaultExpr;
     } else {
-      normalExpr = `if(\n${dispatchLines.join('\n')}\n  else: ${defaultExpr})`;
+      const dispatchLines = [];
+      const sorted = [...entries.entries()].sort(([a], [b]) => a - b);
+      for (const [opcode, { expr, comment }] of sorted) {
+        const commentStr = comment ? ` /* ${comment} */` : '';
+        dispatchLines.push(`    style(--opcode: ${opcode}): ${expr};${commentStr}`);
+      }
+      if (wrapIP) {
+        normalExpr = `calc(if(\n${dispatchLines.join('\n')}\n  else: ${defaultExpr}) + var(--prefixLen))`;
+      } else {
+        normalExpr = `if(\n${dispatchLines.join('\n')}\n  else: ${defaultExpr})`;
+      }
     }
 
     // TF (Trap Flag) override: when previous FLAGS had TF=1, fire INT 1 instead
@@ -118,8 +124,27 @@ class DispatchTable {
       'flags': '--and(var(--__1flags), 64767)',  // & 0xFCFF = clear TF+IF
     };
 
+    // IRQ override: when --_irqActive fires (unmasked pending IRQ with IF set
+    // and no in-service IRQ), deliver the interrupt instead of the instruction
+    // fetched from memory. Identical push shape to TF/INT (FLAGS/CS/IP), but
+    // the vector comes from --picVector (8 or 9 for IRQ 0 / IRQ 1) and retIP
+    // is the current __1IP (no instruction consumed). cycleCount += 61 matches
+    // the real 8086 hardware-interrupt cost. picPending clears the acknowledged
+    // bit (while still latching any new edges); picInService sets it so that
+    // lower-priority IRQs block until EOI.
+    const IRQ_OVERRIDES = {
+      'SP':       'calc(var(--__1SP) - 6)',
+      'IP':       '--read2(calc(var(--picVector) * 4))',
+      'CS':       '--read2(calc(var(--picVector) * 4 + 2))',
+      'flags':    '--and(var(--__1flags), 64767)',
+      'cycleCount': 'calc(var(--__1cycleCount) + 61)',
+      'picPending': `--and(${/* edge-OR applied so concurrent edges don't get dropped */''}--or(--or(var(--__1picPending), var(--_pitFired)), calc(var(--_kbdEdge) * 2)), --not(var(--_irqBit)))`,
+      'picInService': '--or(var(--__1picInService), var(--_irqBit))',
+    };
+
     const tfExpr = TF_OVERRIDES[reg] || `var(--__1${reg})`;
-    return `  --${reg}: if(style(--_tf: 1): ${tfExpr}; else: ${normalExpr});`;
+    const irqExpr = IRQ_OVERRIDES[reg] || `var(--__1${reg})`;
+    return `  --${reg}: if(style(--_tf: 1): ${tfExpr}; style(--_irqActive: 1): ${irqExpr}; else: ${normalExpr});`;
   }
 
   /**
@@ -139,9 +164,11 @@ class DispatchTable {
       }
     }
 
-    // TF trap INT 1 memory writes: push FLAGS/CS/IP to stack (slots 0-5)
+    // TF trap and IRQ delivery both push FLAGS/CS/IP — identical 6-write
+    // shape. intAddr/intVal expresses those pushes; both --_tf and --_irqActive
+    // dispatch through the same expressions.
     const ssBase = 'calc(var(--__1SS) * 16)';
-    const tfAddr = [
+    const intAddr = [
       `calc(${ssBase} + var(--__1SP) - 2)`,   // slot 0: FLAGS lo
       `calc(${ssBase} + var(--__1SP) - 1)`,   // slot 1: FLAGS hi
       `calc(${ssBase} + var(--__1SP) - 4)`,   // slot 2: CS lo
@@ -149,10 +176,10 @@ class DispatchTable {
       `calc(${ssBase} + var(--__1SP) - 6)`,   // slot 4: IP lo
       `calc(${ssBase} + var(--__1SP) - 5)`,   // slot 5: IP hi
     ];
-    const tfFlagsPush = `var(--__1flags)`;
-    const tfVal = [
-      `--lowerBytes(${tfFlagsPush}, 8)`,       // FLAGS lo
-      `--rightShift(${tfFlagsPush}, 8)`,        // FLAGS hi
+    const flagsPush = `var(--__1flags)`;
+    const intVal = [
+      `--lowerBytes(${flagsPush}, 8)`,          // FLAGS lo
+      `--rightShift(${flagsPush}, 8)`,          // FLAGS hi
       `--lowerBytes(var(--__1CS), 8)`,          // CS lo
       `--rightShift(var(--__1CS), 8)`,          // CS hi
       `--lowerBytes(var(--__1IP), 8)`,          // IP lo
@@ -161,37 +188,34 @@ class DispatchTable {
 
     const lines = [];
     for (let slot = 0; slot < NUM_WRITE_SLOTS; slot++) {
-      const hasTF = slot < 6;  // TF only uses slots 0-5
+      const intUsesSlot = slot < 6;  // TF/IRQ push 6 bytes (slots 0-5)
+      const hasNormal = slots[slot].length > 0;
 
-      if (slots[slot].length === 0 && !hasTF) {
+      if (!hasNormal && !intUsesSlot) {
         // Unused slot — always inactive
         lines.push(`  --memAddr${slot}: -1;`);
         lines.push(`  --memVal${slot}: 0;`);
         continue;
       }
 
-      if (slots[slot].length === 0) {
-        // TF-only slot
-        lines.push(`  --memAddr${slot}: if(style(--_tf: 1): ${tfAddr[slot]}; else: -1);`);
-        lines.push(`  --memVal${slot}: if(style(--_tf: 1): ${tfVal[slot]}; else: 0);`);
-        continue;
-      }
+      // Build branches: TF/IRQ suppression/push first, then normal dispatch.
+      // For slots 0-5 during TF/IRQ: push FLAGS/CS/IP.
+      // For slots 6-7 during TF/IRQ: suppress (-1, 0) — the normal instruction
+      // wasn't run, so its writes must not fire either.
+      const tfOrIrqAddr = intUsesSlot ? intAddr[slot] : '-1';
+      const tfOrIrqVal  = intUsesSlot ? intVal[slot]  : '0';
 
-      // Address dispatch
       lines.push(`  --memAddr${slot}: if(`);
-      if (hasTF) {
-        lines.push(`    style(--_tf: 1): ${tfAddr[slot]};`);
-      }
+      lines.push(`    style(--_tf: 1): ${tfOrIrqAddr};`);
+      lines.push(`    style(--_irqActive: 1): ${tfOrIrqAddr};`);
       for (const { opcode, addrExpr, comment } of slots[slot]) {
         lines.push(`    style(--opcode: ${opcode}): ${addrExpr}; /* ${comment || ''} */`);
       }
       lines.push(`  else: -1);`);
 
-      // Value dispatch
       lines.push(`  --memVal${slot}: if(`);
-      if (hasTF) {
-        lines.push(`    style(--_tf: 1): ${tfVal[slot]};`);
-      }
+      lines.push(`    style(--_tf: 1): ${tfOrIrqVal};`);
+      lines.push(`    style(--_irqActive: 1): ${tfOrIrqVal};`);
       for (const { opcode, valExpr, comment } of slots[slot]) {
         lines.push(`    style(--opcode: ${opcode}): ${valExpr}; /* ${comment || ''} */`);
       }
@@ -286,6 +310,8 @@ export function emitCSS(opts, writeStream) {
   writeStream.write('  /* Register aliases (8-bit halves) */\n');
   w(emitRegisterAliases());
   w(emitDecodeProperties());
+  w(emitPeripheralCompute());
+  w(emitIRQCompute());
 
   // Unknown opcode detection — sets --unknownOp=1 and --haltCode=opcode
   writeStream.write('  /* ===== UNKNOWN OPCODE FLAG ===== */\n');
@@ -297,9 +323,24 @@ export function emitCSS(opts, writeStream) {
   writeStream.write('  /* Each register\'s next value is selected by opcode via a\n');
   writeStream.write('     giant if(style(--instId: N)) dispatch. This is the CPU. */\n');
   const regOrder = ['AX', 'CX', 'DX', 'BX', 'SP', 'BP', 'SI', 'DI',
-                    'CS', 'DS', 'ES', 'SS', 'IP', 'flags', 'halt', 'cycleCount'];
+                    'CS', 'DS', 'ES', 'SS', 'IP', 'flags', 'halt', 'cycleCount',
+                    // PIC/PIT state — updated by OUT handlers in patterns/misc.mjs.
+                    // Vars with no dispatch entries fall through to defaultExpr.
+                    'picMask', 'picPending', 'picInService',
+                    'pitMode', 'pitReload', 'pitCounter', 'pitWriteState',
+                    // Keyboard-edge detection: snapshot current --keyboard.
+                    'prevKeyboard'];
+  // Custom defaults: the fall-through expression when no dispatch entry fires
+  // for this opcode. pitCounter ticks every instruction; picPending latches
+  // PIT+keyboard edges; prevKeyboard snapshots --keyboard. Everything else
+  // just holds its __1 value.
+  const customDefaults = {
+    pitCounter: pitCounterDefaultExpr(),
+    picPending: picPendingDefaultExpr(),
+    prevKeyboard: 'var(--keyboard)',
+  };
   for (const reg of regOrder) {
-    const defaultExpr = `var(--__1${reg})`;
+    const defaultExpr = customDefaults[reg] ?? `var(--__1${reg})`;
     writeStream.write(dispatch.emitRegisterDispatch(reg, defaultExpr) + '\n');
   }
   writeStream.write('\n');

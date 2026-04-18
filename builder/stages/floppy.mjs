@@ -29,9 +29,11 @@ export function buildFloppy({ cart, manifest, cacheDir }) {
   const autorun = manifest.boot?.autorun ?? null;
   const args = manifest.boot?.args ?? '';
   const shellTarget = autorun ?? 'COMMAND.COM';
-  const configContent = args
+  // SWITCHES=/F skips the ~2s F5/F8 startup delay — we don't need it in the emulator.
+  const shellLine = args
     ? `SHELL=\\${shellTarget} ${args}\n`
     : `SHELL=\\${shellTarget}\n`;
+  const configContent = `SWITCHES=/F\n${shellLine}`;
   const configPath = join(cacheDir, 'CONFIG.SYS');
   writeFileSync(configPath, configContent);
 

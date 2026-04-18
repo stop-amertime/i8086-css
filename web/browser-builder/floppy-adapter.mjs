@@ -41,9 +41,11 @@ export function buildFloppyInBrowser({
 
   // Synthesize CONFIG.SYS (mirror builder/stages/floppy.mjs logic).
   const shellTarget = autorun ?? 'COMMAND.COM';
-  const configContent = args
+  // SWITCHES=/F skips the ~2s F5/F8 startup delay — we don't need it in the emulator.
+  const shellLine = args
     ? `SHELL=\\${shellTarget} ${args}\n`
     : `SHELL=\\${shellTarget}\n`;
+  const configContent = `SWITCHES=/F\n${shellLine}`;
   const configBytes = new TextEncoder().encode(configContent);
 
   const layout = [

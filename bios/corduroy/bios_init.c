@@ -96,9 +96,19 @@ static void install_ivt(void) {
     ivt[0x21 * 2] = HANDLER_OFF(default_handler);
 }
 
+/* Conventional memory size in KB, written into BDA so INT 12h and any
+   kernel that asks (EDR-DOS calls INT 12h, then uses the result to
+   relocate itself to the top of memory) get the real number. The
+   builder patches this to `memBytes / 1024` after link time by scanning
+   bios.bin for the 16-bit signature 0xBEEF; the initial value must not
+   appear anywhere else in the binary. 0xBEEF is 48879 decimal, a value
+   no realistic machine has (and not a round KB number), which avoids
+   collision with legitimate constants. */
+static volatile unsigned int conventional_mem_kb = 0xBEEF;
+
 static void install_bda(void) {
     poke_w(BDA_SEG, BDA_EQUIPMENT_LIST, 0x0021);
-    poke_w(BDA_SEG, BDA_MEMORY_SIZE, 640);
+    poke_w(BDA_SEG, BDA_MEMORY_SIZE, conventional_mem_kb);
 
     poke_w(BDA_SEG, BDA_KBD_BUFFER_HEAD, BDA_KBD_BUFFER);
     poke_w(BDA_SEG, BDA_KBD_BUFFER_TAIL, BDA_KBD_BUFFER);

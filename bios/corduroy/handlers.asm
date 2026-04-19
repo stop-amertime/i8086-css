@@ -3,6 +3,7 @@
 ; All handler labels are exported as globals so C code can reference them.
 
 [bits 16]
+[cpu 8086]      ; refuse to emit 186+ instructions — this BIOS runs on a pure 8086 core
 
 global int01h_handler
 global int08h_handler
@@ -111,31 +112,39 @@ int10h_handler:
     cmp al, 7
     je .tty_done
 
-    ; Compute VGA offset = (row*80+col)*2
+    ; Compute VGA offset = (row*cols+col)*2 where cols = 80 (mode 03h) or 40 (mode 01h).
     push ax                ; save char
     push dx                ; save cursor
+    mov bl, 80             ; default: mode 03h = 80 columns
+    cmp byte [video_mode], 0x01
+    jne .tty_cols_set
+    mov bl, 40             ; mode 01h = 40 columns
+.tty_cols_set:
+    push bx                ; save cols for wrap check
     mov al, dh
-    mov bl, 80
-    mul bl                 ; AX = row*80
+    mul bl                 ; AX = row*cols
     xor bh, bh
     mov bl, dl
-    add ax, bx             ; AX = row*80+col
-    shl ax, 1              ; AX = (row*80+col)*2
+    add ax, bx             ; AX = row*cols+col
+    shl ax, 1              ; AX = (row*cols+col)*2
     mov di, ax
+    pop bx                 ; restore cols in BL
     pop dx                 ; restore cursor
     pop ax                 ; restore char
 
     ; Write to VGA
     push ds
+    push bx                ; save cols across ds reload
     mov bx, VGA_SEG
     mov ds, bx
     mov [di], al           ; character
     mov byte [di+1], 0x07  ; attribute
+    pop bx                 ; restore cols
     pop ds
 
-    ; Advance cursor
+    ; Advance cursor (BL = column count for this mode)
     inc dl
-    cmp dl, 80
+    cmp dl, bl
     jb .tty_save
     xor dl, dl
     inc dh
@@ -209,7 +218,9 @@ int10h_handler:
     jmp .write_char_only
 .not_write_char_only:
     cmp ah, 0x1A
-    je .get_display_combo
+    jne .int10_done
+    jmp .get_display_combo
+.int10_done:
     pop bp
     pop es
     pop ds
@@ -258,6 +269,13 @@ int10h_handler:
     ; Only store modes we actually support; map anything else to 0x03.
     cmp al, 0x13
     je .set_mode_store
+    cmp al, 0x01           ; CGA 40x25 color text — same buffer at B8000,
+    je .set_mode_store     ; just a different column stride.
+    cmp al, 0x00           ; CGA 40x25 mono text — same layout as 0x01;
+    jne .set_mode_force03  ; mono vs colour is an attribute-byte distinction
+    mov al, 0x01           ; we ignore, so normalise to 0x01.
+    jmp short .set_mode_store
+.set_mode_force03:
     mov al, 0x03
 .set_mode_store:
     mov [video_mode], al

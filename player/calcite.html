@@ -67,6 +67,24 @@
       margin-top: 4px;
       color: #000;
     }
+    .warnings {
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .warning {
+      border-top: 2px solid #fff;
+      border-left: 2px solid #fff;
+      border-right: 2px solid #808080;
+      border-bottom: 2px solid #808080;
+      background: #ffc0c0;
+      color: #800000;
+      font-family: inherit;
+      font-size: 12px;
+      padding: 4px 6px;
+    }
+    .warning strong { color: #400000; }
     .keyboard {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -130,6 +148,7 @@
         <span id="status">Loading cabinet...</span>
         <span style="float:right" id="stats"></span>
       </div>
+      <div class="warnings" id="warnings"></div>
       <div class="keyboard">
         <div class="kb-main">
           <button class="kb-key" data-key="0x0231">1</button><button class="kb-key" data-key="0x0332">2</button><button class="kb-key" data-key="0x0433">3</button><button class="kb-key" data-key="0x0534">4</button><button class="kb-key" data-key="0x0635">5</button>
@@ -164,6 +183,40 @@
     const canvas = document.getElementById('screen-canvas');
     const ctx = canvas.getContext('2d');
     const stats = document.getElementById('stats');
+    const warningsEl = document.getElementById('warnings');
+
+    // Diagnostic warnings — each (kind, value) shown once.
+    const shownWarnings = new Set();
+    function showWarning(kind, value, html, consoleMsg) {
+      const key = `${kind}:${value}`;
+      if (shownWarnings.has(key)) return;
+      shownWarnings.add(key);
+      const div = document.createElement('div');
+      div.className = 'warning';
+      div.innerHTML = html;
+      warningsEl.appendChild(div);
+      console.error('[CSS-DOS]', consoleMsg);
+    }
+    const VIDEO_MODE_NAMES = {
+      0x00: 'CGA 40×25 text (mono)',
+      0x01: 'CGA 40×25 text (color)',
+      0x02: 'CGA 80×25 text (mono)',
+      0x03: 'CGA 80×25 text (color)',
+      0x04: 'CGA 320×200×4',
+      0x05: 'CGA 320×200×4 (mono)',
+      0x06: 'CGA 640×200×2',
+      0x07: 'MDA/Hercules 80×25 mono text',
+      0x0D: 'EGA 320×200×16 (planar)',
+      0x0E: 'EGA 640×200×16 (planar)',
+      0x0F: 'EGA 640×350 mono (planar)',
+      0x10: 'EGA 640×350×16 (planar)',
+      0x11: 'VGA 640×480×2',
+      0x12: 'VGA 640×480×16 (planar)',
+      0x13: 'VGA 320×200×256 (Mode 13h)',
+    };
+    function videoModeName(m) {
+      return VIDEO_MODE_NAMES[m] || `unknown mode 0x${m.toString(16).padStart(2, '0').toUpperCase()}`;
+    }
     const REAL_8086_HZ = 4_772_727;
 
     function formatHz(hz) {
@@ -180,7 +233,7 @@
     const TARGET_MS = 14;
     const EMA_ALPHA = 0.3;
     const MIN_BATCH = 50;
-    const MAX_BATCH = 10000;
+    const MAX_BATCH = 50000;
     let batchCount = 200;
     let batchSentAt = 0;
     let batchMsEma = TARGET_MS;
@@ -224,6 +277,8 @@
           break;
         }
         case 'tick-result': {
+          // Stash last tick-result on window for devtools / automation inspection.
+          window.__lastTick = data;
           updateBatchSize();
           totalTicks += data.ticks;
           totalCycles = data.cycles != null ? data.cycles : totalCycles;
@@ -233,11 +288,72 @@
           const pct = cps / REAL_8086_HZ * 100;
           stats.textContent = `${totalTicks.toLocaleString()} ticks | ${formatHz(cps)} (${pct.toFixed(1)}% of 4.77 MHz)`;
 
+          // Diagnostics. Unknown opcode = effective halt; show immediately.
+          if (data.haltCode) {
+            const op = '0x' + data.haltCode.toString(16).padStart(2, '0').toUpperCase();
+            showWarning(
+              'opcode',
+              data.haltCode,
+              `<strong>Unknown opcode ${op}.</strong> This program uses a CPU instruction CSS-DOS's 8086 core doesn't implement — most likely it requires a 286/386/486. Execution is halted.`,
+              `Unknown opcode ${op} — program requires a CPU newer than 8086.`,
+            );
+          }
+          // Unsupported video mode detection. We get two signals from the
+          // engine:
+          //   - data.videoMode: byte at BDA[0x449] ("what the BIOS says").
+          //   - data.requestedVideoMode: byte at flat 0x04F2. Corduroy is
+          //     supposed to write the pre-remap value here on every INT 10h
+          //     AH=00h call; in practice no BIOS implements this yet, so
+          //     the byte is always 0. Until a BIOS writes it, we treat
+          //     `req === 0` as "no request observed" and skip remap
+          //     warnings — otherwise every program that uses the default
+          //     80×25 text mode (i.e. never calls INT 10h AH=00h) trips
+          //     a spurious "requested 0x00, got 0x03" warning.
+          // Modes the player can render correctly. 0x00 is CGA 40×25
+          // mono text — identical buffer layout to 0x01, so the BIOS
+          // normalises 0x00 → 0x01 and we render them the same way.
+          const SUPPORTED_MODES = new Set([0x01, 0x03, 0x13]);
+          const MODE_ALIASES = { 0x00: 0x01 };
+          const req = data.requestedVideoMode;
+          const got = data.videoMode;
+          // A remap from X to Y is harmless if Y is the player's alias
+          // target for X. Only warn on meaningful mismatches.
+          const reqAlias = MODE_ALIASES[req] ?? req;
+          // Require req to be truthy AND different from got AND not an alias
+          // target. Truthy check (`req`) keeps 0 out — see comment above.
+          if (req && req !== got && reqAlias !== got) {
+            const rHex = '0x' + req.toString(16).padStart(2, '0').toUpperCase();
+            const gHex = '0x' + (got ?? 0).toString(16).padStart(2, '0').toUpperCase();
+            showWarning(
+              'vmode-remap',
+              req,
+              `<strong>Video mode ${rHex}</strong> (${videoModeName(req)}) was remapped to ${gHex} (${videoModeName(got)}) by the BIOS. CSS-DOS currently implements 40×25 text (0x01), 80×25 text (0x03), and VGA Mode 13h (0x13). Rendering will likely be wrong.`,
+              `Program requested video mode ${rHex} (${videoModeName(req)}) — remapped to ${gHex} (${videoModeName(got)}).`,
+            );
+          } else if (got != null && !SUPPORTED_MODES.has(got)) {
+            const gHex = '0x' + got.toString(16).padStart(2, '0').toUpperCase();
+            showWarning(
+              'vmode-unsupported',
+              got,
+              `<strong>Unsupported video mode ${gHex}</strong> (${videoModeName(got)}). The player can render 40×25 text (0x01), 80×25 text (0x03), and VGA Mode 13h (0x13). Output may be blank or garbled.`,
+              `Active video mode ${gHex} (${videoModeName(got)}) is not supported by the player.`,
+            );
+          }
+
           const isGfxMode = (data.videoMode === 0x13);
           const wasGfxMode = (currentVideoMode === 0x13);
           if (currentVideoMode === null || isGfxMode !== wasGfxMode) {
             if (isGfxMode) { canvas.style.display = ''; output.style.display = 'none'; }
             else { canvas.style.display = 'none'; output.style.display = ''; output.style.minHeight = '0'; }
+          }
+          // Mode 01h (40×25): scale the text output horizontally so 40
+          // columns fill the same width 80 columns normally would.
+          if (data.videoMode !== currentVideoMode) {
+            if (data.videoMode === 0x01) {
+              output.style.letterSpacing = '1ch';
+            } else {
+              output.style.letterSpacing = '';
+            }
           }
           currentVideoMode = data.videoMode;
 

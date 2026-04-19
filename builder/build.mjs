@@ -153,7 +153,8 @@ function buildCabinetHeader({ cart, manifest, bios, floppy }) {
     }
     lines.push(' *');
   }
-  lines.push(` * BIOS: ${titleCase(bios.meta.flavor)} BIOS, ${bios.meta.sizeBytes} bytes (${bios.meta.source})`);
+  const vTag = bios.meta.version ? ` v${bios.meta.version}` : ' (unversioned)';
+  lines.push(` * BIOS: ${titleCase(bios.meta.flavor)}${vTag}, ${bios.meta.sizeBytes} bytes (${bios.meta.source})`);
   lines.push(' */');
   return lines.join('\n');
 }

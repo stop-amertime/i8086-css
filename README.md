@@ -30,7 +30,7 @@ $ open player/index.html?cabinet=../rogue.css
 | **cabinet** | The built artifact — a single `.css` file, runnable. |
 | **Kiln** | The transpiler. Turns an 8086 memory image into CSS. |
 | **builder** | Orchestrator. Wires up BIOS → floppy → Kiln. |
-| **BIOSes** | Three flavors: **Gossamer** (hack-path shim), **Muslin** (current real BIOS), **Corduroy** (structured C BIOS, experimental). |
+| **BIOSes** | Three flavors: **Gossamer** (hack-path shim), **Muslin** (assembly DOS BIOS), **Corduroy** (structured C DOS BIOS, default). |
 | **player** | Static HTML shell. Loads cabinets with `?cabinet=path.css`. |
 | **Calcite** | Sibling repo: the JIT that runs cabinets fast. |
 
@@ -47,8 +47,8 @@ builder/         Orchestrator CLI and stages
 kiln/            The transpiler (née transpiler/src)
 bios/
   gossamer/      Hack BIOS
-  muslin/        Current real BIOS
-  corduroy/      Structured C BIOS (experimental)
+  muslin/        Assembly DOS BIOS
+  corduroy/      Structured C DOS BIOS (default)
 player/          Static HTML shell for running cabinets in Chrome
 conformance/     Reference emulators for diff testing
 carts/           Example carts

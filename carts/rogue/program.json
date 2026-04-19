@@ -1,7 +1,0 @@
-{
-  "$schema": "../../program.schema.json",
-  "name": "Rogue",
-  "description": "Classic dungeon-crawler (1980).",
-  "preset": "dos-muslin",
-  "boot": { "autorun": "ROGUE.EXE" }
-}

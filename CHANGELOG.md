@@ -14,7 +14,7 @@ for the new vocabulary.
 - **cabinet** — built `.css` artifact.
 - **Kiln** — the CSS transpiler.
 - **builder** — orchestrator script.
-- **BIOSes** — Gossamer (hack), Muslin (current), Corduroy (experimental).
+- **BIOSes** — Gossamer (hack), Muslin (assembly DOS BIOS), Corduroy (default C DOS BIOS).
 - **player** — static HTML shell for running cabinets in Chrome.
 
 ### Renamed

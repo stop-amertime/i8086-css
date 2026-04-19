@@ -7,11 +7,22 @@
 const BIOS_LINEAR = 0xF0000; // F000:0000
 const BIOS_SEG = 0xF000;
 
+// VGA DAC palette: 256 entries × 3 bytes (R, G, B) = 768 bytes. Stored at
+// a linear address outside the 1 MB 8086 space so no real program can read
+// or write it by accident. Filled by OUT 0x3C9 in patterns/misc.mjs;
+// consumed by calcite's framebuffer renderer. Initial values are 0 (black);
+// the Corduroy splash writes the first 16 entries during BIOS init, and
+// real Mode 13h programs program their own palette before drawing.
+export const DAC_LINEAR = 0x100000;
+export const DAC_BYTES  = 768;
+
 // Number of parallel memory write slots.
-// 6 is the minimum (INT pushes 3 words = 6 bytes).
-// 8 gives headroom for instructions that may need extra slots.
-// Calcite handles many slots efficiently via HashMap lookups.
-export const NUM_WRITE_SLOTS = 8;
+// 6 is the maximum an instruction actually uses (INT / TF trap / hardware
+// IRQ push FLAGS/CS/IP = 3 words = 6 bytes). Every slot is gated at the
+// per-byte write rule by `--_slotNLive`, so a smaller slot count reduces
+// both the emitted CSS volume and the per-tick gate-evaluation cost
+// without giving up any expressible instruction.
+export const NUM_WRITE_SLOTS = 6;
 
 // Standard IVT entries for gossamer.asm (must match handler offsets in gossamer.lst / ref-emu.mjs)
 const BIOS_IVT_HANDLERS = {
@@ -61,8 +72,9 @@ export function comMemoryZones(programBytes, programOffset, memBytes) {
   // memBytes = size of conventional memory area starting at 0
   // (includes IVT + BDA + program + stack)
   return [
-    [0x0000, memBytes],                // IVT + BDA + program + stack (contiguous)
-    [0xB8000, 0xB8FA0],               // VGA text mode (80x25x2 = 4000 bytes)
+    [0x0000, memBytes],                       // IVT + BDA + program + stack (contiguous)
+    [0xB8000, 0xB8FA0],                       // VGA text mode (80x25x2 = 4000 bytes)
+    [DAC_LINEAR, DAC_LINEAR + DAC_BYTES],     // VGA DAC palette (out-of-1MB shadow)
   ];
 }
 
@@ -95,10 +107,24 @@ export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedDa
   // Note: the LBA register at linear 0x4F0-0x4F1 (BDA intra-app area) is
   // naturally inside [0x0000, memBytes] and therefore normal writable
   // memory — no special handling needed.
+  // EDR-DOS's biosinit relocates itself to `mem_size - biosinit_paragraphs`
+  // and copies `biosinit_end` bytes there. The copy's last byte lands at
+  // roughly linear `mem_size * 1024 + (biosinit_end mod 16)`, i.e. a few
+  // bytes PAST the nominal top of conventional memory (rounding plus the
+  // `+32` scratch in biosinit.asm:275). At 640K this lands inside the VGA
+  // zone and silently succeeds; at smaller sizes it lands in the unmapped
+  // gap between the conventional zone and the framebuffer, the far-return
+  // into the copy jumps into dead memory, and boot dies silently. Pad the
+  // zone with 4 KB to absorb that overspill without growing the cabinet
+  // noticeably. 4 KB is more than enough — biosinit is under 16 KB total,
+  // so the overspill past mem_size*1024 is at most ~16 bytes.
+  const DOS_BIOSINIT_PAD = 0x1000;
+  const convEnd = Math.min(0xA0000, memBytes + DOS_BIOSINIT_PAD);
   const zones = [];
-  zones.push([0x0000, memBytes]);
+  zones.push([0x0000, convEnd]);
   if (!prune.gfx) {
     zones.push([0xA0000, 0xAFA00]);         // VGA Mode 13h framebuffer (320x200)
+    zones.push([DAC_LINEAR, DAC_LINEAR + DAC_BYTES]); // VGA DAC palette (out-of-1MB shadow)
   }
   if (!prune.textVga) {
     zones.push([0xB8000, 0xB8FA0]);         // VGA text mode (80x25x2)

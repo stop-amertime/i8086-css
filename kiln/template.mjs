@@ -49,6 +49,20 @@ export const STATE_VARS = [
   // --keyboard is driven externally by :active button rules; its double-buffered
   // snapshot lets us compare this tick's value against last tick's.
   { name: 'prevKeyboard', init: 0, debug: false },
+
+  // VGA DAC state — see patterns/misc.mjs emitIO().
+  // dacWriteIndex: which of the 256 DAC registers is currently being written
+  //   (set by OUT 0x3C8; auto-increments after every 3 writes to 0x3C9).
+  // dacSubIndex: 0/1/2 counter for R/G/B within a single DAC register.
+  //   Advances on each OUT 0x3C9; wraps to 0 and bumps dacWriteIndex on 3.
+  { name: 'dacWriteIndex', init: 0, debug: false },
+  { name: 'dacSubIndex',   init: 0, debug: false },
+
+  // Sticky latch: set to the offending opcode byte the first time the CPU
+  // hits an instruction with no dispatch entry (unknownOp=1). Once set, never
+  // clears — the host (player / CLI) surfaces it as a diagnostic. 0 means
+  // no unknown opcode seen yet.
+  { name: 'haltCode', init: 0, debug: true },
 ];
 
 /**

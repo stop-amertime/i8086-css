@@ -294,8 +294,8 @@ These were flagged during design but don't block the structure above.
   `Buffer`, `child_process`, `process.argv`). Expected to be a short
   list — Kiln looks mostly like string building. Handle each in the
   adapter layer rather than branching inside Kiln.
-- **Which BIOS flavours the web version exposes.** Muslin is default.
-  Corduroy might be worth exposing for advanced users. Gossamer
+- **Which BIOS flavours the web version exposes.** Corduroy is default.
+  Muslin might be worth exposing for advanced users. Gossamer
   (hack path) is probably not — different runtime shape, different
   cart format. Decide at implementation time.
 - **Advanced config panel.** Memory size, prune options, BIOS flavour,

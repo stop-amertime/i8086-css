@@ -13,6 +13,20 @@ const $ = (id) => document.getElementById(id);
 
 let activeSource = null; // 'file' | 'folder' | null
 
+// For folder uploads, derive the on-floppy name from webkitRelativePath.
+// We strip the user-picked folder (first segment) and keep ONE level of
+// subdirectory — mkfat12 supports DATA\FILE.DAT but not deeper nesting.
+// Deeper paths are flattened into the first subdir to avoid silent data loss.
+function relativeCartName(file) {
+  const rel = file.webkitRelativePath || file.name;
+  const parts = rel.split('/').filter(Boolean);
+  // Drop the top-level folder name the user picked.
+  const inside = parts.length > 1 ? parts.slice(1) : parts;
+  if (inside.length === 1) return inside[0];
+  // Keep first subdir, flatten the rest into its basename.
+  return inside[0] + '\\' + inside[inside.length - 1];
+}
+
 function runnableNames() {
   // Returns an array of uppercase filenames (.com/.exe) from the active input.
   const out = [];
@@ -32,35 +46,39 @@ function refreshAutorunDropdown() {
   const sel = $('autorun');
   const preset = $('preset').value;
   const runnables = runnableNames();
+  const isDos = preset !== 'hack';
 
   // Hack preset: autorun is driven by the single .com — hide the picker.
-  $('autorun-row').hidden = preset === 'hack' || runnables.length === 0;
+  // DOS presets always show the picker (COMMAND.COM is available even
+  // without user uploads, since the builder fetches it from /assets/dos/).
+  $('autorun-row').hidden = !isDos;
 
   // Preserve the user's current choice if it's still valid.
   const previous = sel.value;
   sel.innerHTML = '';
-  // COMMAND.COM is always offered — if the cart doesn't include it, the
-  // floppy builder falls back to dos/bin/command.com. Selecting it drops
-  // the user at a DOS prompt instead of auto-running a program.
-  const cmdOpt = document.createElement('option');
-  cmdOpt.value = 'COMMAND.COM';
-  cmdOpt.textContent = 'COMMAND.COM (DOS prompt)';
-  sel.appendChild(cmdOpt);
-  for (const n of runnables) {
-    if (n === 'COMMAND.COM') continue; // avoid a duplicate
+  // Default: no autorun → boot straight to COMMAND.COM prompt (autorun=null).
+  const defaultOpt = document.createElement('option');
+  defaultOpt.value = '';
+  defaultOpt.textContent = '(none — drop to COMMAND.COM prompt)';
+  sel.appendChild(defaultOpt);
+
+  // Always offer COMMAND.COM on DOS presets. floppy-adapter supplies the
+  // bytes from dos/bin/command.com when the cart doesn't include its own.
+  const names = new Set(runnables);
+  if (isDos) names.add('COMMAND.COM');
+
+  for (const n of names) {
     const opt = document.createElement('option');
     opt.value = n;
     opt.textContent = n;
     sel.appendChild(opt);
   }
 
-  // Default: single-file mode → autorun that one; else preserve previous or COMMAND.COM.
   if ([...sel.options].some(o => o.value === previous)) {
     sel.value = previous;
-  } else if (activeSource === 'file' && runnables.length === 1) {
-    sel.value = runnables[0];
   } else {
-    sel.value = 'COMMAND.COM';
+    // Default to "drop to prompt" — COMMAND.COM as SHELL= target is opt-in.
+    sel.value = '';
   }
 }
 
@@ -87,6 +105,15 @@ $('dir-file').addEventListener('change', () => {
 $('preset').addEventListener('change', refreshAutorunDropdown);
 refreshAutorunDropdown();
 
+// Split-mode reload button.
+const splitReload = document.getElementById('split-reload');
+if (splitReload) {
+  splitReload.addEventListener('click', () => {
+    const frame = document.getElementById('split-frame');
+    frame.src = '/player/calcite.html?t=' + Date.now();
+  });
+}
+
 // ── Build button ──────────────────────────────────────────────────────────────
 
 $('start').addEventListener('click', async () => {
@@ -101,7 +128,7 @@ $('start').addEventListener('click', async () => {
     if (!list || list.length === 0) { alert('Pick a file or folder first.'); return; }
     cartFiles = await Promise.all(
       [...list].map(async f => ({
-        name: f.name,  // basename only; subfolder paths are flattened
+        name: relativeCartName(f),
         bytes: new Uint8Array(await f.arrayBuffer()),
       })),
     );
@@ -122,11 +149,13 @@ $('start').addEventListener('click', async () => {
   $('log').textContent = '';
 
   const preset = $('preset').value;
-  // COMMAND.COM is the "drop to DOS prompt" option — pass null so the floppy
-  // builder's default branch (add COMMAND.COM + SHELL=\COMMAND.COM) fires.
-  // Any other value is a specific SHELL= target.
-  const autorunSel = $('autorun').value;
-  const autorun = (autorunSel === '' || autorunSel === 'COMMAND.COM') ? null : autorunSel;
+  const autorun = $('autorun').value || null;
+  const memorySel = $('memory').value;
+  // Empty = auto-fit (let the preset's "autofit" default win); otherwise
+  // the dropdown value is a preset string the sizes.mjs resolver understands.
+  const extraManifest = memorySel
+    ? { memory: { conventional: memorySel } }
+    : {};
 
   let blob;
   try {
@@ -134,6 +163,7 @@ $('start').addEventListener('click', async () => {
       preset,
       files: cartFiles,
       autorun,
+      manifest: extraManifest,
       onProgress: ({ stage, message }) => {
         // Add a stage <li> to the ordered list.
         const li = document.createElement('li');
@@ -177,6 +207,13 @@ $('start').addEventListener('click', async () => {
 
   // Wire up paginated source viewer.
   setupSourceViewer(blob);
+
+  // Split mode (?split=1): (re)load the calcite player iframe so it
+  // picks up the freshly-cached /cabinet.css.
+  if (document.body.classList.contains('split')) {
+    const frame = document.getElementById('split-frame');
+    frame.src = '/player/calcite.html?t=' + Date.now();
+  }
 
   // Re-enable build button (allow rebuild).
   $('start').disabled = false;

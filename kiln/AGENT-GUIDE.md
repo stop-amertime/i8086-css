@@ -87,6 +87,14 @@ For byte writes: one `addMemWrite` call with address and value.
 For word writes: two `addMemWrite` calls — lo byte at addr, hi byte at addr+1.
 Address `-1` means "no write" (disabled slot).
 
+Slot usage is tracked per opcode and drives the `--_slotNLive` gates
+that wrap the per-byte write rules: an opcode that calls `addMemWrite`
+N times lights up slots 0…N-1 for that tick, and slots N…5 stay off.
+Opcodes that never call `addMemWrite` leave every gate at 0, so
+non-writing instructions skip all address lookups entirely. You don't
+need to do anything for this to work — just call `addMemWrite` in slot
+order (slot 0 first, then 1, etc.) as you already would.
+
 ### Pattern for 8-bit register destinations
 
 8-bit registers map to 16-bit parents:

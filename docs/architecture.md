@@ -11,34 +11,19 @@ The CSS runs in Chrome unaided — no JavaScript, no WebAssembly, no
 browser extensions. Calcite (a sibling repo) is the JIT compiler that
 makes cabinets fast enough to actually play.
 
-## The cardinal rule
-
-The CSS is the source of truth. Chrome is the reference implementation.
-
-- The CSS must work in Chrome. If Chrome can't evaluate it, it's wrong.
-- Calcite can't change the CSS — only evaluate it faster.
-- CSS restructuring is fine if Chrome still produces the same result
-  (expressing the same computation in a different, more
-  pattern-recognisable shape). But no dummy code, no metadata
-  properties, no side-channels whose only purpose is to sneak
-  information to Calcite.
-- If Calcite disagrees with Chrome, Calcite is wrong.
-
-## The four axes
-
-CSS-DOS used to feel messy because it grew along four axes without
-separating them. Now:
-
 ### 1. What the BIOS is
 
 A progression of faithfulness:
 
 - **Gossamer** — the thin shim. Just enough to fool one `.COM` program
   into thinking it's on a PC.
-- **Muslin** — the current real BIOS. Hand-written 16-bit assembly that
-  implements enough of the IBM-PC BIOS contract to boot DOS.
-- **Corduroy** — the structured successor. Same contract as Muslin,
-  built in C. Experimental.
+- **Muslin** — hand-written 16-bit assembly BIOS. Boots EDR-DOS.
+- **Corduroy** — the default. Same contract as Muslin, rewritten in C,
+  with a real INT 09h keyboard handler + EOI on INT 08h/09h, and a
+  Mode 13h splash.
+
+Both DOS BIOSes boot EDR-DOS, but COMMAND.COM isn't usable under either
+— carts must set `boot.autorun` to run a program directly.
 
 Depth: [`bios-flavors.md`](bios-flavors.md) and each BIOS's own
 `bios/<flavor>/README.md`.

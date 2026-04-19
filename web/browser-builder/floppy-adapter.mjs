@@ -66,8 +66,14 @@ export function buildFloppyInBrowser({
     });
   }
 
-  if (autorun == null) {
-    // COMMAND.COM only needed if the floppy drops to a shell.
+  // Include COMMAND.COM if nothing else will run, OR if the user explicitly
+  // asked to SHELL to it. Skip only when a real program is the autorun target
+  // AND the cart doesn't already supply its own COMMAND.COM.
+  const wantsCommandCom =
+    autorun == null ||
+    autorun.toUpperCase() === 'COMMAND.COM';
+  const alreadyHasCommandCom = layout.some(f => f.name === 'COMMAND.COM');
+  if (wantsCommandCom && !alreadyHasCommandCom) {
     layout.push({ name: 'COMMAND.COM', bytes: commandBytes, source: 'dos/bin/command.com' });
   }
 

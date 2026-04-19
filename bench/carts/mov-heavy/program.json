@@ -1,0 +1,7 @@
+{
+  "name": "mov-heavy",
+  "description": "Tight reg-reg MOV loop. Control benchmark — should not be affected by memory-write-slot changes.",
+  "preset": "hack",
+  "autorun": "mov-heavy.com",
+  "memory": { "conventional": "4K" }
+}

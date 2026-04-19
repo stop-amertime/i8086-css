@@ -27,8 +27,8 @@ builder/
     floppy.mjs         — stage 2: build FAT12 image (DOS carts only)
     kiln.mjs           — stage 3: invoke Kiln to emit CSS
   presets/
-    dos-muslin.json    — default DOS preset
-    dos-corduroy.json  — experimental C-BIOS variant
+    dos-corduroy.json  — default DOS preset (C BIOS with real INT 09h)
+    dos-muslin.json    — assembly-BIOS fallback
     hack.json          — raw-.COM preset
   lib/
     cart.mjs           — cart resolution (folder/zip → canonical shape)

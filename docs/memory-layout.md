@@ -6,7 +6,7 @@ inside a zone get a backing CSS property; reads outside zones return
 
 ## The zones, by default
 
-For a DOS cart with all defaults (`"preset": "dos-muslin"`):
+For a DOS cart with all defaults (`"preset": "dos-corduroy"`):
 
 | Zone | Linear range | Purpose | Controlled by |
 |---|---|---|---|
@@ -90,7 +90,12 @@ addresses. For each address, Kiln emits:
 - A `style(--at: <addr>): var(--__1m<addr>)` branch in `--readMem`.
 - A double-buffer read `--__1m<addr>: var(--__2m<addr>, <init>)`.
 - A write rule `--m<addr>: if(... else: var(--__1m<addr>))` that
-  checks all 8 parallel write slots.
+  checks the 6 parallel write slots. Each slot is nested behind a
+  `style(--_slotNLive: 1)` gate so that on ticks where slot N is idle,
+  none of its per-byte `style(--memAddrN: addr)` branches are
+  evaluated. Non-writing instructions (NOP, MOV reg,reg, jumps, most
+  ALU reg-reg, flag ops) short-circuit at slot 0 with zero address
+  lookups anywhere.
 - Store and execute keyframe entries that double-buffer the byte.
 
 That pattern — per-byte property + dispatch branches — is why

@@ -133,9 +133,13 @@ export async function buildCabinetInBrowser({
   // We're always treating the input as a "bare" single-file cart.
   const rawManifest = { preset, ...extraManifest };
   if (biosFlavorOverride) rawManifest.bios = biosFlavorOverride;
-  if (autorun) {
-    rawManifest.boot = { ...(rawManifest.boot ?? {}), autorun: autorun.toUpperCase() };
-  }
+  // Always set boot.autorun explicitly (even to null) so resolveManifest's
+  // auto-infer doesn't silently pick the game .com when the user asked for
+  // the COMMAND.COM prompt.
+  rawManifest.boot = {
+    ...(rawManifest.boot ?? {}),
+    autorun: autorun ? autorun.toUpperCase() : null,
+  };
   if (args) {
     rawManifest.boot = { ...(rawManifest.boot ?? {}), args };
   }
@@ -156,7 +160,7 @@ export async function buildCabinetInBrowser({
 
   if (preset === 'hack') {
     // Hack path: program bytes go directly to Kiln as number[].
-    const header = buildHeader({ preset, biosFlavor, programName: progName });
+    const header = buildHeader({ preset, biosFlavor, biosVersion: bios.meta?.version ?? null, programName: progName });
     onProgress({ stage: 'kiln', message: 'Transpiling to CSS...' });
     runKiln({
       bios,
@@ -196,7 +200,7 @@ export async function buildCabinetInBrowser({
     });
 
     // Build header after floppy so floppyLayout is available.
-    const header = buildHeader({ preset, biosFlavor, programName: progName, floppyLayout: floppy.layout });
+    const header = buildHeader({ preset, biosFlavor, biosVersion: bios.meta?.version ?? null, programName: progName, floppyLayout: floppy.layout });
 
     onProgress({ stage: 'kiln', message: 'Transpiling to CSS...' });
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -218,11 +222,12 @@ export async function buildCabinetInBrowser({
   return writer.finish();
 }
 
-function buildHeader({ preset, biosFlavor, programName, floppyLayout = null }) {
+function buildHeader({ preset, biosFlavor, biosVersion, programName, floppyLayout = null }) {
+  const biosTag = biosVersion ? `${biosFlavor} v${biosVersion}` : `${biosFlavor} (unversioned)`;
   const lines = [
     '/* CSS-DOS cabinet (built in browser)',
     ` * Preset:   ${preset}`,
-    ` * BIOS:     ${biosFlavor}`,
+    ` * BIOS:     ${biosTag}`,
     ` * Program:  ${programName}`,
     ` * Built:    ${new Date().toISOString()}`,
   ];

@@ -74,4 +74,5 @@ if (!existsSync(outBin)) {
     }
 }
 
-console.log(`bios.bin built: ${statSync(outBin).size} bytes`);
+const version = readFileSync(join(__dirname, 'VERSION'), 'utf8').trim();
+console.log(`bios.bin built: ${statSync(outBin).size} bytes (corduroy v${version})`);

@@ -15,9 +15,9 @@
     "author":        { "type": "string", "description": "Cart author. Optional, unused by the builder, preserved in the cabinet header." },
     "description":   { "type": "string", "description": "Short cart description. Optional, unused by the builder, preserved in the cabinet header." },
 
-    "preset":        { "enum": ["dos-muslin", "dos-corduroy", "hack"], "default": "dos-muslin", "description": "Named preset. Supplies defaults for every other field; the cart's own values override the preset on conflict." },
+    "preset":        { "enum": ["dos-muslin", "dos-corduroy", "hack"], "default": "dos-corduroy", "description": "Named preset. Supplies defaults for every other field; the cart's own values override the preset on conflict." },
 
-    "bios":          { "enum": ["gossamer", "muslin", "corduroy"], "description": "Which BIOS to boot. Gossamer is the hack-path shim; Muslin is the current real BIOS; Corduroy is the structured C BIOS (experimental)." },
+    "bios":          { "enum": ["gossamer", "muslin", "corduroy"], "description": "Which BIOS to boot. Gossamer is the hack-path shim; Muslin is the assembly DOS BIOS (fallback); Corduroy is the structured C DOS BIOS (default)." },
 
     "memory": {
       "type": "object",

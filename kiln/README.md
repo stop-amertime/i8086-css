@@ -63,9 +63,23 @@ The central `emit-css.mjs` assembles those entries into a per-register
 `if(style(--opcode: N): ...)` dispatch — one for each of
 AX/CX/DX/BX/SP/BP/SI/DI/CS/DS/ES/SS/IP/flags/halt/cycleCount.
 
-Memory writes live in 8 parallel slots (`--memAddr0`/`--memVal0` …
-`--memAddr7`/`--memVal7`). Each opcode's entry can contribute to up to
-8 slots. Every memory byte's write rule checks all 8 slots.
+Memory writes live in 6 parallel slots (`--memAddr0`/`--memVal0` …
+`--memAddr5`/`--memVal5`). Each opcode's entry can contribute to up to
+6 slots — six is the maximum any instruction uses (INT / TF trap /
+hardware IRQ push FLAGS/CS/IP = 3 words = 6 bytes). Slot 0 carries
+single-byte stores; 0–1 carry word stores; 2–3 carry CALL FAR's
+4-byte pushes; 4–5 carry the 6-byte FLAGS/CS/IP frame.
+
+Slot gating: each slot is fronted by a per-tick `--_slotNLive`
+property that is 1 only when the current opcode uses slot N (or a TF
+trap / hardware IRQ is pushing the 6-byte frame). The per-byte write
+rule nests all six slot checks behind these gates, so non-writing
+instructions — NOP, MOV reg,reg, jumps, most ALU reg-reg, flag ops —
+short-circuit at slot 0 and evaluate zero `style(--memAddrN: addr)`
+branches. Calcite's broadcast-write recogniser
+(`crates/calcite-core/src/pattern/broadcast_write.rs`) peels each gate
+off and skips the entire address table for gated-off slots; Chrome
+gets the same speedup from the normal top-down `if()` short-circuit.
 
 ## The execution engine
 

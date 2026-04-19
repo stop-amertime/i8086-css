@@ -20,6 +20,7 @@
 
 [bits 16]
 [org 0]
+[cpu 8086]      ; enforce the "no 0x0F-prefixed opcodes" constraint above
 
 ; ============================================================
 ; Constants
@@ -206,7 +207,9 @@ int10h_handler:
     jmp .write_char_only
 .not_write_char_only:
     cmp ah, 0x1A
-    je .get_display_combo
+    jne .int10_done
+    jmp .get_display_combo
+.int10_done:
     pop bp
     pop es
     pop ds

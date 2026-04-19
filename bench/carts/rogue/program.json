@@ -1,0 +1,8 @@
+{
+  "$schema": "../../../program.schema.json",
+  "name": "rogue-bench",
+  "description": "Rogue wrapped as a DOS cart for benchmarking. Source: ../../../../calcite/programs/rogue.com",
+  "preset": "dos-corduroy",
+  "memory": { "conventional": "512K" },
+  "boot": { "autorun": "ROGUE.COM" }
+}

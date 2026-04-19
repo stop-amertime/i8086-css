@@ -761,6 +761,53 @@ export function emitIO(dispatch) {
   )`;
   dispatch.addEntry('pitCounter', 0xE6, pitCounterImm, `OUT 0x40/0x43: PIT counter load`);
   dispatch.addEntry('pitCounter', 0xEE, pitCounterDx, `OUT DX=0x40/0x43: PIT counter load`);
+
+  // --- VGA DAC (ports 0x3C8 write-index, 0x3C9 data) ---
+  //
+  // Real-hardware DAC protocol:
+  //   OUT 0x3C8, n        set write index to n, reset sub-index to 0
+  //   OUT 0x3C9, R        store R at palette[n], sub-index -> 1
+  //   OUT 0x3C9, G        store G at palette[n], sub-index -> 2
+  //   OUT 0x3C9, B        store B at palette[n], sub-index -> 0, n -> n+1
+  // A program typically sets the index once, then writes 3*N bytes in a loop.
+  //
+  // We shadow the 256*3 = 768 palette bytes to out-of-1MB linear addresses
+  // (kiln/memory.mjs DAC_LINEAR). Calcite reads them back when rendering the
+  // Mode 13h framebuffer. Values are stored as-is (6-bit 0..63); the frame-
+  // buffer renderer does the 6-to-8-bit expansion.
+  //
+  // Port 0x3C7 (DAC read index) is not implemented here — fire doesn't read
+  // the DAC back. Add when a program needs it.
+
+  const DAC_LINEAR = 0x100000;
+
+  // OUT 0x3C8 — set write index, reset sub-index.
+  // Written as "968" and "969" in CSS since style() takes integer literals.
+  dispatch.addEntry('dacWriteIndex', 0xE6,
+    `if(style(--q1: 968): ${al}; style(--q1: 969) and style(--__1dacSubIndex: 2): calc(var(--__1dacWriteIndex) + 1); else: var(--__1dacWriteIndex))`,
+    `OUT 0x3C8: set DAC write index; 0x3C9: auto-advance on wrap`);
+  dispatch.addEntry('dacWriteIndex', 0xEE,
+    `if(style(--__1DX: 968): ${al}; style(--__1DX: 969) and style(--__1dacSubIndex: 2): calc(var(--__1dacWriteIndex) + 1); else: var(--__1dacWriteIndex))`,
+    `OUT DX=0x3C8: set DAC write index; DX=0x3C9: auto-advance on wrap`);
+
+  // dacSubIndex: OUT 0x3C8 resets to 0. OUT 0x3C9 advances (0→1→2→0).
+  dispatch.addEntry('dacSubIndex', 0xE6,
+    `if(style(--q1: 968): 0; style(--q1: 969) and style(--__1dacSubIndex: 2): 0; style(--q1: 969): calc(var(--__1dacSubIndex) + 1); else: var(--__1dacSubIndex))`,
+    `OUT 0x3C8/0x3C9: DAC sub-index state`);
+  dispatch.addEntry('dacSubIndex', 0xEE,
+    `if(style(--__1DX: 968): 0; style(--__1DX: 969) and style(--__1dacSubIndex: 2): 0; style(--__1DX: 969): calc(var(--__1dacSubIndex) + 1); else: var(--__1dacSubIndex))`,
+    `OUT DX=0x3C8/0x3C9: DAC sub-index state`);
+
+  // OUT 0x3C9 — write a byte to DAC_LINEAR + writeIndex*3 + subIndex.
+  // The address expression evaluates to -1 (unused-slot sentinel) on any
+  // other opcode/port, so this slot is a no-op outside DAC writes.
+  // Also mask AL to 6 bits (0..63) — real VGA hardware truncates the DAC
+  // value to 6 bits; programs that write 0..255 get the low 6 bits.
+  const dacAddrImm = `if(style(--q1: 969): calc(${DAC_LINEAR} + var(--__1dacWriteIndex) * 3 + var(--__1dacSubIndex)); else: -1)`;
+  const dacAddrDx  = `if(style(--__1DX: 969): calc(${DAC_LINEAR} + var(--__1dacWriteIndex) * 3 + var(--__1dacSubIndex)); else: -1)`;
+  const dacVal     = `--and(${al}, 63)`;
+  dispatch.addMemWrite(0xE6, dacAddrImm, dacVal, `OUT 0x3C9: DAC byte (6-bit)`);
+  dispatch.addMemWrite(0xEE, dacAddrDx,  dacVal, `OUT DX=0x3C9: DAC byte (6-bit)`);
 }
 
 /**

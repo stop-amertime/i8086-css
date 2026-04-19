@@ -11,9 +11,9 @@ GAME.EXE
 $ node builder/build.mjs mycart -o mycart.css
 [cart]   resolving mycart
 [cart]   "mycart" (1 file)
-[cart]   preset: dos-muslin, bios: muslin
-[bios]   building muslin...
-[bios]   1520 bytes (bios/muslin/muslin.asm)
+[cart]   preset: dos-corduroy, bios: corduroy
+[bios]   building corduroy...
+[bios]   4096 bytes (bios/corduroy/)
 [floppy] assembling FAT12 image...
 [floppy] 1474560 bytes, 3 files
 [kiln]   emitting CSS to mycart.css...
@@ -22,7 +22,7 @@ $ node builder/build.mjs mycart -o mycart.css
 $ open player/index.html?cabinet=../mycart.css
 ```
 
-No `program.json`, no flags. Defaults: Muslin BIOS, 640K, 1.44 MB
+No `program.json`, no flags. Defaults: Corduroy BIOS, 640K, 1.44 MB
 floppy, autorun the single `.EXE`.
 
 ## The five stages

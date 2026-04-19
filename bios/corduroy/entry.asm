@@ -6,6 +6,7 @@
 ; NASM with [bits 16] [org 0]. Produces a COFF/OMF object for wlink.
 
 [bits 16]
+[cpu 8086]      ; refuse 186+ encodings — our CPU core is pure 8086
 
 global _start
 global bios_halt

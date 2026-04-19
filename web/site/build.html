@@ -7,6 +7,25 @@
   <link rel="stylesheet" href="/assets/site.css">
 </head>
 <body>
+  <style>
+    /* Split layout: builder on the left, calcite player iframe on the
+       right, both filling the viewport. */
+    body.split {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: stretch !important;
+      gap: 8px;
+      height: 100vh;
+      width: 100vw;
+      margin: 0;
+      padding: 8px;
+      overflow: hidden;
+    }
+    body.split > .window { flex: 0 0 560px; width: 560px; max-width: 560px; overflow: auto; align-self: stretch; }
+    body.split > #split-player { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+    body.split > #split-player iframe { flex: 1 1 auto; width: 100%; border: 2px solid #808080; background: #000; }
+    body.split > #split-player .split-bar { background: #c0c0c0; padding: 4px 8px; font: 12px 'DOS','Fixedsys',monospace; border: 2px solid #fff; border-bottom: none; }
+  </style>
   <div class="window">
     <div class="title-bar">
       <span>CSS-DOS builder</span>
@@ -36,6 +55,16 @@
             <label for="autorun">Autorun:</label>
             <select id="autorun" class="field">
               <option value="">(none — drop to COMMAND.COM prompt)</option>
+            </select>
+          </div>
+          <div class="row" id="memory-row">
+            <label for="memory">Memory:</label>
+            <select id="memory" class="field">
+              <option value="" selected>Auto-fit (smallest cabinet that fits the program)</option>
+              <option value="128K">128 KB</option>
+              <option value="256K">256 KB</option>
+              <option value="512K">512 KB</option>
+              <option value="640K">640 KB (full PC)</option>
             </select>
           </div>
           <div class="row">
@@ -88,10 +117,21 @@
     </div><!-- /window-body -->
   </div><!-- /window -->
 
+  <!-- Split layout: calcite player iframe pane. Populated by build.js
+       after a cabinet is built. -->
+  <div id="split-player">
+    <div class="split-bar">
+      <span>calcite player</span>
+      <button id="split-reload" class="btn" style="float:right; font-size:11px;">Reload</button>
+    </div>
+    <iframe id="split-frame" src="about:blank" title="calcite player"></iframe>
+  </div>
+
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js', { scope: '/' });
     }
+    document.body.classList.add('split');
   </script>
   <script type="module" src="/assets/build.js"></script>
 </body>

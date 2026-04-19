@@ -1,13 +1,16 @@
 # Muslin BIOS
 
-The **current real BIOS**. Hand-written 16-bit assembly that implements
-enough of the IBM-PC BIOS contract to boot DOS (EDR-DOS / SvarDOS) and
-run a fair chunk of real DOS software.
+Hand-written 16-bit assembly BIOS that implements enough of the IBM-PC
+BIOS contract to boot DOS (EDR-DOS / SvarDOS) and run a fair chunk of
+real DOS software.
 
 ## When to pick it
 
-Default for DOS carts. Set `"preset": "dos-muslin"` (the default) or
-`"bios": "muslin"`.
+Fallback for DOS carts. Corduroy is the default; pick Muslin with
+`"preset": "dos-muslin"` or `"bios": "muslin"` if Corduroy misbehaves
+for a specific cart. Note: INT 09h is stubbed and INT 08h doesn't EOI,
+so anything that relies on BIOS keyboard IRQ won't work here — use
+Corduroy for those.
 
 ## What it implements
 

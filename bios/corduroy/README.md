@@ -1,14 +1,16 @@
 # Corduroy BIOS
 
-The **structured BIOS**: same IBM-PC-BIOS contract as Muslin, rewritten
+The **default DOS BIOS**: same IBM-PC-BIOS contract as Muslin, rewritten
 in C (with just enough assembly glue for the entry stub and interrupt
-handlers that need register-level control). Experimental.
+handlers that need register-level control). Has a real INT 09h keyboard
+handler and sends EOI on INT 08h/09h, so games that rely on BIOS
+keyboard IRQ work here (they don't under Muslin).
 
 ## When to pick it
 
-Set `"preset": "dos-corduroy"` or `"bios": "corduroy"`. Pick Corduroy if
-you want the splash screen, or want to hack on the BIOS itself. Pick
-Muslin if you want the boot-proven default.
+Default. `"preset": "dos-corduroy"` (or no preset at all) gives you
+Corduroy. Drop to Muslin with `"bios": "muslin"` if a specific cart
+misbehaves.
 
 ## What it implements
 

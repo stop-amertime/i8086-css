@@ -151,6 +151,13 @@ class DispatchTable {
    * Emit the 6 memory write slot properties (--memAddr0/Val0 through --memAddr5/Val5).
    * Each slot aggregates across all opcodes that use it.
    * 6 slots needed: INT pushes 3 words = 6 byte writes.
+   *
+   * Also emits --_slot0Live through --_slot5Live: 1 on ticks that use each
+   * slot, 0 otherwise. These gate the per-byte memory write rules so that
+   * non-writing instructions skip all slot checks entirely (calcite's
+   * broadcast-write recogniser peels the gate off and skips the whole
+   * address table when the gate is 0 — see
+   * calcite/crates/calcite-core/src/pattern/broadcast_write.rs).
    */
   emitMemoryWriteSlots() {
     const slots = Array.from({ length: NUM_WRITE_SLOTS }, () => []);
@@ -163,6 +170,9 @@ class DispatchTable {
         slots[i].push({ opcode, ...writes[i] });
       }
     }
+    // Stash opcode lists per slot so emitSlotLiveGates can emit the
+    // --_slotNLive dispatches alongside the --memAddrN/--memValN ones.
+    this._slotOpcodes = slots.map(entries => entries.map(e => e.opcode));
 
     // TF trap and IRQ delivery both push FLAGS/CS/IP — identical 6-write
     // shape. intAddr/intVal expresses those pushes; both --_tf and --_irqActive
@@ -187,41 +197,57 @@ class DispatchTable {
     ];
 
     const lines = [];
+    // All 6 slots carry TF/IRQ frame pushes (FLAGS/CS/IP = 6 bytes).
     for (let slot = 0; slot < NUM_WRITE_SLOTS; slot++) {
-      const intUsesSlot = slot < 6;  // TF/IRQ push 6 bytes (slots 0-5)
-      const hasNormal = slots[slot].length > 0;
-
-      if (!hasNormal && !intUsesSlot) {
-        // Unused slot — always inactive
-        lines.push(`  --memAddr${slot}: -1;`);
-        lines.push(`  --memVal${slot}: 0;`);
-        continue;
-      }
-
-      // Build branches: TF/IRQ suppression/push first, then normal dispatch.
-      // For slots 0-5 during TF/IRQ: push FLAGS/CS/IP.
-      // For slots 6-7 during TF/IRQ: suppress (-1, 0) — the normal instruction
-      // wasn't run, so its writes must not fire either.
-      const tfOrIrqAddr = intUsesSlot ? intAddr[slot] : '-1';
-      const tfOrIrqVal  = intUsesSlot ? intVal[slot]  : '0';
-
       lines.push(`  --memAddr${slot}: if(`);
-      lines.push(`    style(--_tf: 1): ${tfOrIrqAddr};`);
-      lines.push(`    style(--_irqActive: 1): ${tfOrIrqAddr};`);
+      lines.push(`    style(--_tf: 1): ${intAddr[slot]};`);
+      lines.push(`    style(--_irqActive: 1): ${intAddr[slot]};`);
       for (const { opcode, addrExpr, comment } of slots[slot]) {
         lines.push(`    style(--opcode: ${opcode}): ${addrExpr}; /* ${comment || ''} */`);
       }
       lines.push(`  else: -1);`);
 
       lines.push(`  --memVal${slot}: if(`);
-      lines.push(`    style(--_tf: 1): ${tfOrIrqVal};`);
-      lines.push(`    style(--_irqActive: 1): ${tfOrIrqVal};`);
+      lines.push(`    style(--_tf: 1): ${intVal[slot]};`);
+      lines.push(`    style(--_irqActive: 1): ${intVal[slot]};`);
       for (const { opcode, valExpr, comment } of slots[slot]) {
         lines.push(`    style(--opcode: ${opcode}): ${valExpr}; /* ${comment || ''} */`);
       }
       lines.push(`  else: 0);`);
     }
 
+    return lines.join('\n');
+  }
+
+  /**
+   * Emit --_slot0Live through --_slot5Live: 1 on ticks where the slot is used,
+   * 0 otherwise. Used to gate the per-byte memory write rules so non-writing
+   * instructions skip all address checks.
+   *
+   * Slots 0-5 are the only ones consulted by the per-byte write rule (6-7 exist
+   * but are always inactive there). TF trap and hardware IRQ push the 6-byte
+   * FLAGS/CS/IP frame, so they force all six slots live.
+   *
+   * emitMemoryWriteSlots() must be called before this so _slotOpcodes is populated.
+   */
+  emitSlotLiveGates() {
+    if (!this._slotOpcodes) {
+      throw new Error('emitMemoryWriteSlots must be called before emitSlotLiveGates');
+    }
+    const lines = ['  /* Slot-live gates — skip per-byte memory write checks when no slot fires this tick */'];
+    for (let slot = 0; slot < NUM_WRITE_SLOTS; slot++) {
+      const opcodes = this._slotOpcodes[slot];
+      const branches = [];
+      // TF trap and IRQ delivery push FLAGS/CS/IP — all slots live.
+      branches.push(`    style(--_tf: 1): 1;`);
+      branches.push(`    style(--_irqActive: 1): 1;`);
+      for (const op of opcodes) {
+        branches.push(`    style(--opcode: ${op}): 1;`);
+      }
+      lines.push(`  --_slot${slot}Live: if(`);
+      lines.push(branches.join('\n'));
+      lines.push(`  else: 0);`);
+    }
     return lines.join('\n');
   }
 }
@@ -333,7 +359,9 @@ export function emitCSS(opts, writeStream) {
                     'picMask', 'picPending', 'picInService',
                     'pitMode', 'pitReload', 'pitCounter', 'pitWriteState',
                     // Keyboard-edge detection: snapshot current --keyboard.
-                    'prevKeyboard'];
+                    'prevKeyboard',
+                    // VGA DAC write-state machine — updated by OUT 0x3C8 / 0x3C9.
+                    'dacWriteIndex', 'dacSubIndex'];
   // Custom defaults: the fall-through expression when no dispatch entry fires
   // for this opcode. pitCounter ticks every instruction; picPending latches
   // PIT+keyboard edges; prevKeyboard snapshots --keyboard. Everything else
@@ -352,6 +380,7 @@ export function emitCSS(opts, writeStream) {
   // Memory write slots
   writeStream.write('  /* ===== MEMORY WRITE SLOTS ===== */\n');
   writeStream.write(dispatch.emitMemoryWriteSlots() + '\n\n');
+  writeStream.write(dispatch.emitSlotLiveGates() + '\n\n');
 
   // 6. Debug display
   w('}');
@@ -505,15 +534,51 @@ function emitMemoryBufferReadsStreaming(opts, ws) {
 }
 
 function emitMemoryWriteRulesStreaming(opts, ws) {
+  // Each byte's write rule checks the memory write slots to see if the
+  // current tick is writing to this address.
+  //
+  // Every slot is gated by --_slotNLive: a per-tick dispatch that's 1 only
+  // when some opcode uses slot N (or TF/IRQ is pushing). Non-writing
+  // instructions set all six gates to 0, so the whole nested if() short-
+  // circuits to "keep" without any --memAddrN address lookup.
+  //
+  // Slots nest in order 0→1→2→3→4→5 because slot usage is monotone:
+  // any opcode using slot 2 also uses 0 and 1, etc. (INT pushes 6 bytes,
+  // CALL FAR pushes 4, word stores use 2, byte stores use 1.) That
+  // monotonicity means the order of gate evaluation matches the order in
+  // which slots light up, so a 2-byte write evaluates exactly slots 0-1
+  // and stops at the slot2 gate.
+  //
+  // Calcite's broadcast-write recogniser (broadcast_write.rs) peels each
+  // gate off and skips the whole address table when the gate is 0.
+  // In Chrome the nested if() evaluates top-down and short-circuits the
+  // same way.
   const { addresses } = opts;
   let buf = '';
   let count = 0;
   for (const addr of addresses) {
-    const slotLines = [];
-    for (let i = 0; i < NUM_WRITE_SLOTS; i++) {
-      slotLines.push(`    style(--memAddr${i}: ${addr}): var(--memVal${i});`);
-    }
-    buf += `  --m${addr}: if(\n${slotLines.join('\n')}\n  else: var(--__1m${addr}));\n`;
+    const hold = `var(--__1m${addr})`;
+    buf +=
+      `  --m${addr}: if(\n` +
+      `    style(--_slot0Live: 1): if(\n` +
+      `      style(--memAddr0: ${addr}): var(--memVal0);\n` +
+      `      style(--_slot1Live: 1): if(\n` +
+      `        style(--memAddr1: ${addr}): var(--memVal1);\n` +
+      `        style(--_slot2Live: 1): if(\n` +
+      `          style(--memAddr2: ${addr}): var(--memVal2);\n` +
+      `          style(--_slot3Live: 1): if(\n` +
+      `            style(--memAddr3: ${addr}): var(--memVal3);\n` +
+      `            style(--_slot4Live: 1): if(\n` +
+      `              style(--memAddr4: ${addr}): var(--memVal4);\n` +
+      `              style(--_slot5Live: 1): if(\n` +
+      `                style(--memAddr5: ${addr}): var(--memVal5);\n` +
+      `                else: ${hold});\n` +
+      `              else: ${hold});\n` +
+      `            else: ${hold});\n` +
+      `          else: ${hold});\n` +
+      `        else: ${hold});\n` +
+      `      else: ${hold});\n` +
+      `    else: ${hold});\n`;
     if (++count % CHUNK === 0) { ws.write(buf); buf = ''; }
   }
   if (buf) ws.write(buf);

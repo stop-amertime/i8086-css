@@ -9,6 +9,20 @@ cargo run --release -p calcite-debugger -- -i path/to/program.css
 # Listens on port 3333 (change with -p PORT)
 ```
 
+## Rebuilding after source edits
+
+If `cargo build --release -p calcite-debugger` fails with
+`Permission denied` on `deps\calcite_debugger-*.exe`, an orphaned
+debugger (or your MCP client's resident instance) is holding the
+binary open. From `../calcite`:
+
+```sh
+./kill-and-rebuild.bat
+```
+
+That kills all `calcite-debugger.exe` processes and rebuilds. MCP
+clients respawn the debugger on the next tool call.
+
 ## Key endpoints
 
 | Endpoint | Description |

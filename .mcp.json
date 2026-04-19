@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "calcite-debugger": {
+      "command": "cargo",
+      "args": [
+        "run",
+        "--release",
+        "--quiet",
+        "-p",
+        "calcite-debugger",
+        "--"
+      ],
+      "cwd": "${workspaceFolder}/../calcite"
+    }
+  }
+}

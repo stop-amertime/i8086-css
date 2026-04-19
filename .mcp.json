@@ -1,16 +1,8 @@
 {
   "mcpServers": {
     "calcite-debugger": {
-      "command": "cargo",
-      "args": [
-        "run",
-        "--release",
-        "--quiet",
-        "-p",
-        "calcite-debugger",
-        "--"
-      ],
-      "cwd": "${workspaceFolder}/../calcite"
+      "command": "node",
+      "args": ["C:/Users/AdmT9N0CX01V65438A/Documents/src/calcite/tools/mcp-shim.mjs"]
     }
   }
 }

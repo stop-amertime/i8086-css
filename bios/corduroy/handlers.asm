@@ -277,16 +277,17 @@ int10h_handler:
     jmp short .set_mode_done
 .set_mode_13h:
     ; --- Mode 13h: clear 320x200 framebuffer at 0xA0000 ---
+    ; Uses REP STOSW so calcite can batch the 32000 iterations into one tick.
+    ; The hand-rolled `mov [di],ax; add di,2; dec cx; jnz` form took ~120 ticks
+    ; per word = ~3.8M ticks per mode-13 set, which dominated boot time and
+    ; made every program that called INT 10h Mode 13h appear to "stall."
     mov ax, 0xA000
-    mov ds, ax
+    mov es, ax
     xor di, di
     mov cx, 32000
     xor ax, ax
-.clr13_loop:
-    mov [di], ax
-    add di, 2
-    dec cx
-    jnz .clr13_loop
+    cld
+    rep stosw
 .set_mode_done:
     pop cx
     pop di

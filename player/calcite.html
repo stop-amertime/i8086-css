@@ -146,15 +146,7 @@
       ></canvas>
       <div class="status-bar">
         <span id="status">Loading cabinet...</span>
-        <span style="float:right">
-          <label for="vsync-mode" style="margin-right: 4px;">vsync:</label>
-          <select id="vsync-mode" style="font-family: inherit; font-size: 12px;">
-            <option value="sim">sim</option>
-            <option value="wall">wall</option>
-            <option value="turbo">turbo</option>
-          </select>
-          <span id="stats" style="margin-left: 8px;"></span>
-        </span>
+        <span style="float:right" id="stats"></span>
       </div>
       <div class="warnings" id="warnings"></div>
       <div class="keyboard">
@@ -226,33 +218,12 @@
       return VIDEO_MODE_NAMES[m] || `unknown mode 0x${m.toString(16).padStart(2, '0').toUpperCase()}`;
     }
     const REAL_8086_HZ = 4_772_727;
-    // VGA 70 Hz vsync from the 4.77 MHz timebase. Matches the kiln-side
-    // 0x3DA decode so the player paints on frame boundaries the program
-    // also observes via the vsync port.
-    const CYCLES_PER_FRAME = 68_182;
 
     function formatHz(hz) {
       if (hz >= 1_000_000) return (hz / 1_000_000).toFixed(2) + ' MHz';
       if (hz >= 1_000)     return (hz / 1_000).toFixed(1) + ' KHz';
       return hz.toFixed(0) + ' Hz';
     }
-
-    // --- vsync paint mode ---
-    // See VSYNC-PLAN.md. Three modes:
-    //   sim:   paint on simulated 70 Hz vsync (cycleCount crosses CYCLES_PER_FRAME)
-    //   wall:  paint on real 70 Hz wall clock (~14.3 ms between paints)
-    //   turbo: paint every worker batch (previous behaviour — max visibility)
-    // URL `?vsync=sim|wall|turbo` overrides the default. Default is sim.
-    const VSYNC_MODES = ['sim', 'wall', 'turbo'];
-    const vsyncParam = new URLSearchParams(location.search).get('vsync');
-    let vsyncMode = VSYNC_MODES.includes(vsyncParam) ? vsyncParam : 'sim';
-    let lastPaintedFrame = -1;   // simulated frame number of the most recent paint
-    let lastPaintWallMs = 0;      // wall-clock timestamp of the most recent paint
-    let wallFrameCount = 0;       // paints over the current stats window (wall fps)
-    let simFrameCount = 0;        // paints over the current stats window (sim fps)
-    let lastStatsWallMs = 0;
-    let currentWallFps = 0;
-    let currentSimFps = 0;
 
     let running = false;
     let totalTicks = 0;
@@ -315,7 +286,7 @@
           const tps = elapsed > 0 ? totalTicks / elapsed : 0;
           const cps = elapsed > 0 ? totalCycles / elapsed : 0;
           const pct = cps / REAL_8086_HZ * 100;
-          stats.textContent = `${totalTicks.toLocaleString()} ticks | ${formatHz(cps)} (${pct.toFixed(1)}% of 4.77 MHz) | ${vsyncMode} ${currentWallFps.toFixed(1)} fps`;
+          stats.textContent = `${totalTicks.toLocaleString()} ticks | ${formatHz(cps)} (${pct.toFixed(1)}% of 4.77 MHz)`;
 
           // Diagnostics. Unknown opcode = effective halt; show immediately.
           if (data.haltCode) {
@@ -386,40 +357,10 @@
           }
           currentVideoMode = data.videoMode;
 
-          // Paint-mode gate (see VSYNC-PLAN.md). Decides whether this
-          // tick-result should trigger a canvas repaint. In all modes we
-          // still *have* the VRAM bytes — we just choose not to blit.
-          //   sim:   paint on simulated 70 Hz (cycleCount frame bucket changed)
-          //   wall:  paint on real 70 Hz (>= 1000/70 ms since last paint)
-          //   turbo: paint every batch
-          const nowWall = performance.now();
-          const simFrame = Math.floor((data.cycles || totalCycles) / CYCLES_PER_FRAME);
-          let shouldPaint;
-          if (vsyncMode === 'turbo') {
-            shouldPaint = true;
-          } else if (vsyncMode === 'wall') {
-            shouldPaint = (nowWall - lastPaintWallMs) >= (1000 / 70);
-          } else { // sim
-            shouldPaint = simFrame !== lastPaintedFrame;
-          }
-          if (shouldPaint && data.gfxBytes && gfxImageData) {
+          if (data.gfxBytes && gfxImageData) {
             const src = new Uint8Array(data.gfxBytes);
             gfxImageData.data.set(src);
             ctx.putImageData(gfxImageData, 0, 0);
-            lastPaintedFrame = simFrame;
-            lastPaintWallMs = nowWall;
-            wallFrameCount++;
-            if (simFrame !== lastPaintedFrame || vsyncMode === 'sim') simFrameCount++;
-          }
-          // Update fps readouts once per second of wall clock.
-          if (lastStatsWallMs === 0) lastStatsWallMs = nowWall;
-          const statsDt = nowWall - lastStatsWallMs;
-          if (statsDt >= 1000) {
-            currentWallFps = (wallFrameCount * 1000) / statsDt;
-            currentSimFps = (simFrameCount * 1000) / statsDt;
-            wallFrameCount = 0;
-            simFrameCount = 0;
-            lastStatsWallMs = nowWall;
           }
           if (!isGfxMode && data.screen != null) {
             output.innerHTML = data.screen;
@@ -442,21 +383,6 @@
           break;
       }
     };
-
-    // Wire the vsync-mode dropdown. Initial value comes from the URL
-    // (?vsync=...) or the default ('sim'). Live changes take effect on
-    // the next tick-result; no restart needed.
-    const vsyncSelect = document.getElementById('vsync-mode');
-    vsyncSelect.value = vsyncMode;
-    vsyncSelect.addEventListener('change', () => {
-      if (VSYNC_MODES.includes(vsyncSelect.value)) {
-        vsyncMode = vsyncSelect.value;
-        // Reset frame accounting so the new mode's next paint isn't
-        // suppressed by stale state from the previous mode.
-        lastPaintedFrame = -1;
-        lastPaintWallMs = 0;
-      }
-    });
 
     function sendKey(code) {
       if (!engineReady) return;

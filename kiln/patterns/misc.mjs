@@ -609,10 +609,6 @@ export function emitIRQCompute() {
  *   Port 0x21 (PIC data) returns --picMask. Programs that do the standard
  *     read-modify-write (in al,0x21; and al,~bit; out 0x21,al) rely on this.
  *   Port 0x60 (keyboard) returns the scancode (high byte of --keyboard).
- *   Port 0x3DA (VGA input status 1) returns a byte whose bit 3 is the
- *     vertical retrace signal and bit 0 is display-enable (not in vsync).
- *     Both are derived from --cycleCount on a 70 Hz / 4.77 MHz timebase.
- *     See VSYNC-PLAN.md.
  *   All other ports return 0.
  *
  * Writes (state lives in --picMask/--picInService/--pitMode/--pitReload/
@@ -627,9 +623,8 @@ export function emitIRQCompute() {
  *     reload/counter/writeState. Channel select (bits 7-6) is ignored for
  *     Phase 1 — we only track channel 0.
  *
- * Unhandled ports (speaker 0x61, CRTC 0x3D4/0x3D5, secondary PIC 0xA0/0xA1,
- * PIT ch1/ch2 0x41/0x42) remain no-ops. DAC ports 0x3C7/0x3C8/0x3C9 are
- * handled separately below (see VGA DAC block).
+ * Unhandled ports (speaker 0x61, CRTC 0x3D4/0x3D5, palette DAC 0x3C8/0x3C9,
+ * secondary PIC 0xA0/0xA1, PIT ch1/ch2 0x41/0x42) remain no-ops.
  *
  * Dispatch entries on OUT opcodes fall back to var(--__1NAME) when the port
  * doesn't match — the entry fires on every OUT of this opcode shape, so it
@@ -646,71 +641,39 @@ export function emitIRQCompute() {
  *   OUT DX, AX  (0xEF): 1-byte, port in --__1DX, no PIC/PIT effect.
  */
 export function emitIO(dispatch) {
-  // --- VGA input status 1 (port 0x3DA = 986) ---
-  //
-  // Bit 3: vertical retrace (1 while beam is retracing top, 0 while drawing).
-  // Bit 0: display enable — here, "not in vertical retrace". Real hardware
-  //        also sets this during horizontal blanking, but that's per-scanline
-  //        timing we don't simulate. Close enough for the common
-  //        `in al,0x3DA; test al,8; jnz retrace_wait` pattern.
-  // Other bits: 0.
-  //
-  // Cadence derived from cycleCount:
-  //   CYCLES_PER_FRAME = 68182  (4.77 MHz / 70 Hz)
-  //   RETRACE_CYCLES   = 3409   (~5% of frame — the vsync window)
-  //   in_retrace = mod(cc, CYCLES_PER_FRAME) < RETRACE_CYCLES
-  //
-  // Expressed without comparison operators: `sign(retrace - mod(cc, frame))`
-  // is +1 when in retrace, -1 when drawing, 0 exactly at the boundary.
-  // `max(0, sign(...))` clamps to {0, 1}. The 1-cycle boundary glitch (both
-  // bits 0 at `mod == RETRACE`) is harmless.
-  //
-  // Independent of vsyncMode — the program always sees the same port
-  // behaviour. The player's paint cadence layers on top of this; it does
-  // not change what the CPU observes when it reads 0x3DA.
-  const VSYNC_RETRACE_BIT3 =
-    `calc(max(0, sign(calc(3409 - mod(var(--__1cycleCount), 68182)))) * 8)`;
-  const VSYNC_DISPENA_BIT0 =
-    `max(0, sign(calc(mod(var(--__1cycleCount), 68182) - 3409)))`;
-  const VGA_STATUS1 = `calc(${VSYNC_RETRACE_BIT3} + ${VSYNC_DISPENA_BIT0})`;
-
   // --- Reads ---
 
   // IN AL, imm8 (0xE4):
-  //   port 0x21  → picMask (so programs can read-modify-write the mask)
-  //   port 0x60  → scancode = rightShift(keyboard, 8)
-  //   port 0x3DA → VGA input status 1 (vsync bit 3 + display-enable bit 0)
-  //   other      → 0
+  //   port 0x21 → picMask (so programs can read-modify-write the mask)
+  //   port 0x60 → scancode = rightShift(keyboard, 8)
+  //   other    → 0
   dispatch.addEntry('AX', 0xE4,
-    `--mergelow(var(--__1AX), if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--_kbdPort60); style(--q1: 986): ${VGA_STATUS1}; else: 0))`,
-    `IN AL, imm8 (0x21=picMask, 0x60=kbdPort60, 0x3DA=vgaStatus1)`);
+    `--mergelow(var(--__1AX), if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--_kbdPort60); else: 0))`,
+    `IN AL, imm8 (0x21=picMask, 0x60=kbdPort60)`);
   dispatch.addEntry('IP', 0xE4, `calc(var(--__1IP) + 2)`, `IN AL, imm8`);
 
   // IN AX, imm8 (0xE5):
-  //   port 0x21  → picMask
-  //   port 0x60  → full keyboard word
-  //   port 0x3DA → VGA input status 1 (low byte only; high byte is 0)
+  //   port 0x21 → picMask
+  //   port 0x60 → full keyboard word
   dispatch.addEntry('AX', 0xE5,
-    `if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--__1keyboard); style(--q1: 986): ${VGA_STATUS1}; else: 0)`,
-    `IN AX, imm8 (0x21=picMask, 0x60=keyboard, 0x3DA=vgaStatus1)`);
+    `if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--__1keyboard); else: 0)`,
+    `IN AX, imm8 (0x21=picMask, 0x60=keyboard)`);
   dispatch.addEntry('IP', 0xE5, `calc(var(--__1IP) + 2)`, `IN AX, imm8`);
 
   // IN AL, DX (0xEC):
-  //   DX=0x21  → picMask
-  //   DX=0x60  → scancode
-  //   DX=0x3DA → VGA input status 1
+  //   DX=0x21 → picMask
+  //   DX=0x60 → scancode
   dispatch.addEntry('AX', 0xEC,
-    `--mergelow(var(--__1AX), if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--_kbdPort60); style(--__1DX: 986): ${VGA_STATUS1}; else: 0))`,
-    `IN AL, DX (0x21=picMask, 0x60=kbdPort60, 0x3DA=vgaStatus1)`);
+    `--mergelow(var(--__1AX), if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--_kbdPort60); else: 0))`,
+    `IN AL, DX (0x21=picMask, 0x60=kbdPort60)`);
   dispatch.addEntry('IP', 0xEC, `calc(var(--__1IP) + 1)`, `IN AL, DX`);
 
   // IN AX, DX (0xED):
-  //   DX=0x21  → picMask
-  //   DX=0x60  → full keyboard word
-  //   DX=0x3DA → VGA input status 1
+  //   DX=0x21 → picMask
+  //   DX=0x60 → full keyboard word
   dispatch.addEntry('AX', 0xED,
-    `if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--__1keyboard); style(--__1DX: 986): ${VGA_STATUS1}; else: 0)`,
-    `IN AX, DX (0x21=picMask, 0x60=keyboard, 0x3DA=vgaStatus1)`);
+    `if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--__1keyboard); else: 0)`,
+    `IN AX, DX (0x21=picMask, 0x60=keyboard)`);
   dispatch.addEntry('IP', 0xED, `calc(var(--__1IP) + 1)`, `IN AX, DX`);
 
   // --- Writes ---

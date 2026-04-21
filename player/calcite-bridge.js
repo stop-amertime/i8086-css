@@ -54,6 +54,10 @@ const MIN_BATCH = 50;
 const MAX_BATCH = 50000;
 let batchCount = 200;
 let batchMsEma = TARGET_MS;
+// Per-phase EMAs — tick = engine.tick_batch time only; emit = everything
+// after (read VRAM + rasterise text + build BMP + postMessage).
+let tickOnlyMsEma = 0;
+let emitMsEma = 0;
 
 // VGA 16-color palette for text-mode rasterisation (matches
 // calcite-worker.js). Duplicated here to keep this worker self-contained.
@@ -71,7 +75,7 @@ const CYCLES_PER_FRAME = 68182; // 70 Hz at 4.77 MHz 8086 timebase
 // Canary — bump this when you change this file so you can confirm the
 // browser is actually serving the new version. Shows up in every status
 // line so it's impossible to miss in the console.
-const BRIDGE_VERSION = 'v18-bmp';
+const BRIDGE_VERSION = 'v19-instr';
 
 // Frame codec. Each convertToBlob call reads this, so you can swap
 // codecs live in devtools without reloading. Trade-offs:
@@ -241,12 +245,20 @@ function tickLoop() {
     running = false;
     return;
   }
-  const batchDt = performance.now() - batchStart;
+  const tickEnd = performance.now();
+  const batchDt = tickEnd - batchStart;
   batchMsEma = batchMsEma * (1 - EMA_ALPHA) + batchDt * EMA_ALPHA;
   const ratio = Math.max(0.5, Math.min(2.0, TARGET_MS / batchMsEma));
   batchCount = Math.max(MIN_BATCH, Math.min(MAX_BATCH, Math.round(batchCount * ratio)));
 
+  // Per-batch profiling. Tick time is "useful" work; emit time is "render
+  // overhead". If emit >> tick, splitting to two workers is high-value.
+  // We track an EMA of each so the stats line shows steady-state split.
+  tickOnlyMsEma = tickOnlyMsEma * (1 - EMA_ALPHA) + batchDt * EMA_ALPHA;
+  const emitStart = tickEnd;
   maybeEmitFrame();
+  const emitDt = performance.now() - emitStart;
+  emitMsEma = emitMsEma * (1 - EMA_ALPHA) + emitDt * EMA_ALPHA;
 
   // Yield back to the event loop so SW-port messages (kbd input) get
   // drained promptly. We use MessageChannel here rather than
@@ -400,8 +412,8 @@ function startStatsInterval() {
     const cycles = engine ? (engine.get_state_var('cycleCount') >>> 0) : 0;
     postStatus(
       `[${BRIDGE_VERSION}] ${delta} fps | total frames ${frameCount} | cycles ${cycles.toLocaleString()} ` +
-      `| enc ${lastEncodeMs.toFixed(1)}ms ` +
-      `| size ${(lastFrameBytes/1024).toFixed(1)}KB ` +
+      `| tick ${tickOnlyMsEma.toFixed(1)}ms emit ${emitMsEma.toFixed(1)}ms ` +
+      `| size ${(lastFrameBytes/1024).toFixed(0)}KB ` +
       `| batch ${batchMsEma.toFixed(1)}ms (${batchCount} cyc) ` +
       `| mode=0x${engine ? engine.get_video_mode().toString(16) : '?'}`
     );
@@ -416,6 +428,8 @@ function startStatsInterval() {
           lastFrameBytes,
           batchCount,
           batchMsEma,
+          tickOnlyMsEma,
+          emitMsEma,
           fpsWindow: delta,
           videoMode: engine ? engine.get_video_mode() : null,
         });

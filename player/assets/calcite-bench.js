@@ -58,6 +58,8 @@ ch.onmessage = (ev) => {
     frameBytes: d.lastFrameBytes,
     batchCount: d.batchCount,
     batchMsEma: d.batchMsEma,
+    tickOnlyMsEma: d.tickOnlyMsEma,
+    emitMsEma: d.emitMsEma,
     fpsWindow: d.fpsWindow,
     skipWindow: d.skipWindow || 0,
   });

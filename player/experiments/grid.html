@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSS-DOS player (calcite)</title>
+  <style>
+    @font-face {
+      font-family: 'DOS';
+      src: local('Perfect DOS VGA 437'), local('Fixedsys'), local('Terminal');
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'DOS', 'Fixedsys', 'Terminal', monospace;
+      font-size: 14px;
+      background: #008080;
+      color: #000;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 8px;
+      cursor: default;
+      image-rendering: pixelated;
+    }
+    .window {
+      background: #c0c0c0;
+      border-top: 2px solid #fff;
+      border-left: 2px solid #fff;
+      border-right: 2px solid #808080;
+      border-bottom: 2px solid #808080;
+      box-shadow: 1px 1px 0 #000;
+      width: 720px;
+      max-width: 100%;
+    }
+    .title-bar {
+      background: #000080;
+      color: #fff;
+      padding: 2px 4px;
+      font-size: 13px;
+      user-select: none;
+    }
+    .window-body { padding: 6px; }
+    .field-dark {
+      border-top: 1px solid #808080;
+      border-left: 1px solid #808080;
+      border-right: 1px solid #fff;
+      border-bottom: 1px solid #fff;
+      background: #000;
+      color: #33ff33;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px;
+      white-space: pre;
+      line-height: 1.15;
+      min-height: 200px;
+      overflow-y: auto;
+    }
+    .status-bar {
+      border-top: 1px solid #808080;
+      border-left: 1px solid #808080;
+      border-right: 1px solid #fff;
+      border-bottom: 1px solid #fff;
+      background: #c0c0c0;
+      padding: 2px 4px;
+      font-size: 11px;
+      margin-top: 4px;
+      color: #000;
+    }
+    .warnings {
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .warning {
+      border-top: 2px solid #fff;
+      border-left: 2px solid #fff;
+      border-right: 2px solid #808080;
+      border-bottom: 2px solid #808080;
+      background: #ffc0c0;
+      color: #800000;
+      font-family: inherit;
+      font-size: 12px;
+      padding: 4px 6px;
+    }
+    .warning strong { color: #400000; }
+    .keyboard {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      margin-top: 8px;
+      user-select: none;
+      width: 100%;
+    }
+    .kb-main { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; }
+    .kb-right-stack { display: grid; grid-template-rows: auto 1fr auto; gap: 2px; justify-items: end; }
+    .kb-enter { background: #d8c898; }
+    .kb-enter:active, .kb-enter.pressed { background: #b8a878; }
+    .kb-modifiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
+    .kb-arrows {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: 34px 34px;
+      gap: 2px;
+      width: 165px;
+      grid-row: 3;
+    }
+    .kb-key {
+      background: #c0c0c0;
+      border-top: 2px solid #fff;
+      border-left: 2px solid #fff;
+      border-right: 2px solid #808080;
+      border-bottom: 2px solid #808080;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 0;
+      height: 34px;
+      cursor: pointer;
+      color: #000;
+      touch-action: none;
+    }
+    .kb-key:active, .kb-key.pressed {
+      border-top: 2px solid #808080;
+      border-left: 2px solid #808080;
+      border-right: 2px solid #fff;
+      border-bottom: 2px solid #fff;
+    }
+    .kb-space { grid-column: 1 / -1; height: 28px; font-size: 11px; }
+    .kb-up    { grid-column: 2; grid-row: 1; }
+    .kb-left  { grid-column: 1; grid-row: 2; }
+    .kb-down  { grid-column: 2; grid-row: 2; }
+    .kb-right { grid-column: 3; grid-row: 2; }
+    .kb-arrow { font-size: 16px; }
+  </style>
+</head>
+<body>
+  <div class="window">
+    <div class="title-bar"><span>CSS-DOS · grid (div-per-pixel Mode 13h)</span></div>
+    <div class="window-body">
+      <div id="output" class="field-dark"></div>
+      <div
+        id="screen-grid"
+        style="display:none; width: 640px; height: 400px; background:#000; border-top: 1px solid #808080; border-left: 1px solid #808080; border-right: 1px solid #fff; border-bottom: 1px solid #fff; line-height: 0; font-size: 0;"
+      ></div>
+      <div class="status-bar">
+        <span id="status">Loading cabinet...</span>
+        <span style="float:right">
+          <label for="vsync-mode" style="margin-right: 4px;">vsync:</label>
+          <select id="vsync-mode" style="font-family: inherit; font-size: 12px;">
+            <option value="sim">sim</option>
+            <option value="turbo">turbo</option>
+          </select>
+          <span id="stats" style="margin-left: 8px;"></span>
+        </span>
+      </div>
+      <div class="warnings" id="warnings"></div>
+      <div class="keyboard">
+        <div class="kb-main">
+          <button class="kb-key" data-key="0x0231">1</button><button class="kb-key" data-key="0x0332">2</button><button class="kb-key" data-key="0x0433">3</button><button class="kb-key" data-key="0x0534">4</button><button class="kb-key" data-key="0x0635">5</button>
+          <button class="kb-key" data-key="0x0736">6</button><button class="kb-key" data-key="0x0837">7</button><button class="kb-key" data-key="0x0938">8</button><button class="kb-key" data-key="0x0A39">9</button><button class="kb-key" data-key="0x0B30">0</button>
+          <button class="kb-key" data-key="0x1071">Q</button><button class="kb-key" data-key="0x1177">W</button><button class="kb-key" data-key="0x1265">E</button><button class="kb-key" data-key="0x1372">R</button><button class="kb-key" data-key="0x1474">T</button>
+          <button class="kb-key" data-key="0x1579">Y</button><button class="kb-key" data-key="0x1675">U</button><button class="kb-key" data-key="0x1769">I</button><button class="kb-key" data-key="0x186F">O</button><button class="kb-key" data-key="0x1970">P</button>
+          <button class="kb-key" data-key="0x1E61">A</button><button class="kb-key" data-key="0x1F73">S</button><button class="kb-key" data-key="0x2064">D</button><button class="kb-key" data-key="0x2166">F</button><button class="kb-key" data-key="0x2267">G</button>
+          <button class="kb-key" data-key="0x2368">H</button><button class="kb-key" data-key="0x246A">J</button><button class="kb-key" data-key="0x256B">K</button><button class="kb-key" data-key="0x266C">L</button><button class="kb-key kb-enter" data-key="0x1C0D">Enter</button>
+          <button class="kb-key" data-key="0x2C7A">Z</button><button class="kb-key" data-key="0x2D78">X</button><button class="kb-key" data-key="0x2E63">C</button><button class="kb-key" data-key="0x2F76">V</button><button class="kb-key" data-key="0x3062">B</button>
+          <button class="kb-key" data-key="0x316E">N</button><button class="kb-key" data-key="0x326D">M</button><button class="kb-key" data-key="0x332C">,</button><button class="kb-key" data-key="0x342E">.</button><button class="kb-key" data-key="0x352F">/</button>
+          <button class="kb-key kb-space" data-key="0x3920">&#x2423;</button>
+        </div>
+        <div class="kb-right-stack">
+          <div class="kb-modifiers">
+            <button class="kb-key" data-key="0x011B">Esc</button><button class="kb-key" data-key="0x0F09">Tab</button><button class="kb-key" data-key="0x0E08">Bksp</button>
+          </div>
+          <div class="kb-arrows">
+            <button class="kb-key kb-arrow kb-up"    data-key="0x4800">&#x2191;</button>
+            <button class="kb-key kb-arrow kb-left"  data-key="0x4B00">&#x2190;</button>
+            <button class="kb-key kb-arrow kb-down"  data-key="0x5000">&#x2193;</button>
+            <button class="kb-key kb-arrow kb-right" data-key="0x4D00">&#x2192;</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const worker = new Worker('/calcite/calcite-worker.js', { type: 'module' });
+    const status = document.getElementById('status');
+    const output = document.getElementById('output');
+    // Div-per-pixel grid. Paint strategy is className-toggle against a
+    // dynamic palette: we keep a fixed pool of 256 CSS classes (.c0..c255)
+    // whose backgrounds we can rewrite on demand, plus a hashtable mapping
+    // 24-bit RGB → class index. When a pixel needs a color we haven't seen,
+    // we assign the next free class slot, rewrite that one rule, and from
+    // then on every pixel of that color is a cheap className mutation.
+    //
+    // Benchmarks (tmp/pixelgrid/bench.html): className-toggle is ~3x faster
+    // than CSSOM-rule mutation and ~2x faster than inline style, because
+    // class matching is the single most optimised path in Chrome's style
+    // engine.
+    //
+    // Framebuffer transport is SharedArrayBuffer when the page is cross-
+    // origin isolated (COOP/COEP headers from web/scripts/dev.mjs). The
+    // worker writes RGBA straight into the shared view; we read it on our
+    // paint schedule. Falls back to the old gfxBytes-transfer path if SAB
+    // isn't available.
+    const gridEl = document.getElementById('screen-grid');
+    // Pixel-canvas geometry for each video mode the grid can render. Text
+    // modes use 8×16 cells (standard VGA text glyphs); Mode 13h is the
+    // raw 320×200 framebuffer. Geometry drives grid size AND the SAB
+    // size we allocate, which in turn drives the worker's text-rasteriser
+    // canvas check.
+    const MODE_GEOMETRY = {
+      0x00: { width: 320, height: 400, textCols: 40, textRows: 25 }, // CGA 40×25 mono — same layout as 0x01
+      0x01: { width: 320, height: 400, textCols: 40, textRows: 25 }, // CGA 40×25 → 320×400
+      0x02: { width: 640, height: 400, textCols: 80, textRows: 25 }, // CGA 80×25 mono — same layout as 0x03
+      0x03: { width: 640, height: 400, textCols: 80, textRows: 25 }, // CGA 80×25 → 640×400
+      0x07: { width: 720, height: 400, textCols: 80, textRows: 25 }, // MDA 80×25 mono (slightly wider, same glyph size)
+      0x13: { width: 320, height: 200 },                              // Mode 13h
+    };
+    let gridW = 0, gridH = 0;
+    let cellEls = null;          // HTMLCollection of <i> pixels
+    let lastClass = null;        // Uint8Array: last-assigned class index per pixel
+    let lastPainted = null;      // Uint32Array: last-painted RGB per pixel (for change detection)
+    let classRules = null;       // Array<CSSStyleRule>, one per palette slot (length 256)
+    let classNames = null;       // Array<string>, cached class names 'c0'..'c255'
+    const PALETTE_SIZE = 256;
+    // RGB (u32) → class index (0..255). Map is fast for this size; we never
+    // recreate it, just grow/evict.
+    const colorToClass = new Map();
+    let nextClassSlot = 0;       // round-robin pointer into class pool
+    // Reverse: class slot → its current RGB (so we know what to evict)
+    const classToColor = new Uint32Array(PALETTE_SIZE);
+    // Shared framebuffer: allocated here, handed to worker once.
+    // Two views over the same SAB:
+    //   gfxSharedView  — Uint8Array, used by fallback path / byte access
+    //   gfxShared32    — Uint32Array, used by the paint loop so each pixel
+    //                    is ONE load+compare instead of four.
+    //                    Endianness doesn't matter for "did this pixel
+    //                    change" since both sides of the compare use the
+    //                    same byte order.
+    let gfxSharedView = null;
+    let gfxShared32 = null;
+    // Worker stamps each tick-result with a u32 xor-fold checksum of the
+    // framebuffer. When it matches the last one we painted, we can skip
+    // the 64,000-pixel scan entirely — nothing moved, nothing to do.
+    let lastPaintedChecksum = -1;
+    // Scale factor per mode — Mode 13h uses 2x, text modes use 1x because
+    // the pixel canvas is already 640×400 (2x the old 13h canvas) so each
+    // pixel div is one screen pixel. Keeps the player window roughly the
+    // same size regardless of mode.
+    function pixelScaleFor(w, h) {
+      return (w >= 640 || h >= 400) ? 1 : 2;
+    }
+    // Rebuild the pixel grid at (w, h). Idempotent — safe to call on mode
+    // switch. Tears down any previous grid DOM and structural <style>
+    // tags we added, then reallocates the SAB. `vramAddr` is the guest
+    // memory address the worker should read from (0xA0000 for Mode 13h,
+    // 0xB8000 for text modes).
+    let structuralStyleEl = null;
+    let palStyleEl = null;
+    function buildGrid(w, h, vramAddr) {
+      gridW = w; gridH = h;
+      if (structuralStyleEl) structuralStyleEl.remove();
+      if (palStyleEl) palStyleEl.remove();
+      gridEl.style.display = 'grid';
+      const sx = pixelScaleFor(w, h), sy = sx;
+      gridEl.style.gridTemplateColumns = `repeat(${w}, ${sx}px)`;
+      gridEl.style.gridAutoRows = `${sy}px`;
+      gridEl.style.width = (w * sx) + 'px';
+      gridEl.style.height = (h * sy) + 'px';
+      // contain: 'strict' isolates 64k pixel children from the parent's
+      // intrinsic-size computation. Without this, .keyboard (a flex sibling
+      // using `1fr auto`) collapses to ~58 px wide because the browser
+      // walks the giant grid when resolving flexible track widths.
+      gridEl.style.contain = 'strict';
+      // Structural CSS — sizes the pixels, sets a baseline black.
+      structuralStyleEl = document.createElement('style');
+      structuralStyleEl.textContent =
+        `#screen-grid>i{display:block;width:${sx}px;height:${sy}px;background:#000}`;
+      gridEl.parentNode.insertBefore(structuralStyleEl, gridEl);
+      // Build the palette stylesheet: 256 rules, all black initially.
+      // We mutate a rule's backgroundColor whenever a new color enters
+      // the palette; that's ≤ 256 rule mutations for the lifetime of a
+      // normal Mode 13h program.
+      palStyleEl = document.createElement('style');
+      palStyleEl.id = 'px-palette';
+      const palRules = new Array(PALETTE_SIZE);
+      classNames = new Array(PALETTE_SIZE);
+      for (let i = 0; i < PALETTE_SIZE; i++) {
+        classNames[i] = 'c' + i;
+        palRules[i] = `#screen-grid>i.c${i}{background:#000}`;
+      }
+      palStyleEl.textContent = palRules.join('');
+      document.head.appendChild(palStyleEl);
+      classRules = new Array(PALETTE_SIZE);
+      for (let i = 0; i < PALETTE_SIZE; i++) {
+        classRules[i] = palStyleEl.sheet.cssRules[i];
+      }
+      // Pixel elements.
+      const n = w * h;
+      const htmlParts = new Array(n);
+      for (let i = 0; i < n; i++) htmlParts[i] = '<i class=c0></i>';
+      gridEl.innerHTML = htmlParts.join('');
+      cellEls = gridEl.children;
+      lastClass = new Uint8Array(n);      // all c0
+      lastPainted = new Uint32Array(n);    // all black
+      colorToClass.clear();
+      colorToClass.set(0, 0);               // black is slot 0 forever
+      classToColor[0] = 0;
+      nextClassSlot = 1;
+
+      // Set up a SharedArrayBuffer for the framebuffer when available.
+      // Worker will write into it directly; we read on our paint schedule.
+      if (typeof SharedArrayBuffer !== 'undefined' && self.crossOriginIsolated) {
+        try {
+          const sab = new SharedArrayBuffer(n * 4);
+          gfxSharedView = new Uint8Array(sab);
+          gfxShared32 = new Uint32Array(sab);
+          // Tell the worker the SAB AND the VRAM region to read from.
+          // When the cabinet didn't declare a gfx region at init we pass
+          // the standard Mode 13h geometry so the worker knows where to
+          // find pixels. For cabinets that did declare one the worker
+          // will just overwrite its existing region with the same values.
+          worker.postMessage({
+            type: 'setFramebufferSAB',
+            sab,
+            width: w,
+            height: h,
+            addr: vramAddr ?? 0xA0000,
+          });
+          console.log('[CSS-DOS] framebuffer SAB active (', (n * 4 / 1024) | 0, 'KB) @', w, 'x', h);
+        } catch (e) {
+          console.warn('[CSS-DOS] SAB alloc failed, falling back to transfer:', e.message);
+          gfxSharedView = null;
+          gfxShared32 = null;
+        }
+      } else {
+        console.warn('[CSS-DOS] not crossOriginIsolated — framebuffer will use transfer path');
+      }
+    }
+    // Resize the pixel canvas to match a video mode. No-op if the current
+    // geometry already matches. Text modes (0x01/0x03) are pixel-rendered
+    // through the worker's font rasteriser; Mode 13h is pixel-rendered
+    // directly from VRAM. Anything we don't have geometry for falls out
+    // of pixelModes and the player renders via the HTML-string fallback.
+    function setVideoMode(mode) {
+      const geom = MODE_GEOMETRY[mode];
+      if (!geom) {
+        pixelModes.delete(mode);
+        return;
+      }
+      pixelModes.add(mode);
+      if (gridW === geom.width && gridH === geom.height) return;
+      // Text modes read VRAM from 0xB8000; Mode 13h from 0xA0000.
+      const vramAddr = (mode === 0x13) ? 0xA0000 : 0xB8000;
+      buildGrid(geom.width, geom.height, vramAddr);
+      // Frame-accounting reset — stale lastPaintedChecksum would cause the
+      // first frame of the new mode to be suppressed as "unchanged".
+      lastPaintedFrame = -1;
+      lastPaintedChecksum = -1;
+    }
+
+    // Fetch the VGA 8×16 ROM font and hand it to the worker. Worker uses
+    // it to rasterise text modes into the same RGBA framebuffer Mode 13h
+    // uses, so grid paints everything through one code path.
+    async function loadFontAndSend() {
+      try {
+        const r = await fetch('/player/fonts/vga-8x16.bin');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const buf = new Uint8Array(await r.arrayBuffer());
+        if (buf.length !== 4096) {
+          console.warn('[CSS-DOS] font file is', buf.length, 'bytes, expected 4096');
+          return;
+        }
+        worker.postMessage({ type: 'setFont', font: buf });
+        console.log('[CSS-DOS] font loaded (4096 bytes) and sent to worker');
+      } catch (e) {
+        console.warn('[CSS-DOS] font load failed — text modes will not pixel-render:', e.message);
+      }
+    }
+
+    // Obtain (or assign) a class slot for a pixel u32 (as read from the
+    // Uint32Array view of the framebuffer). The key is the raw u32 — we
+    // never decompose into R/G/B until we need to write a CSS color, and
+    // at that point we know the alpha byte is always 0xFF so we can
+    // ignore it. Endianness is irrelevant for the Map key; it only
+    // matters when we unpack for the hex string below.
+    function slotForColor(u32) {
+      let slot = colorToClass.get(u32);
+      if (slot !== undefined) return slot;
+      // Assign a new slot. Round-robin eviction skips slot 0 (black).
+      slot = nextClassSlot;
+      nextClassSlot = (nextClassSlot + 1) % PALETTE_SIZE;
+      if (nextClassSlot === 0) nextClassSlot = 1;  // never evict black
+      const oldU32 = classToColor[slot];
+      if (oldU32 !== u32) colorToClass.delete(oldU32);
+      colorToClass.set(u32, slot);
+      classToColor[slot] = u32;
+      // Unpack assuming little-endian (Chrome on x86/ARM): byte 0 = R,
+      // byte 1 = G, byte 2 = B, byte 3 = A. If we're ever wrong about
+      // that, the Map compare still works (symmetric), and only the
+      // displayed color would be wrong — trivially verifiable.
+      const r =  u32         & 0xFF;
+      const g = (u32 >>>  8) & 0xFF;
+      const b = (u32 >>> 16) & 0xFF;
+      classRules[slot].style.backgroundColor =
+        '#' + HEX[r] + HEX[g] + HEX[b];
+      return slot;
+    }
+    // 2-digit hex cache for 0..255
+    const HEX = new Array(256);
+    for (let i = 0; i < 256; i++) HEX[i] = i.toString(16).padStart(2, '0');
+    const stats = document.getElementById('stats');
+    const warningsEl = document.getElementById('warnings');
+
+    // Diagnostic warnings — each (kind, value) shown once.
+    const shownWarnings = new Set();
+    function showWarning(kind, value, html, consoleMsg) {
+      const key = `${kind}:${value}`;
+      if (shownWarnings.has(key)) return;
+      shownWarnings.add(key);
+      const div = document.createElement('div');
+      div.className = 'warning';
+      div.innerHTML = html;
+      warningsEl.appendChild(div);
+      console.error('[CSS-DOS]', consoleMsg);
+    }
+    const VIDEO_MODE_NAMES = {
+      0x00: 'CGA 40×25 text (mono)',
+      0x01: 'CGA 40×25 text (color)',
+      0x02: 'CGA 80×25 text (mono)',
+      0x03: 'CGA 80×25 text (color)',
+      0x04: 'CGA 320×200×4',
+      0x05: 'CGA 320×200×4 (mono)',
+      0x06: 'CGA 640×200×2',
+      0x07: 'MDA/Hercules 80×25 mono text',
+      0x0D: 'EGA 320×200×16 (planar)',
+      0x0E: 'EGA 640×200×16 (planar)',
+      0x0F: 'EGA 640×350 mono (planar)',
+      0x10: 'EGA 640×350×16 (planar)',
+      0x11: 'VGA 640×480×2',
+      0x12: 'VGA 640×480×16 (planar)',
+      0x13: 'VGA 320×200×256 (Mode 13h)',
+    };
+    function videoModeName(m) {
+      return VIDEO_MODE_NAMES[m] || `unknown mode 0x${m.toString(16).padStart(2, '0').toUpperCase()}`;
+    }
+    const REAL_8086_HZ = 4_772_727;
+    // VGA 70 Hz vsync from the 4.77 MHz timebase. Matches the kiln-side
+    // 0x3DA decode so the player paints on frame boundaries the program
+    // also observes via the vsync port.
+    const CYCLES_PER_FRAME = 68_182;
+
+    function formatHz(hz) {
+      if (hz >= 1_000_000) return (hz / 1_000_000).toFixed(2) + ' MHz';
+      if (hz >= 1_000)     return (hz / 1_000).toFixed(1) + ' KHz';
+      return hz.toFixed(0) + ' Hz';
+    }
+
+    // --- vsync paint mode ---
+    // Paint runs on requestAnimationFrame, not on tick-result. The worker
+    // writes pixels into the SAB whenever a batch finishes; rAF reads
+    // the most recent state and paints it, decoupled from batch cadence.
+    // Two modes:
+    //   sim:   paint only when the guest's simulated 70 Hz retrace has
+    //          advanced since the last paint (compares cycle buckets).
+    //          Tear-free for programs that poll port 0x3DA.
+    //   turbo: paint every rAF tick regardless.
+    // URL `?vsync=sim|turbo` overrides the default. Default is sim.
+    const VSYNC_MODES = ['sim', 'turbo'];
+    const vsyncParam = new URLSearchParams(location.search).get('vsync');
+    let vsyncMode = VSYNC_MODES.includes(vsyncParam) ? vsyncParam : 'sim';
+    let lastPaintedFrame = -1;    // guest simulated-vsync bucket of the most recent paint
+    let paintCount = 0;            // paints over the current stats window
+    let lastStatsWallMs = 0;
+    let currentFps = 0;            // rAF paint rate (effectively the display fps)
+    // Most-recent frame-result from the worker. doPaint() reads this.
+    // The frame-result handler sets it and calls doPaint() once per
+    // arriving frame. rAF doesn't call doPaint directly; it requests
+    // frames and lets the handler paint them.
+    let lastTickForPaint = null;
+
+    // At most one outstanding frame request. We set this true before
+    // postMessage({type:'frame'}) and clear it in 'frame-result'. Stops
+    // the worker from being spammed with requests that'd all resolve
+    // to near-identical framebuffers.
+    let frameRequestInFlight = false;
+    function requestFrame() {
+      if (!engineReady || frameRequestInFlight) return;
+      frameRequestInFlight = true;
+      // includeText:false — grid uses rasterised pixels, never the
+      // HTML-string fallback. Skipping the serialize/render_screen_html
+      // work saves real time on fat cabinets.
+      worker.postMessage({ type: 'frame', includeText: false });
+    }
+
+    let running = false;
+    let totalCycles = 0;
+    let startTime = 0;
+    let engineReady = false;
+    // Batch pacing lives in the worker now. Main just asks it to
+    // start/pause and requests frames at paint cadence.
+    let tickBatchSize = 0;     // last reported worker batch size (for stats)
+    let tickBatchMs = 0;        // last reported worker batch EMA ms
+    let video = { text: null, gfx: null };
+    let gfxImageData = null;
+    let currentVideoMode = null;
+
+    // Paint is atomic. Previously we chunked 16k pixels at a time,
+    // yielding to the event loop between chunks via MessageChannel.
+    // That caused visible tearing: Chrome flushes style + paints
+    // between chunks, so one guest frame got rendered across 3-4
+    // compositor frames (you could literally see the scan-in). It
+    // also created a read/write race, because the worker can overwrite
+    // the SAB while we're halfway through reading it.
+    //
+    // We now do the whole frame in one synchronous pass. A worst-case
+    // 64k-pixel change takes ~47 ms, which briefly stalls the main
+    // thread, but the result is a single clean frame per paint.
+    // Losing some peak tick throughput for tear-free output is the
+    // right trade here.
+    //
+    // Set of video modes the grid has a pixel-canvas for. Populated by
+    // setVideoMode() as modes are encountered. doPaint() only blits when
+    // the current mode is in this set — for anything else the grid stays
+    // hidden and the HTML-string fallback renders into #output.
+    const pixelModes = new Set();
+    function doPaint() {
+      const data = lastTickForPaint;
+      if (!data || !cellEls) return;
+      if (!pixelModes.has(data.videoMode)) return;
+      let src32 = null;
+      if (gfxShared32 && data.gfxSAB) {
+        src32 = gfxShared32;
+      } else if (data.gfxBytes) {
+        src32 = new Uint32Array(data.gfxBytes);
+      }
+      if (!src32) return;
+      // Frames only arrive in response to requestFrame(), so we no
+      // longer gate on sim-frame bucket here — the request cadence
+      // already does it. We still skip paint when the checksum
+      // matches the last painted frame (no-op screen).
+      const simFrame = Math.floor((data.cycles || 0) / CYCLES_PER_FRAME);
+      if (data.gfxChecksum === lastPaintedChecksum) {
+        lastPaintedFrame = simFrame;
+        window.__lastPaint = { paintMs: 0, changed: 0, total: gridW * gridH,
+          palette: colorToClass.size, skipped: true };
+        return;
+      }
+      // Snapshot the SAB into a local buffer so the worker can't
+      // overwrite it while we're painting. 256 KB copy is ~0.3 ms.
+      const n = gridW * gridH;
+      const snap = new Uint32Array(n);
+      snap.set(src32.subarray(0, n));
+      const startMs = performance.now();
+      let changed = 0;
+      for (let i = 0; i < n; i++) {
+        const u32 = snap[i];
+        if (lastPainted[i] !== u32) {
+          lastPainted[i] = u32;
+          const slot = slotForColor(u32);
+          if (lastClass[i] !== slot) {
+            lastClass[i] = slot;
+            cellEls[i].className = classNames[slot];
+            changed++;
+          }
+        }
+      }
+      const paintMs = performance.now() - startMs;
+      window.__lastPaint = { paintMs, changed, total: n,
+        palette: colorToClass.size };
+      lastPaintedFrame = simFrame;
+      lastPaintedChecksum = data.gfxChecksum;
+      paintCount++;
+    }
+
+    // Stats window — advances paintCount into fps once per wall second.
+    function updateFps(nowWall) {
+      if (lastStatsWallMs === 0) lastStatsWallMs = nowWall;
+      const dt = nowWall - lastStatsWallMs;
+      if (dt >= 1000) {
+        currentFps = (paintCount * 1000) / dt;
+        paintCount = 0;
+        lastStatsWallMs = nowWall;
+      }
+    }
+
+    // rAF driver — sim mode. Each rAF tick asks the worker for a
+    // fresh frame (capped at one in flight at a time). The worker's
+    // 'frame-result' handler paints it. Effective paint rate is capped
+    // at display refresh (60 Hz) because rAF is.
+    function rafPaint(nowWall) {
+      requestAnimationFrame(rafPaint);
+      updateFps(nowWall);
+      if (vsyncMode === 'sim') requestFrame();
+    }
+
+    // Turbo mode — request frames as fast as the worker can reply.
+    // We don't spin a separate scheduler any more: the request cycle
+    // is self-clocking via the frame-result → requestFrame callback
+    // below. Slower than the old every-rAF-tick scheduler in theory,
+    // but with the one-in-flight cap it matches the worker's actual
+    // throughput with no queuing.
+    function startTurboIfNeeded() {
+      if (vsyncMode === 'turbo') requestFrame();
+    }
+
+    worker.onmessage = ({ data }) => {
+      switch (data.type) {
+        case 'ready': {
+          engineReady = true;
+          video = data.video || { text: null, gfx: null };
+          loadFontAndSend();
+          gridEl.style.display = 'none';
+          output.style.display = 'none';
+          running = true;
+          startTime = performance.now();
+          totalCycles = 0;
+          status.textContent = 'Running...';
+          // Tell the worker to start its own tick loop. From here on
+          // main only sends frame/keyboard/pause — the worker paces
+          // CPU execution itself.
+          worker.postMessage({ type: 'start' });
+          requestAnimationFrame(rafPaint);
+          startTurboIfNeeded();
+          break;
+        }
+        case 'tick-stats': {
+          // Periodic (~10 Hz) lightweight status from the worker's
+          // self-running tick loop. No framebuffer payload, no ticks
+          // counter — just the numbers we need for the readouts and
+          // the video-mode warnings.
+          window.__lastTick = data;
+          totalCycles = data.cycles != null ? data.cycles : totalCycles;
+          tickBatchSize = data.tickBatch || 0;
+          tickBatchMs = data.tickEma || 0;
+          const elapsed = (performance.now() - startTime) / 1000;
+          const cps = elapsed > 0 ? totalCycles / elapsed : 0;
+          const pct = cps / REAL_8086_HZ * 100;
+          const lp = window.__lastPaint;
+          const paintStr = lp ? ` | paint ${lp.paintMs.toFixed(1)}ms (${lp.changed}/${lp.total} px)` : '';
+          stats.textContent = `${formatHz(cps)} (${pct.toFixed(1)}% of 4.77 MHz) | batch ${tickBatchSize} (${tickBatchMs.toFixed(1)}ms) | ${vsyncMode} ${currentFps.toFixed(1)} fps${paintStr}`;
+
+          if (data.haltCode) {
+            const op = '0x' + data.haltCode.toString(16).padStart(2, '0').toUpperCase();
+            showWarning(
+              'opcode',
+              data.haltCode,
+              `<strong>Unknown opcode ${op}.</strong> This program uses a CPU instruction CSS-DOS's 8086 core doesn't implement — most likely it requires a 286/386/486. Execution is halted.`,
+              `Unknown opcode ${op} — program requires a CPU newer than 8086.`,
+            );
+          }
+          // Video-mode warnings. See comments in original code for req=0
+          // heuristic; same rules apply here.
+          const SUPPORTED_MODES = new Set([0x01, 0x03, 0x13]);
+          const MODE_ALIASES = { 0x00: 0x01 };
+          const req = data.requestedVideoMode;
+          const got = data.videoMode;
+          const reqAlias = MODE_ALIASES[req] ?? req;
+          if (req && req !== got && reqAlias !== got) {
+            const rHex = '0x' + req.toString(16).padStart(2, '0').toUpperCase();
+            const gHex = '0x' + (got ?? 0).toString(16).padStart(2, '0').toUpperCase();
+            showWarning(
+              'vmode-remap',
+              req,
+              `<strong>Video mode ${rHex}</strong> (${videoModeName(req)}) was remapped to ${gHex} (${videoModeName(got)}) by the BIOS. CSS-DOS currently implements 40×25 text (0x01), 80×25 text (0x03), and VGA Mode 13h (0x13). Rendering will likely be wrong.`,
+              `Program requested video mode ${rHex} (${videoModeName(req)}) — remapped to ${gHex} (${videoModeName(got)}).`,
+            );
+          } else if (got != null && !SUPPORTED_MODES.has(got)) {
+            const gHex = '0x' + got.toString(16).padStart(2, '0').toUpperCase();
+            showWarning(
+              'vmode-unsupported',
+              got,
+              `<strong>Unsupported video mode ${gHex}</strong> (${videoModeName(got)}). The player can render 40×25 text (0x01), 80×25 text (0x03), and VGA Mode 13h (0x13). Output may be blank or garbled.`,
+              `Active video mode ${gHex} (${videoModeName(got)}) is not supported by the player.`,
+            );
+          }
+
+          // Mode change triggers geometry rebuild. Cheap no-op when mode
+          // hasn't changed; must live here so the grid is sized correctly
+          // by the time the next frame-result arrives.
+          if (data.videoMode !== currentVideoMode) {
+            setVideoMode(data.videoMode);
+            currentVideoMode = data.videoMode;
+          }
+          const isPixelMode = pixelModes.has(data.videoMode);
+          if (isPixelMode) {
+            gridEl.style.display = 'grid';
+            output.style.display = 'none';
+          } else {
+            gridEl.style.display = 'none';
+            output.style.display = '';
+            output.style.minHeight = '0';
+          }
+
+          break;
+        }
+        case 'frame-result': {
+          // Frame payload: pixels (in SAB or transferable), checksum,
+          // video mode. Requested by rafPaint() or the turbo scheduler,
+          // not produced unconditionally per tick.
+          frameRequestInFlight = false;
+          lastTickForPaint = data;
+          // Turbo self-clocking: immediately request the next frame.
+          if (vsyncMode === 'turbo') requestFrame();
+          const isPixelMode = pixelModes.has(data.videoMode);
+          if (!isPixelMode && data.screen != null) {
+            output.innerHTML = data.screen;
+          } else if (!isPixelMode && !video.text && data.stringProperties) {
+            const parts = [];
+            for (const [_, v] of Object.entries(data.stringProperties)) if (v) parts.push(v);
+            if (parts.length > 0) {
+              const text = parts.join('\n');
+              const lines = text.split('\n');
+              output.textContent = lines.length > 50 ? lines.slice(-50).join('\n') : text;
+              output.scrollTop = output.scrollHeight;
+            }
+          }
+          doPaint();
+          break;
+        }
+        case 'error':
+          status.textContent = `Error: ${data.message}`;
+          running = false;
+          break;
+      }
+    };
+
+    // Wire the vsync-mode dropdown. Initial value comes from the URL
+    // (?vsync=...) or the default ('sim'). Live changes take effect on
+    // the next tick-result; no restart needed.
+    const vsyncSelect = document.getElementById('vsync-mode');
+    vsyncSelect.value = vsyncMode;
+    vsyncSelect.addEventListener('change', () => {
+      if (VSYNC_MODES.includes(vsyncSelect.value)) {
+        vsyncMode = vsyncSelect.value;
+        lastPaintedFrame = -1;
+        lastPaintedChecksum = -1;
+        startTurboIfNeeded();
+      }
+    });
+
+    function sendKey(code) {
+      if (!engineReady) return;
+      worker.postMessage({ type: 'keyboard', key: code });
+    }
+    for (const btn of document.querySelectorAll('.kb-key')) {
+      const code = parseInt(btn.dataset.key, 16);
+      btn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        btn.setPointerCapture(e.pointerId);
+        sendKey(code);
+      });
+      btn.addEventListener('contextmenu', (e) => e.preventDefault());
+    }
+
+    // Auto-load /cabinet.css (service worker serves it from Cache Storage).
+    (async () => {
+      try {
+        status.textContent = 'Fetching cabinet...';
+        const r = await fetch('/cabinet.css');
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const css = await r.text();
+        if (!css || css.trim().length === 0) {
+          status.textContent = 'No cabinet in cache. Build one first at /build.html.';
+          return;
+        }
+        status.textContent = `Compiling ${(css.length / 1024 / 1024).toFixed(1)} MB...`;
+        worker.postMessage({ type: 'init', css });
+      } catch (e) {
+        status.textContent = `Error: ${e.message}`;
+      }
+    })();
+  </script>
+</body>
+</html>

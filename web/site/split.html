@@ -1,10 +1,30 @@
 <!DOCTYPE html>
+<!-- AUTOGEN from build.html by web/scripts/split-regen.mjs. Do not edit. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CSS-DOS · build</title>
+  <title>CSS-DOS · split</title>
   <link rel="stylesheet" href="/assets/site.css">
+  <style>
+    /* Split layout: builder on the left, calcite player iframe on the
+       right, both filling the viewport. */
+    body.split {
+      display: flex !important;
+      flex-direction: row !important;
+      align-items: stretch !important;
+      gap: 8px;
+      height: 100vh;
+      width: 100vw;
+      margin: 0;
+      padding: 8px;
+      overflow: hidden;
+    }
+    body.split > .window { flex: 0 0 560px; width: 560px; max-width: 560px; overflow: auto; align-self: stretch; }
+    body.split > #split-player { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+    body.split > #split-player iframe { flex: 1 1 auto; width: 100%; border: 2px solid #808080; background: #000; }
+    body.split > #split-player .split-bar { background: #c0c0c0; padding: 4px 8px; font: 12px 'DOS','Fixedsys',monospace; border: 2px solid #fff; border-bottom: none; }
+  </style>
 </head>
 <body>
   <div class="window">
@@ -103,18 +123,21 @@
     </div><!-- /window-body -->
   </div><!-- /window -->
 
-  <!-- build.js references #split-frame and #split-reload; provide harmless
-       stubs so the module doesn't blow up when it looks for them. -->
-  <div id="split-player" hidden>
-    <button id="split-reload" hidden></button>
-    <iframe id="split-frame" src="about:blank" hidden></iframe>
+  <!-- Split layout: calcite player iframe pane. Populated by build.js
+       after a cabinet is built. -->
+  <div id="split-player">
+    <div class="split-bar">
+      <span>calcite player</span>
+      <button id="split-reload" class="btn" style="float:right; font-size:11px;">Reload</button>
+    </div>
+    <iframe id="split-frame" src="about:blank" title="calcite player"></iframe>
   </div>
 
   <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js', { scope: '/' });
     }
-    // No split — just the builder.
+    document.body.classList.add('split');
   </script>
   <script type="module" src="/assets/build.js"></script>
   <!-- Calcite bridge: spawns the worker that hosts calcite WASM and

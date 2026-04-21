@@ -3,7 +3,33 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CSS-DOS player (calcite)</title>
+  <title>CSS-DOS · Calcite</title>
+  <!--
+    The cabinet CSS this page is "running". The <style> block below
+    uses @import with media="not all" so Chrome fetches /cabinet.css
+    (showing the import in view-source) but never parses or applies
+    the rules it contains — that would be many megabytes of CSS and
+    Chrome would struggle. The bytes come from the user's own Cache
+    Storage via the service worker at /sw.js, not from the network.
+    Calcite (in the driver worker) is what actually evaluates the
+    cabinet and streams its framebuffer into the <img> below.
+  -->
+  <style>
+    @import url("/cabinet.css") not all;
+  </style>
+  <!--
+    Pure HTML + CSS runner. No <script> tag anywhere in this file.
+    The calcite-bridge worker (engine + JPEG encoder) runs on build.html
+    and posts frames to the service worker at /sw.js, which streams
+    them into the <img> below via multipart/x-mixed-replace.
+
+    For this runner to have anything to show, build.html must
+    be open in another tab.
+
+    Keyboard input: GET /_kbd?key=0xNNNN targeted at a hidden iframe
+    so the main page never navigates. The service worker forwards the
+    keycode to the driver.
+  -->
   <style>
     @font-face {
       font-family: 'DOS';
@@ -41,20 +67,61 @@
       user-select: none;
     }
     .window-body { padding: 6px; }
-    .field-dark {
+    /* The Calcite screen. <img> gets an infinite multipart JPEG stream
+       from the service worker. Each arriving part replaces the image
+       atomically — no tearing. image-rendering: pixelated keeps the
+       upscale sharp for the chunky CGA/VGA aesthetic.
+
+       Loading state: before the first frame arrives the <img> has no
+       pixels, so we paint the cell with an animated CSS background
+       the user sees until Calcite's first JPEG lands on top. The
+       moment frames start streaming the JPEG covers the background
+       entirely. No JS needed. */
+    .screen-cell {
+      width: 640px;
+      height: 400px;
       border-top: 1px solid #808080;
       border-left: 1px solid #808080;
       border-right: 1px solid #fff;
       border-bottom: 1px solid #fff;
-      background: #000;
-      color: #33ff33;
-      font-family: inherit;
+      background-color: #000;
+      background-image:
+        linear-gradient(90deg,
+          rgba(255,255,255,0) 0%,
+          rgba(255,255,255,0.06) 50%,
+          rgba(255,255,255,0) 100%),
+        repeating-linear-gradient(
+          -45deg,
+          #001030 0 16px,
+          #002050 16px 32px
+        );
+      background-size: 200% 100%, auto auto;
+      animation: loading-sweep 1.6s linear infinite;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #55ffff;
+      font-family: 'DOS', 'Fixedsys', 'Terminal', monospace;
       font-size: 14px;
-      padding: 8px;
-      white-space: pre;
-      line-height: 1.15;
-      min-height: 200px;
-      overflow-y: auto;
+      text-shadow: 0 0 2px #000;
+      position: relative;
+    }
+    @keyframes loading-sweep {
+      0%   { background-position: -100% 0, 0 0; }
+      100% { background-position:  100% 0, 0 0; }
+    }
+    .screen-cell::after {
+      content: 'Compiling cabinet… Calcite is warming up.';
+      position: absolute;
+      z-index: 0;
+    }
+    .screen {
+      display: block;
+      width: 640px;
+      height: 400px;
+      image-rendering: pixelated;
+      position: relative;
+      z-index: 1;
     }
     .status-bar {
       border-top: 1px solid #808080;
@@ -67,35 +134,27 @@
       margin-top: 4px;
       color: #000;
     }
-    .warnings {
+    .note {
       margin-top: 4px;
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .warning {
       border-top: 2px solid #fff;
       border-left: 2px solid #fff;
       border-right: 2px solid #808080;
       border-bottom: 2px solid #808080;
-      background: #ffc0c0;
-      color: #800000;
-      font-family: inherit;
-      font-size: 12px;
+      background: #ffffc0;
+      color: #404000;
       padding: 4px 6px;
+      font-size: 12px;
     }
-    .warning strong { color: #400000; }
     .keyboard {
       display: grid;
       grid-template-columns: 1fr auto;
       gap: 8px;
       margin-top: 8px;
       user-select: none;
+      width: 100%;
     }
     .kb-main { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; }
     .kb-right-stack { display: grid; grid-template-rows: auto 1fr auto; gap: 2px; justify-items: end; }
-    .kb-enter { background: #d8c898; }
-    .kb-enter:active, .kb-enter.pressed { background: #b8a878; }
     .kb-modifiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; }
     .kb-arrows {
       display: grid;
@@ -105,6 +164,8 @@
       width: 165px;
       grid-row: 3;
     }
+    /* Anchor-buttons targeting the hidden sink iframe. Styled to look
+       like the other players' kb-keys. Each click GETs /_kbd?key=... */
     .kb-key {
       background: #c0c0c0;
       border-top: 2px solid #fff;
@@ -117,378 +178,119 @@
       height: 34px;
       cursor: pointer;
       color: #000;
-      touch-action: none;
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
     }
-    .kb-key:active, .kb-key.pressed {
+    .kb-key:active {
       border-top: 2px solid #808080;
       border-left: 2px solid #808080;
       border-right: 2px solid #fff;
       border-bottom: 2px solid #fff;
     }
+    .kb-enter { background: #d8c898; }
     .kb-space { grid-column: 1 / -1; height: 28px; font-size: 11px; }
     .kb-up    { grid-column: 2; grid-row: 1; }
     .kb-left  { grid-column: 1; grid-row: 2; }
     .kb-down  { grid-column: 2; grid-row: 2; }
     .kb-right { grid-column: 3; grid-row: 2; }
     .kb-arrow { font-size: 16px; }
+    /* The sink iframe swallows every keyboard GET so the main page
+       doesn't navigate. 0px/hidden keeps it invisible. */
+    .kbd-sink { width: 0; height: 0; border: 0; position: absolute; visibility: hidden; }
   </style>
 </head>
 <body>
   <div class="window">
-    <div class="title-bar"><span>CSS-DOS · calcite</span></div>
+    <div class="title-bar">
+      <span>CSS-DOS &middot; Calcite img output</span>
+    </div>
     <div class="window-body">
-      <div id="output" class="field-dark"></div>
-      <canvas
-        id="screen-canvas"
-        width="320"
-        height="200"
-        style="display:none; width: 640px; height: 400px; background:#000; image-rendering: pixelated; border-top: 1px solid #808080; border-left: 1px solid #808080; border-right: 1px solid #fff; border-bottom: 1px solid #fff;"
-      ></canvas>
-      <div class="status-bar">
-        <span id="status">Loading cabinet...</span>
-        <span style="float:right">
-          <label for="vsync-mode" style="margin-right: 4px;">vsync:</label>
-          <select id="vsync-mode" style="font-family: inherit; font-size: 12px;">
-            <option value="sim">sim</option>
-            <option value="wall">wall</option>
-            <option value="turbo">turbo</option>
-          </select>
-          <span id="stats" style="margin-left: 8px;"></span>
-        </span>
+      <!-- The Calcite framebuffer stream. Source served by the SW at
+           /sw.js as multipart/x-mixed-replace JPEG frames.
+
+           The <img> sits on top of an animated CSS background cell.
+           Before the first frame arrives the img has no pixels so the
+           loading pattern shows through; once JPEGs start streaming
+           they cover the background completely. Pure CSS — no JS
+           toggling visibility. -->
+      <div class="screen-cell">
+        <img id="calcite-screen"
+             class="screen"
+             src="/_stream/fb"
+             alt=""
+             width="640" height="400">
       </div>
-      <div class="warnings" id="warnings"></div>
+      <div class="status-bar">
+        <span>Calcite img output &middot; frames streamed from the driver worker</span>
+      </div>
+      <div class="note">
+        <strong>Keep build.html open in another tab.</strong>
+        The driver worker runs there and produces frames; if that tab
+        is closed, this stream freezes on its last frame.
+      </div>
       <div class="keyboard">
         <div class="kb-main">
-          <button class="kb-key" data-key="0x0231">1</button><button class="kb-key" data-key="0x0332">2</button><button class="kb-key" data-key="0x0433">3</button><button class="kb-key" data-key="0x0534">4</button><button class="kb-key" data-key="0x0635">5</button>
-          <button class="kb-key" data-key="0x0736">6</button><button class="kb-key" data-key="0x0837">7</button><button class="kb-key" data-key="0x0938">8</button><button class="kb-key" data-key="0x0A39">9</button><button class="kb-key" data-key="0x0B30">0</button>
-          <button class="kb-key" data-key="0x1071">Q</button><button class="kb-key" data-key="0x1177">W</button><button class="kb-key" data-key="0x1265">E</button><button class="kb-key" data-key="0x1372">R</button><button class="kb-key" data-key="0x1474">T</button>
-          <button class="kb-key" data-key="0x1579">Y</button><button class="kb-key" data-key="0x1675">U</button><button class="kb-key" data-key="0x1769">I</button><button class="kb-key" data-key="0x186F">O</button><button class="kb-key" data-key="0x1970">P</button>
-          <button class="kb-key" data-key="0x1E61">A</button><button class="kb-key" data-key="0x1F73">S</button><button class="kb-key" data-key="0x2064">D</button><button class="kb-key" data-key="0x2166">F</button><button class="kb-key" data-key="0x2267">G</button>
-          <button class="kb-key" data-key="0x2368">H</button><button class="kb-key" data-key="0x246A">J</button><button class="kb-key" data-key="0x256B">K</button><button class="kb-key" data-key="0x266C">L</button><button class="kb-key kb-enter" data-key="0x1C0D">Enter</button>
-          <button class="kb-key" data-key="0x2C7A">Z</button><button class="kb-key" data-key="0x2D78">X</button><button class="kb-key" data-key="0x2E63">C</button><button class="kb-key" data-key="0x2F76">V</button><button class="kb-key" data-key="0x3062">B</button>
-          <button class="kb-key" data-key="0x316E">N</button><button class="kb-key" data-key="0x326D">M</button><button class="kb-key" data-key="0x332C">,</button><button class="kb-key" data-key="0x342E">.</button><button class="kb-key" data-key="0x352F">/</button>
-          <button class="kb-key kb-space" data-key="0x3920">&#x2423;</button>
+          <a class="kb-key" href="/_kbd?key=0x0231" target="kbd-sink">1</a>
+          <a class="kb-key" href="/_kbd?key=0x0332" target="kbd-sink">2</a>
+          <a class="kb-key" href="/_kbd?key=0x0433" target="kbd-sink">3</a>
+          <a class="kb-key" href="/_kbd?key=0x0534" target="kbd-sink">4</a>
+          <a class="kb-key" href="/_kbd?key=0x0635" target="kbd-sink">5</a>
+          <a class="kb-key" href="/_kbd?key=0x0736" target="kbd-sink">6</a>
+          <a class="kb-key" href="/_kbd?key=0x0837" target="kbd-sink">7</a>
+          <a class="kb-key" href="/_kbd?key=0x0938" target="kbd-sink">8</a>
+          <a class="kb-key" href="/_kbd?key=0x0A39" target="kbd-sink">9</a>
+          <a class="kb-key" href="/_kbd?key=0x0B30" target="kbd-sink">0</a>
+          <a class="kb-key" href="/_kbd?key=0x1071" target="kbd-sink">Q</a>
+          <a class="kb-key" href="/_kbd?key=0x1177" target="kbd-sink">W</a>
+          <a class="kb-key" href="/_kbd?key=0x1265" target="kbd-sink">E</a>
+          <a class="kb-key" href="/_kbd?key=0x1372" target="kbd-sink">R</a>
+          <a class="kb-key" href="/_kbd?key=0x1474" target="kbd-sink">T</a>
+          <a class="kb-key" href="/_kbd?key=0x1579" target="kbd-sink">Y</a>
+          <a class="kb-key" href="/_kbd?key=0x1675" target="kbd-sink">U</a>
+          <a class="kb-key" href="/_kbd?key=0x1769" target="kbd-sink">I</a>
+          <a class="kb-key" href="/_kbd?key=0x186F" target="kbd-sink">O</a>
+          <a class="kb-key" href="/_kbd?key=0x1970" target="kbd-sink">P</a>
+          <a class="kb-key" href="/_kbd?key=0x1E61" target="kbd-sink">A</a>
+          <a class="kb-key" href="/_kbd?key=0x1F73" target="kbd-sink">S</a>
+          <a class="kb-key" href="/_kbd?key=0x2064" target="kbd-sink">D</a>
+          <a class="kb-key" href="/_kbd?key=0x2166" target="kbd-sink">F</a>
+          <a class="kb-key" href="/_kbd?key=0x2267" target="kbd-sink">G</a>
+          <a class="kb-key" href="/_kbd?key=0x2368" target="kbd-sink">H</a>
+          <a class="kb-key" href="/_kbd?key=0x246A" target="kbd-sink">J</a>
+          <a class="kb-key" href="/_kbd?key=0x256B" target="kbd-sink">K</a>
+          <a class="kb-key" href="/_kbd?key=0x266C" target="kbd-sink">L</a>
+          <a class="kb-key kb-enter" href="/_kbd?key=0x1C0D" target="kbd-sink">Enter</a>
+          <a class="kb-key" href="/_kbd?key=0x2C7A" target="kbd-sink">Z</a>
+          <a class="kb-key" href="/_kbd?key=0x2D78" target="kbd-sink">X</a>
+          <a class="kb-key" href="/_kbd?key=0x2E63" target="kbd-sink">C</a>
+          <a class="kb-key" href="/_kbd?key=0x2F76" target="kbd-sink">V</a>
+          <a class="kb-key" href="/_kbd?key=0x3062" target="kbd-sink">B</a>
+          <a class="kb-key" href="/_kbd?key=0x316E" target="kbd-sink">N</a>
+          <a class="kb-key" href="/_kbd?key=0x326D" target="kbd-sink">M</a>
+          <a class="kb-key" href="/_kbd?key=0x332C" target="kbd-sink">,</a>
+          <a class="kb-key" href="/_kbd?key=0x342E" target="kbd-sink">.</a>
+          <a class="kb-key" href="/_kbd?key=0x352F" target="kbd-sink">/</a>
+          <a class="kb-key kb-space" href="/_kbd?key=0x3920" target="kbd-sink">&#x2423;</a>
         </div>
         <div class="kb-right-stack">
           <div class="kb-modifiers">
-            <button class="kb-key" data-key="0x011B">Esc</button><button class="kb-key" data-key="0x0F09">Tab</button><button class="kb-key" data-key="0x0E08">Bksp</button>
+            <a class="kb-key" href="/_kbd?key=0x011B" target="kbd-sink">Esc</a>
+            <a class="kb-key" href="/_kbd?key=0x0F09" target="kbd-sink">Tab</a>
+            <a class="kb-key" href="/_kbd?key=0x0E08" target="kbd-sink">Bksp</a>
           </div>
           <div class="kb-arrows">
-            <button class="kb-key kb-arrow kb-up"    data-key="0x4800">&#x2191;</button>
-            <button class="kb-key kb-arrow kb-left"  data-key="0x4B00">&#x2190;</button>
-            <button class="kb-key kb-arrow kb-down"  data-key="0x5000">&#x2193;</button>
-            <button class="kb-key kb-arrow kb-right" data-key="0x4D00">&#x2192;</button>
+            <a class="kb-key kb-arrow kb-up"    href="/_kbd?key=0x4800" target="kbd-sink">&#x2191;</a>
+            <a class="kb-key kb-arrow kb-left"  href="/_kbd?key=0x4B00" target="kbd-sink">&#x2190;</a>
+            <a class="kb-key kb-arrow kb-down"  href="/_kbd?key=0x5000" target="kbd-sink">&#x2193;</a>
+            <a class="kb-key kb-arrow kb-right" href="/_kbd?key=0x4D00" target="kbd-sink">&#x2192;</a>
           </div>
         </div>
       </div>
     </div>
   </div>
-
-  <script>
-    const worker = new Worker('/calcite/calcite-worker.js', { type: 'module' });
-    const status = document.getElementById('status');
-    const output = document.getElementById('output');
-    const canvas = document.getElementById('screen-canvas');
-    const ctx = canvas.getContext('2d');
-    const stats = document.getElementById('stats');
-    const warningsEl = document.getElementById('warnings');
-
-    // Diagnostic warnings — each (kind, value) shown once.
-    const shownWarnings = new Set();
-    function showWarning(kind, value, html, consoleMsg) {
-      const key = `${kind}:${value}`;
-      if (shownWarnings.has(key)) return;
-      shownWarnings.add(key);
-      const div = document.createElement('div');
-      div.className = 'warning';
-      div.innerHTML = html;
-      warningsEl.appendChild(div);
-      console.error('[CSS-DOS]', consoleMsg);
-    }
-    const VIDEO_MODE_NAMES = {
-      0x00: 'CGA 40×25 text (mono)',
-      0x01: 'CGA 40×25 text (color)',
-      0x02: 'CGA 80×25 text (mono)',
-      0x03: 'CGA 80×25 text (color)',
-      0x04: 'CGA 320×200×4',
-      0x05: 'CGA 320×200×4 (mono)',
-      0x06: 'CGA 640×200×2',
-      0x07: 'MDA/Hercules 80×25 mono text',
-      0x0D: 'EGA 320×200×16 (planar)',
-      0x0E: 'EGA 640×200×16 (planar)',
-      0x0F: 'EGA 640×350 mono (planar)',
-      0x10: 'EGA 640×350×16 (planar)',
-      0x11: 'VGA 640×480×2',
-      0x12: 'VGA 640×480×16 (planar)',
-      0x13: 'VGA 320×200×256 (Mode 13h)',
-    };
-    function videoModeName(m) {
-      return VIDEO_MODE_NAMES[m] || `unknown mode 0x${m.toString(16).padStart(2, '0').toUpperCase()}`;
-    }
-    const REAL_8086_HZ = 4_772_727;
-    // VGA 70 Hz vsync from the 4.77 MHz timebase. Matches the kiln-side
-    // 0x3DA decode so the player paints on frame boundaries the program
-    // also observes via the vsync port.
-    const CYCLES_PER_FRAME = 68_182;
-
-    function formatHz(hz) {
-      if (hz >= 1_000_000) return (hz / 1_000_000).toFixed(2) + ' MHz';
-      if (hz >= 1_000)     return (hz / 1_000).toFixed(1) + ' KHz';
-      return hz.toFixed(0) + ' Hz';
-    }
-
-    // --- vsync paint mode ---
-    // See VSYNC-PLAN.md. Three modes:
-    //   sim:   paint on simulated 70 Hz vsync (cycleCount crosses CYCLES_PER_FRAME)
-    //   wall:  paint on real 70 Hz wall clock (~14.3 ms between paints)
-    //   turbo: paint every worker batch (previous behaviour — max visibility)
-    // URL `?vsync=sim|wall|turbo` overrides the default. Default is sim.
-    const VSYNC_MODES = ['sim', 'wall', 'turbo'];
-    const vsyncParam = new URLSearchParams(location.search).get('vsync');
-    let vsyncMode = VSYNC_MODES.includes(vsyncParam) ? vsyncParam : 'sim';
-    let lastPaintedFrame = -1;   // simulated frame number of the most recent paint
-    let lastPaintWallMs = 0;      // wall-clock timestamp of the most recent paint
-    let wallFrameCount = 0;       // paints over the current stats window (wall fps)
-    let simFrameCount = 0;        // paints over the current stats window (sim fps)
-    let lastStatsWallMs = 0;
-    let currentWallFps = 0;
-    let currentSimFps = 0;
-
-    let running = false;
-    let totalTicks = 0;
-    let totalCycles = 0;
-    let startTime = 0;
-    let engineReady = false;
-    const TARGET_MS = 14;
-    const EMA_ALPHA = 0.3;
-    const MIN_BATCH = 50;
-    const MAX_BATCH = 50000;
-    let batchCount = 200;
-    let batchSentAt = 0;
-    let batchMsEma = TARGET_MS;
-    let video = { text: null, gfx: null };
-    let gfxImageData = null;
-    let currentVideoMode = null;
-
-    function dispatchBatch() {
-      batchCount = Math.max(MIN_BATCH, Math.min(MAX_BATCH, Math.round(batchCount)));
-      batchSentAt = performance.now();
-      worker.postMessage({ type: 'tick', count: batchCount });
-    }
-    function updateBatchSize() {
-      const dt = performance.now() - batchSentAt;
-      if (dt <= 0) return;
-      batchMsEma = batchMsEma * (1 - EMA_ALPHA) + dt * EMA_ALPHA;
-      const ratio = Math.max(0.5, Math.min(2.0, TARGET_MS / batchMsEma));
-      batchCount = batchCount * ratio;
-    }
-
-    worker.onmessage = ({ data }) => {
-      switch (data.type) {
-        case 'ready': {
-          engineReady = true;
-          video = data.video || { text: null, gfx: null };
-          if (video.gfx) {
-            canvas.width = video.gfx.width;
-            canvas.height = video.gfx.height;
-            canvas.style.width = (video.gfx.width * 2) + 'px';
-            canvas.style.height = (video.gfx.height * 2) + 'px';
-            gfxImageData = ctx.createImageData(video.gfx.width, video.gfx.height);
-          }
-          canvas.style.display = 'none';
-          output.style.display = 'none';
-          running = true;
-          startTime = performance.now();
-          totalTicks = 0;
-          totalCycles = 0;
-          status.textContent = 'Running...';
-          dispatchBatch();
-          break;
-        }
-        case 'tick-result': {
-          // Stash last tick-result on window for devtools / automation inspection.
-          window.__lastTick = data;
-          updateBatchSize();
-          totalTicks += data.ticks;
-          totalCycles = data.cycles != null ? data.cycles : totalCycles;
-          const elapsed = (performance.now() - startTime) / 1000;
-          const tps = elapsed > 0 ? totalTicks / elapsed : 0;
-          const cps = elapsed > 0 ? totalCycles / elapsed : 0;
-          const pct = cps / REAL_8086_HZ * 100;
-          stats.textContent = `${totalTicks.toLocaleString()} ticks | ${formatHz(cps)} (${pct.toFixed(1)}% of 4.77 MHz) | ${vsyncMode} ${currentWallFps.toFixed(1)} fps`;
-
-          // Diagnostics. Unknown opcode = effective halt; show immediately.
-          if (data.haltCode) {
-            const op = '0x' + data.haltCode.toString(16).padStart(2, '0').toUpperCase();
-            showWarning(
-              'opcode',
-              data.haltCode,
-              `<strong>Unknown opcode ${op}.</strong> This program uses a CPU instruction CSS-DOS's 8086 core doesn't implement — most likely it requires a 286/386/486. Execution is halted.`,
-              `Unknown opcode ${op} — program requires a CPU newer than 8086.`,
-            );
-          }
-          // Unsupported video mode detection. We get two signals from the
-          // engine:
-          //   - data.videoMode: byte at BDA[0x449] ("what the BIOS says").
-          //   - data.requestedVideoMode: byte at flat 0x04F2. Corduroy is
-          //     supposed to write the pre-remap value here on every INT 10h
-          //     AH=00h call; in practice no BIOS implements this yet, so
-          //     the byte is always 0. Until a BIOS writes it, we treat
-          //     `req === 0` as "no request observed" and skip remap
-          //     warnings — otherwise every program that uses the default
-          //     80×25 text mode (i.e. never calls INT 10h AH=00h) trips
-          //     a spurious "requested 0x00, got 0x03" warning.
-          // Modes the player can render correctly. 0x00 is CGA 40×25
-          // mono text — identical buffer layout to 0x01, so the BIOS
-          // normalises 0x00 → 0x01 and we render them the same way.
-          const SUPPORTED_MODES = new Set([0x01, 0x03, 0x13]);
-          const MODE_ALIASES = { 0x00: 0x01 };
-          const req = data.requestedVideoMode;
-          const got = data.videoMode;
-          // A remap from X to Y is harmless if Y is the player's alias
-          // target for X. Only warn on meaningful mismatches.
-          const reqAlias = MODE_ALIASES[req] ?? req;
-          // Require req to be truthy AND different from got AND not an alias
-          // target. Truthy check (`req`) keeps 0 out — see comment above.
-          if (req && req !== got && reqAlias !== got) {
-            const rHex = '0x' + req.toString(16).padStart(2, '0').toUpperCase();
-            const gHex = '0x' + (got ?? 0).toString(16).padStart(2, '0').toUpperCase();
-            showWarning(
-              'vmode-remap',
-              req,
-              `<strong>Video mode ${rHex}</strong> (${videoModeName(req)}) was remapped to ${gHex} (${videoModeName(got)}) by the BIOS. CSS-DOS currently implements 40×25 text (0x01), 80×25 text (0x03), and VGA Mode 13h (0x13). Rendering will likely be wrong.`,
-              `Program requested video mode ${rHex} (${videoModeName(req)}) — remapped to ${gHex} (${videoModeName(got)}).`,
-            );
-          } else if (got != null && !SUPPORTED_MODES.has(got)) {
-            const gHex = '0x' + got.toString(16).padStart(2, '0').toUpperCase();
-            showWarning(
-              'vmode-unsupported',
-              got,
-              `<strong>Unsupported video mode ${gHex}</strong> (${videoModeName(got)}). The player can render 40×25 text (0x01), 80×25 text (0x03), and VGA Mode 13h (0x13). Output may be blank or garbled.`,
-              `Active video mode ${gHex} (${videoModeName(got)}) is not supported by the player.`,
-            );
-          }
-
-          const isGfxMode = (data.videoMode === 0x13);
-          const wasGfxMode = (currentVideoMode === 0x13);
-          if (currentVideoMode === null || isGfxMode !== wasGfxMode) {
-            if (isGfxMode) { canvas.style.display = ''; output.style.display = 'none'; }
-            else { canvas.style.display = 'none'; output.style.display = ''; output.style.minHeight = '0'; }
-          }
-          // Mode 01h (40×25): scale the text output horizontally so 40
-          // columns fill the same width 80 columns normally would.
-          if (data.videoMode !== currentVideoMode) {
-            if (data.videoMode === 0x01) {
-              output.style.letterSpacing = '1ch';
-            } else {
-              output.style.letterSpacing = '';
-            }
-          }
-          currentVideoMode = data.videoMode;
-
-          // Paint-mode gate (see VSYNC-PLAN.md). Decides whether this
-          // tick-result should trigger a canvas repaint. In all modes we
-          // still *have* the VRAM bytes — we just choose not to blit.
-          //   sim:   paint on simulated 70 Hz (cycleCount frame bucket changed)
-          //   wall:  paint on real 70 Hz (>= 1000/70 ms since last paint)
-          //   turbo: paint every batch
-          const nowWall = performance.now();
-          const simFrame = Math.floor((data.cycles || totalCycles) / CYCLES_PER_FRAME);
-          let shouldPaint;
-          if (vsyncMode === 'turbo') {
-            shouldPaint = true;
-          } else if (vsyncMode === 'wall') {
-            shouldPaint = (nowWall - lastPaintWallMs) >= (1000 / 70);
-          } else { // sim
-            shouldPaint = simFrame !== lastPaintedFrame;
-          }
-          if (shouldPaint && data.gfxBytes && gfxImageData) {
-            const src = new Uint8Array(data.gfxBytes);
-            gfxImageData.data.set(src);
-            ctx.putImageData(gfxImageData, 0, 0);
-            lastPaintedFrame = simFrame;
-            lastPaintWallMs = nowWall;
-            wallFrameCount++;
-            if (simFrame !== lastPaintedFrame || vsyncMode === 'sim') simFrameCount++;
-          }
-          // Update fps readouts once per second of wall clock.
-          if (lastStatsWallMs === 0) lastStatsWallMs = nowWall;
-          const statsDt = nowWall - lastStatsWallMs;
-          if (statsDt >= 1000) {
-            currentWallFps = (wallFrameCount * 1000) / statsDt;
-            currentSimFps = (simFrameCount * 1000) / statsDt;
-            wallFrameCount = 0;
-            simFrameCount = 0;
-            lastStatsWallMs = nowWall;
-          }
-          if (!isGfxMode && data.screen != null) {
-            output.innerHTML = data.screen;
-          } else if (!isGfxMode && !video.text && data.stringProperties) {
-            const parts = [];
-            for (const [_, v] of Object.entries(data.stringProperties)) if (v) parts.push(v);
-            if (parts.length > 0) {
-              const text = parts.join('\n');
-              const lines = text.split('\n');
-              output.textContent = lines.length > 50 ? lines.slice(-50).join('\n') : text;
-              output.scrollTop = output.scrollHeight;
-            }
-          }
-          if (running) dispatchBatch();
-          break;
-        }
-        case 'error':
-          status.textContent = `Error: ${data.message}`;
-          running = false;
-          break;
-      }
-    };
-
-    // Wire the vsync-mode dropdown. Initial value comes from the URL
-    // (?vsync=...) or the default ('sim'). Live changes take effect on
-    // the next tick-result; no restart needed.
-    const vsyncSelect = document.getElementById('vsync-mode');
-    vsyncSelect.value = vsyncMode;
-    vsyncSelect.addEventListener('change', () => {
-      if (VSYNC_MODES.includes(vsyncSelect.value)) {
-        vsyncMode = vsyncSelect.value;
-        // Reset frame accounting so the new mode's next paint isn't
-        // suppressed by stale state from the previous mode.
-        lastPaintedFrame = -1;
-        lastPaintWallMs = 0;
-      }
-    });
-
-    function sendKey(code) {
-      if (!engineReady) return;
-      worker.postMessage({ type: 'keyboard', key: code });
-    }
-    for (const btn of document.querySelectorAll('.kb-key')) {
-      const code = parseInt(btn.dataset.key, 16);
-      btn.addEventListener('pointerdown', (e) => {
-        e.preventDefault();
-        btn.setPointerCapture(e.pointerId);
-        sendKey(code);
-      });
-      btn.addEventListener('contextmenu', (e) => e.preventDefault());
-    }
-
-    // Auto-load /cabinet.css (service worker serves it from Cache Storage).
-    (async () => {
-      try {
-        status.textContent = 'Fetching cabinet...';
-        const r = await fetch('/cabinet.css');
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const css = await r.text();
-        if (!css || css.trim().length === 0) {
-          status.textContent = 'No cabinet in cache. Build one first at /build.html.';
-          return;
-        }
-        status.textContent = `Compiling ${(css.length / 1024 / 1024).toFixed(1)} MB...`;
-        worker.postMessage({ type: 'init', css });
-      } catch (e) {
-        status.textContent = `Error: ${e.message}`;
-      }
-    })();
-  </script>
+  <iframe name="kbd-sink" class="kbd-sink"></iframe>
 </body>
 </html>

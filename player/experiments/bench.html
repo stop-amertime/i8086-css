@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>calcite bench</title>
+  <style>
+    body { font-family: monospace; padding: 16px; background: #111; color: #eee; }
+    #log { white-space: pre; }
+    button { font: inherit; padding: 4px 8px; }
+  </style>
+</head>
+<body>
+  <h3>calcite bench</h3>
+  <p>Isolated test page. No other workers, no SW-driven pipeline,
+  no build UI. Just spawns calcite-img-bench.js, pushes the cached
+  cabinet into it, and logs 10-tick timings.</p>
+  <button id="go">Run bench</button>
+  <div id="log"></div>
+
+  <script>
+    const log = document.getElementById('log');
+    function say(s) { log.textContent += s + '\n'; console.log('[bench-page]', s); }
+
+    document.getElementById('go').addEventListener('click', async () => {
+      log.textContent = '';
+      say('fetching /cabinet.css ...');
+      const r = await fetch('/cabinet.css');
+      if (!r.ok) { say('fetch failed: ' + r.status); return; }
+      const css = await r.text();
+      if (!css || css.trim().length === 0) {
+        say('no cabinet in cache — build one at /build-simple.html first');
+        return;
+      }
+      say('cabinet bytes: ' + css.length);
+      const w = new Worker('/player/calcite-img-bench.js');
+      w.onmessage = (m) => {
+        const d = m.data;
+        if (!d) return;
+        if (d.type === 'log') say(d.msg);
+        else if (d.type === 'ready') {
+          say('engine ready — ticking');
+          w.postMessage({ type: 'tick', count: 50000 });
+        } else if (d.type === 'tick-result') {
+          w.postMessage({ type: 'tick', count: 50000 });
+        }
+      };
+      w.postMessage({ type: 'init', css });
+    });
+  </script>
+</body>
+</html>

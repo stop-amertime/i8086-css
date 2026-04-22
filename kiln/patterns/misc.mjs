@@ -845,6 +845,26 @@ export function emitIO(dispatch) {
   const dacVal     = `--and(${al}, 63)`;
   dispatch.addMemWrite(0xE6, dacAddrImm, dacVal, `OUT 0x3C9: DAC byte (6-bit)`);
   dispatch.addMemWrite(0xEE, dacAddrDx,  dacVal, `OUT DX=0x3C9: DAC byte (6-bit)`);
+
+  // --- CGA palette mode register (port 0x3D9 = 985) ---
+  //
+  // OUT 0x3D9, AL sets the CGA palette register. Layout:
+  //   bits 3..0: border colour in text modes / colour 0 in 320x200 gfx
+  //   bit 4    : intensity (bright vs dark palette)
+  //   bit 5    : palette set select
+  //                palette 0 → green/red/yellow   (colours 1/2/3)
+  //                palette 1 → cyan/magenta/white (colours 1/2/3)
+  //   bits 6..7: ignored
+  //
+  // CSS-DOS doesn't interpret this in CSS — the player-side decoder
+  // consumes the raw byte. We shadow it to linear 0x04F3 (BDA intra-app
+  // area, just past the requested-video-mode shadow at 0x04F2) so
+  // calcite's read_memory_range can surface it to JS.
+  const CGA_PALETTE_REG_ADDR = 0x04F3;
+  const cgaPalAddrImm = `if(style(--q1: 985): ${CGA_PALETTE_REG_ADDR}; else: -1)`;
+  const cgaPalAddrDx  = `if(style(--__1DX: 985): ${CGA_PALETTE_REG_ADDR}; else: -1)`;
+  dispatch.addMemWrite(0xE6, cgaPalAddrImm, al, `OUT 0x3D9: CGA palette mode register`);
+  dispatch.addMemWrite(0xEE, cgaPalAddrDx,  al, `OUT DX=0x3D9: CGA palette mode register`);
 }
 
 /**

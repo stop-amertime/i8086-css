@@ -5,7 +5,7 @@ before starting work and MUST update it before finishing.
 See `PROTOCOL.md` for the entry format. Pre-session-12 entries archived to
 `docs/archive/logbook-sessions-1-12-2026-04.md`.
 
-Last updated: 2026-04-19 (session 13 — autofit memory fix)
+Last updated: 2026-04-22 (session 16 — CGA mode 0x04 end-to-end; shared video-mode table across bridge and worker)
 
 ---
 
@@ -47,7 +47,26 @@ memory. Working hypothesis: file-read fails, eliza hangs pre-input, and
 - Rom-disk window at 0xD0000 dispatching to `--readDiskByte` (LBA at
   linear 0x4F0, NOT BDA_SEG:0x4F0). Calcite's flat-array op makes it fast.
 - Hack path (.COM) fully working. Conformance tests pass: timer-irq,
-  rep-stosb, bcd, keyboard-irq.
+  rep-stosb, bcd, keyboard-irq, vsync-poll.
+- Port 0x3DA (VGA input status 1) decodes to a simulated 70 Hz retrace
+  on the `--__1cycleCount` clock (bit 3 = retrace, bit 0 = display-enable).
+  Player has a paint-mode gate: `sim` (default) paints on simulated
+  retrace edges, `wall` paints on wall-clock 70 Hz, `turbo` paints every
+  batch. Selectable via `?vsync=` URL param or status-bar dropdown.
+- Text modes 0x00–0x03 and MDA 0x07 render pixel-by-pixel on the grid
+  player through the 8×16 VGA ROM font (`player/fonts/vga-8x16.bin`).
+  Worker rasterises 4000-byte text buffer + attribute bytes through the
+  font atlas into the same RGBA buffer Mode 13h uses; grid paints via
+  its palette-slot className path.
+- CGA mode 0x04 (320×200×4) renders end-to-end. INT 10h AH=00h accepts
+  it in Corduroy and Gossamer; kiln decodes `OUT 0x3D9` (CGA palette
+  mode register) and shadows the byte to linear 0x04F3; both renderer
+  paths (`player/calcite-bridge.js` and `calcite/web/calcite-worker.js`)
+  import the same decoder from `calcite/web/video-modes.mjs` via a
+  shared MODE_TABLE. Conformance test: `tests/cga4.test.mjs`.
+- Memory zones (Mode 13h, text, CGA 0x04) are per-cart opt-ins via
+  checkboxes in the builder UI. Default for DOS presets: text+gfx on,
+  cga off. Hack preset picks up the same `memory.{gfx,cgaGfx}` fields.
 
 ## What's next (priority order)
 
@@ -67,11 +86,27 @@ memory. Working hypothesis: file-read fails, eliza hangs pre-input, and
 Parallel/deferred: Muslin still has `int_dummy` for INT 09h and no EOI
 on INT 08h (not blocking Doom); `calcite/run.bat`, `run-js.bat`,
 `serve.mjs` still reference pre-rename paths; aspirational cart-schema
-fields (`disk.size`, `disk.writable`, sub-640K, hack memory knobs) not
-yet plumbed; `ref-corduroy.mjs` not yet written.
+fields (`disk.size`, `disk.writable`, `display.vsyncMode`, sub-640K,
+hack memory knobs) not yet plumbed into the builder/player; bulk-copy
+work delegated to calcite worker (Op::MemoryCopy + runtime REP
+fast-forward for 0xAA/0xAB/0xA4/0xA5); `ref-corduroy.mjs` not yet
+written.
 
 ## Recent decisions
 
+- Video-mode decoder knowledge lives in `calcite/web/video-modes.mjs`
+  (calcite owns the renderer, not CSS-DOS). Both CSS-DOS's bridge worker
+  and calcite's own worker import from it — CSS-DOS reaches the file via
+  the dev-server alias `/calcite/` → `../calcite/web/`. Adding a new
+  video mode is now one MODE_TABLE entry plus (if the decode is novel)
+  one function — not a triple-edit across renderer files. (2026-04-22)
+- Paint cadence is driven by the simulated retrace clock (`sim` mode)
+  by default, not wall-clock or per-batch. Rationale: a program that
+  polls port 0x3DA and waits for retrace gets tear-free frames; a
+  program that doesn't tears. That matches real hardware — the player
+  shouldn't impose a cadence the guest program can't observe. `wall`
+  and `turbo` are available for debugging and for programs that don't
+  poll retrace. (2026-04-20)
 - Default DOS BIOS is Corduroy (C), not Muslin (asm). (2026-04-18)
 - `skipMicrocodeBios: true` on assembly-BIOS builds — unconditional
   0xD6 handler registration collided with 53 x 0xD6 bytes in the
@@ -84,7 +119,50 @@ yet plumbed; `ref-corduroy.mjs` not yet written.
 
 ## Uncommitted work
 
-**CSS-DOS:** none from session 12.
+**CSS-DOS (session 16):**
+- `bios/corduroy/handlers.asm` + `bios/gossamer/gossamer.asm` — INT 10h
+  AH=00h accepts mode 0x04; Corduroy also shadows the raw requested mode
+  byte to linear 0x04F2. CGA clear loops zero the 16 KB aperture via
+  REP STOSW.
+- `kiln/patterns/misc.mjs` — port 0x3D9 decode on OUT 0xE6/0xEE,
+  shadowing AL to linear 0x04F3.
+- `kiln/memory.mjs` — `comMemoryZones` now accepts a `prune` object like
+  `dosMemoryZones`; hack carts get the CGA aperture + Mode 13h on opt-in.
+- `builder/stages/kiln.mjs` — plumbs `manifest.memory.{gfx,cgaGfx}`
+  through the hack path.
+- `calcite/web/video-modes.mjs` (NEW) — canonical video-mode table, CGA4
+  decoder, shared text-mode rasteriser. Both CSS-DOS's `calcite-bridge.js`
+  and calcite's own `calcite-worker.js` import from here.
+- `player/calcite-bridge.js` — `maybeEmitFrame()` now dispatches off
+  `pickMode(get_video_mode())`; old `detect_video` region state gone.
+- `calcite/web/calcite-worker.js` — `frame` case refactored around the
+  shared mode table; duplicated rasteriser + palette deleted (~110
+  lines removed).
+- `carts/cga4-stripes/` + `tests/cga4_stripes.asm` — four-band smoke cart.
+- `tests/cga4.test.mjs` — conformance test: greps kiln CSS for the port
+  decode and shadow property, greps BIOS for mode-0x04 branches, runs
+  the decoder against a known pixel pattern.
+- `bios/corduroy/README.md` — documents the new set_mode table.
+
+**CSS-DOS (session 14):**
+- `kiln/patterns/misc.mjs` — port 0x3DA decode on IN opcodes
+  0xE4/0xE5/0xEC/0xED (constants CYCLES_PER_FRAME=68182,
+  RETRACE_CYCLES=3409).
+- `player/calcite.html` — vsync mode parsing (`?vsync=...`), paint-mode
+  gate in the render loop, status-bar dropdown.
+- `tests/vsync-poll.asm` + `carts/vsync-poll/program.json` — smoke
+  cart that reads 0x3DA via both IN forms.
+- `tests/vsync-poll.test.mjs` — conformance test (builds the cart,
+  greps CSS for the decode, re-derives the bit math in JS).
+- `program.schema.json` + `docs/cart-format.md` — `display.vsyncMode`
+  schema field (aspirational; not consumed by builder yet).
+- `web/scripts/dev.mjs` — dev-server REPL with status/reset/clear
+  commands + `_status` / `_reset` / `_clear` HTTP routes.
+- `web/site/assets/build.js` — autorun dropdown default no longer
+  sticks to COMMAND.COM when a user file is uploaded.
+- `web/prebake/*.meta.json` — regenerated after schema + kiln changes.
+
+**CSS-DOS (earlier, still uncommitted):** none.
 
 **Calcite (sibling):**
 - `/run-until` endpoint in `crates/calcite-debugger/src/main.rs`
@@ -92,6 +170,14 @@ yet plumbed; `ref-corduroy.mjs` not yet written.
   `int_num`, `property_equals`, `property_changes`, `mem_byte_equals`.
 - Session-11d launcher wiring (`run-web.bat` → `builder/build.mjs`).
 - Flat-array dispatch op wiring from session 10 + calc-cli menu rewrite.
+- **Landed (session 14):** `Op::MemoryCopy` mirror of `Op::MemoryFill`
+  and runtime REP fast-forward for 0xAA/0xAB/0xA4/0xA5 (STOSB/STOSW/
+  MOVSB/MOVSW). Commits `4b12ba8`, `de740ea`, `7372e32`, `4472e60` on
+  calcite main. Kiln is unchanged — initial misdiagnosis that kiln's
+  `repIP()` was dropping the outer `+ prefixLen` wrapper was caused by
+  reading a stale April-13 `tests/rep-stosb.css`. Current kiln output
+  is correct. Refreshed the stale cabinet at
+  `tests/rep-stosb.css` so future readers don't repeat the mistake.
 
 ---
 
@@ -100,6 +186,278 @@ yet plumbed; `ref-corduroy.mjs` not yet written.
 Newest first. See `PROTOCOL.md` for format. Pre-session-12 history is
 archived at `docs/archive/logbook-sessions-1-12-2026-04.md`; one-line
 summaries below.
+
+### 2026-04-22 — Session 16: CGA mode 0x04 end-to-end + shared mode table
+
+**What:** Implemented CGA mode 0x04 (320×200, 4 colours, 2 bpp, even/odd
+scanline interleave) end-to-end. While there, factored the video-mode
+routing out of both renderer workers into a single shared module that
+both consume.
+
+Implementation:
+- BIOS (`bios/corduroy/handlers.asm`, `bios/gossamer/gossamer.asm`):
+  `INT 10h AH=00h` now accepts 0x04 alongside 0x01/0x03/0x13. On entry
+  it stores the raw requested mode byte to linear 0x04F2 (previously
+  the `get_requested_video_mode` API was wired on the calcite side but
+  nothing populated that byte — fixed). The 0x04 path clears the 16 KB
+  aperture at 0xB8000 via REP STOSW so calcite's bulk-fill op batches
+  the init.
+- Kiln (`kiln/patterns/misc.mjs`): `OUT 0x3D9` (CGA palette mode
+  register) on 0xE6/0xEE opcodes shadows AL to linear 0x04F3 via the
+  existing `addMemWrite` pattern. No CSS-side interpretation of the
+  bits — the renderer reads the raw byte and resolves palette + bg + bank.
+- Builder (`builder/stages/kiln.mjs`, `kiln/memory.mjs`): hack carts
+  gained the same `manifest.memory.{gfx,cgaGfx}` opt-ins the DOS path
+  already had; `comMemoryZones` now takes a `prune` object with the
+  same "skip this zone" convention as `dosMemoryZones`.
+- Renderer (`calcite/web/video-modes.mjs`, new): owns MODE_TABLE,
+  `pickMode()`, `decodeCga4()`, `rasteriseText()`, the VGA 16-colour
+  palette, and `CYCLES_PER_FRAME`. The CGA 0x04 decoder handles 2 bpp
+  MSB-first packing and the even/odd plane split at 0x0000/0x2000,
+  plus palette-bank selection from the 0x04F3 shadow byte.
+- `player/calcite-bridge.js` (the default player's bridge): dropped
+  the `isGfxMode === 0x13` binary check and the old `videoRegions`
+  state that tracked what `detect_video()` found at compile time. Now
+  dispatches per-frame on `pickMode(get_video_mode())`. `maybeEmitFrame`
+  branches on `mode.kind`: `mode13`/`text`/`cga4`.
+- `calcite/web/calcite-worker.js` (grid/canvas players): same table-
+  driven refactor. Deleted ~110 lines of duplicated rasteriser + VGA
+  palette; now imports from the shared module. Also fixed a leftover
+  `videoRegions.gfx = {…}` assignment in `setFramebufferSAB` that
+  referenced a variable the refactor removed.
+- `carts/cga4-stripes/` (new smoke cart): .COM sets mode 0x04, writes
+  palette reg 0x30 (palette 1 + intensity), paints four horizontal
+  bands of colours 0..3 via REP STOSW. Purpose-built so a working
+  decoder shows black / bright cyan / bright magenta / white.
+- `tests/cga4.test.mjs` (new conformance): 18 checks covering kiln
+  port-decode emit, @property shadow at 0x04F3, CGA aperture bounds,
+  BIOS mode-branch presence, and the JS decoder against a known
+  pixel pattern.
+
+Verified in browser via the preview server:
+- Direct decoder test (`tmp/cga4-verify.html`) — hand-built VRAM,
+  decoder output sampled at canvas row centres, all four bands exact.
+- End-to-end through CSS-DOS's `calcite-bridge.js` path
+  (`tmp/cga4-integration.html`) — fetched 13.3 MB cabinet, compiled
+  via WASM engine, ran 400k ticks, read back BDA 0x0449 = 0x04 and
+  0x04F3 = 0x30, ran the decoder, all four bands exact.
+- End-to-end through calcite's `calcite-worker.js` path
+  (`tmp/cga4-worker-integration.html`) — worker's table-driven
+  dispatch picked the cga4 branch, shipped pixels via the
+  transferable-buffer path, canvas samples matched.
+- Text-mode regression smoke (`tmp/text-worker-integration.html`) —
+  hello-text cart still rasterises through the worker's text path
+  after removing the binary text/13h split.
+
+**Why:** User asked for CGA 0x04 and flagged the older pre-pixel-mode
+text rendering as tech debt. The immediate need is the CGA support;
+the structural need is to stop having to touch three files in two
+repos every time a new video mode lands. Before this session the same
+VGA palette constant was declared in `calcite-bridge.js`, `calcite-
+worker.js`, and `calcite-core/src/state.rs`; the text rasteriser was
+near-identical in bridge and worker; the mode-select logic was
+hand-coded `(mode === 0x13) ? ... : ...` in two places. Adding EGA
+planar or Mode-X next would have multiplied that. Now there's one
+table, one decoder per kind, and two thin dispatchers.
+
+**Key finding:** The shared-module contract that makes this work is
+the dev server's `/calcite/` alias, which already existed for loading
+the WASM pkg (`/calcite/pkg/calcite_wasm.js`). Calcite owns the web
+renderer — CSS-DOS is a consumer of it, reached through the alias.
+Both `calcite-worker.js` (relative `./video-modes.mjs`) and CSS-DOS's
+`calcite-bridge.js` (absolute `/calcite/video-modes.mjs`) point at
+the same file. If the alias is misconfigured, the import 404s loudly
+— no silent rendering-is-wrong failure mode.
+
+Second finding: `get_requested_video_mode()` in calcite-wasm had been
+shipped but nothing in CSS-DOS wrote to the 0x04F2 shadow. The
+"unsupported mode" warnings the players show were never actually
+seeing the raw request — they were comparing the mode byte to itself.
+Wiring the BIOS to populate 0x04F2 brings that API to life.
+
+**Blocked on:** Nothing — checkpoint complete. Next steps: the
+hack-path gossamer now accepts 0x04 but the README and docs haven't
+called out that it shares the Corduroy table; and `calcite-canvas.html`
+/ `grid.html` / `grid2.html` still hold their own local `MODE_GEOMETRY`
+tables that duplicate MODE_TABLE. Those are cosmetic — the worker is
+the source of truth for rendering decisions. Follow-up cleanup, not
+blocking.
+
+---
+
+### 2026-04-21 — Session 15: pixel-canvas text modes + memory-zone UI
+
+**What:** Three connected changes that together turn text modes and CGA
+0x04 into first-class citizens in the grid player. Text modes now
+rasterise through a real 8×16 VGA ROM font onto the same pixel grid
+Mode 13h uses — no more HTML-text shim. Memory zones are now per-cart
+opt-ins via the builder UI so carts that don't need (say) the 64 KB
+Mode 13h buffer or the 4 KB text buffer stop paying for them in
+cabinet bytes.
+
+Checkpoint 1 (schema + kiln + builder + UI):
+- `program.schema.json`: `memory.cgaGfx: boolean` added. `memory.gfx`
+  and `memory.textVga` descriptions now cite byte costs.
+- `kiln/memory.mjs`: `dosMemoryZones` emits the 16 KB CGA aperture at
+  `0xB8000–0xBC000` when enabled. Overlap with the 4 KB text zone is
+  handled by `buildAddressSet`'s dedup — enabling both costs only the
+  text-plus-extension bytes, matching real CGA hardware.
+- `builder/stages/kiln.mjs`: `prune.cgaGfx` plumbed (opt-in).
+- `builder/presets/*.json`: all three have `cgaGfx: false` explicit.
+- `web/site/build-simple.html`: new "Video:" row with three checkboxes.
+- `web/site/assets/build.js`: checkboxes override `manifest.memory.*`
+  per build. Row hidden on hack preset (which stays text-only).
+- Verified by building a tiny DOS cart three times with different
+  combos and grep'ing the resulting cabinet for zone boundary
+  properties — all three shapes match the expected address ranges.
+
+Checkpoint 2 (pixel-canvas text modes):
+- `player/fonts/vga-8x16.bin`: 4096-byte IBM VGA 8×16 ROM font fetched
+  from github.com/spacerace/romfont (public-domain VGA BIOS fonts). One
+  glyph = 16 bytes, bit 7 = leftmost pixel. Verified by inspecting the
+  `A` glyph at offset 0x410 — classic tall-A bitmap.
+- `calcite/crates/calcite-{core,wasm}`: new `read_memory_range(addr, len)`
+  WASM method that returns raw bytes. Doesn't interpret them — that
+  respects calcite's "no x86 knowledge" rule. Used by the worker to
+  fetch char+attr pairs from text VRAM.
+- `calcite/web/calcite-worker.js`: loads the font via a new `setFont`
+  message. Each text-mode tick, reads `width*height*2` bytes via
+  `read_memory_range`, rasterises through the font atlas into an RGBA
+  framebuffer, and ships it out either through the SAB (cross-origin
+  isolated) or as a transferable ArrayBuffer (fallback — used when the
+  page isn't COI-isolated, e.g. some headless browsers). Attribute byte
+  drives fg/bg through the standard 16-color VGA palette.
+- `player/grid.html`: fetches the font at startup, sends `setFont` to
+  worker. On each mode change, builds (or rebuilds) the pixel grid at
+  the right size — 640×400 for 80×25 text, 320×400 for 40×25, 320×200
+  for Mode 13h. Grid's paint loop is unchanged: text-mode RGBA and
+  Mode 13h RGBA hit the same palette-slot + className path.
+- Verified end-to-end in the browser. Booted a DOS cart (KERNEL.SYS +
+  config), saw "Enhanced DR-DOS kernel 20250427..." rendered with real
+  VGA glyph shapes — tildes, slashes, chunky bitmap ascenders. 45% of
+  real 8086 speed.
+
+**Why:** User wanted consistent pixel-based rendering across all video
+modes instead of HTML-text for text modes and `putImageData` for 13h.
+Also pushed back on the original proposal to unconditionally allocate
+all VRAM zones — CSS-DOS pays per-byte CSS properties for every byte of
+guest RAM, so unused VRAM is real cost, not notional. Now users only
+pay for modes they'll actually use.
+
+**Key finding:** The preview browser (automation Chrome) doesn't get
+cross-origin isolation even when headers are set, so the SAB path I
+initially relied on for text rasterisation wouldn't trigger. Adding the
+transferable-ArrayBuffer fallback made the feature work everywhere and
+cost nothing — Mode 13h already had the same fallback. Lesson for
+future renderer work: mirror both paths (SAB fast + transferable
+fallback) from the start so verification doesn't depend on COI.
+
+**Blocked on:** Nothing — checkpoint complete. CGA 0x04 is the next
+piece (port 0x3D9 decode in kiln, 2-bpp decoder in the player, test
+cart, Montezuma retest). Not started this session.
+
+**Uncommitted work (in addition to everything at the top of the file):**
+- CSS-DOS: `player/fonts/vga-8x16.bin`, `player/fonts/README.md`,
+  extensive edits to `player/grid.html`, the build-simple.html video
+  row, build.js wiring, schema + preset + kiln memory changes.
+- Calcite: `crates/calcite-wasm/src/lib.rs` (new `read_memory_range`),
+  `web/calcite-worker.js` (font atlas + text-mode rasteriser + SAB
+  geometry tracking + transferable fallback), rebuilt `web/pkg/*`.
+
+---
+
+### 2026-04-20 — Session 14: vsync infrastructure + player paint-mode gate
+
+**What:** User complained Mode 13h "is visibly drawing pixels — you can
+see it scanning." Treated as hardware modelling rather than a perf
+bug. Added port 0x3DA (VGA input status 1) decode in `kiln/patterns/
+misc.mjs` on all four IN forms (0xE4/0xE5/0xEC/0xED): bit 3 = vertical
+retrace, bit 0 = display-enable, both derived from `var(--__1cycleCount)`
+on a 70 Hz cadence (CYCLES_PER_FRAME=68182, RETRACE_CYCLES=3409, per
+the 4.77 MHz 8086 timebase). Reworked `player/calcite.html` to pick
+the paint cadence from `?vsync=sim|wall|turbo` (and a status-bar
+dropdown) instead of unconditionally calling `putImageData`. Added
+`tests/vsync-poll.{asm,com}` + `carts/vsync-poll` + a node conformance
+test `tests/vsync-poll.test.mjs`. Added a dev-server REPL in
+`web/scripts/dev.mjs` for cache-clearing and fixed the autorun
+dropdown's default in `web/site/assets/build.js`. Delegated bulk-copy
+work (Op::MemoryCopy + runtime REP fast-forward) to a calcite worker
+via a self-contained prompt.
+
+**Why:** Real VGA hardware has no paint event — the CRT scans
+continuously, and programs that care about tearing poll 0x3DA and
+wait for retrace. "Scanning" in Mode 13h wasn't a renderer bug, it
+was the player painting at an arbitrary cadence while the guest CPU
+wrote pixels linearly. Exposing the retrace clock to the guest (so
+programs can wait for it) AND tying the player's repaint to the same
+simulated clock turns the scanning artifact into real hardware
+behaviour: tear-free for programs that poll retrace, torn for programs
+that don't.
+
+**Key finding:** The tick-rate metric is misleading when bulk ops are
+folded. Spent significant time chasing a perceived "30% vs 80% speed"
+regression before realising (a) it was a stale WASM cache, not any
+code change, and (b) "speed" in this project means two different
+things — compile time and runtime ticks/sec — and improvements in one
+can look like regressions in the other when total work shrinks.
+Before claiming a slowdown, always ask: is the runtime actually
+slower, or is the tick count just lower because the work got
+vectorised? The cache-clearing REPL in `dev.mjs` exists specifically
+so "stale pkg" is never a plausible cause again.
+
+Secondary finding: the default DOS BIOS stack fix (session 13) for
+Corduroy had shipped but the prebaked `web/prebake/corduroy.bin` was
+from before, causing "BIOS patch: signature 0xBEEF not found" when
+building carts. Running `node web/scripts/prebake.mjs` fixes it;
+the new `reset` REPL command in `dev.mjs` does this automatically.
+
+**Blocked on:** Nothing — checkpoint complete. Calcite-side bulk-copy
+work is out-of-process (delegated); the CSS-side `display.vsyncMode`
+field is declared in the schema but not yet wired into the cabinet
+emit or player default-pick — both follow-ups.
+
+---
+
+### 2026-04-20 — Session 14b: REP fast-forward landed, stale rep-stosb cabinet refreshed
+
+**What:** Calcite-side bulk-copy work (delegated in 14) landed:
+`Op::MemoryCopy` mirror + runtime REP fast-forward for 0xAA/0xAB/0xA4/
+0xA5. User asked to "fix the bug in kiln" that the calcite worker had
+reported in its commit message. Investigated and found no bug. The
+worker had read `tests/rep-stosb.css` (timestamped 2026-04-13) and
+concluded the outer `calc(... + var(--prefixLen))` wrapper was missing
+from the IP dispatch — that wrapper WAS missing in the April-13 file
+but IS present in the current `kiln/emit-css.mjs` output. Regenerated
+the cabinet with `builder/build.mjs` and confirmed variant-A semantics
+(post-tick IP stays at the REP prefix byte during a continuing
+iteration, as `misc.mjs::repIP` documents).
+
+Regenerated the local `tests/rep-stosb.css` (gitignored, not in repo —
+so nothing to commit for the refresh; the bad copy lived in each
+agent's workdir). No kiln or emit-css changes.
+
+Calcite followup commit `4472e60` ("drop variant-B IP detection —
+kiln is not buggy") removed the byte-inspection heuristic I'd
+mistakenly added; fast-forward IP delta simplifies to
+`IP + 1 + prefixLen`.
+
+**Why:** The hidden trap: a test-fixture CSS under version control
+can go stale silently. The calcite worker had no way to know its
+input was old. The defensive fix (variant-detection heuristic) also
+hid the fact that the stale file was producing wrong behaviour in
+Chrome too — a real user running that CSS would see the double-
+prefix-add bug. Refreshing it forces the issue into the open.
+
+**Key finding:** `tests/*.css` is already `.gitignore`d (good — that's
+why the stale copy wasn't tracked). But there's still no signal when a
+local workdir has a stale cabinet that predates a kiln change. Worth
+having the conformance runner auto-regenerate before each test, or at
+least print the source cabinet's mtime alongside the kiln file mtimes.
+Logged here rather than acted on — not in scope for this session.
+
+**Blocked on:** Nothing.
+
+---
 
 ### 2026-04-19 — Session 13: autofit memory fix (Corduroy stack)
 

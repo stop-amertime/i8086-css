@@ -20,6 +20,26 @@ logo before it jumps to the kernel. The modular C layout (separate
 absorb future work (PIT, PIC, real IRQs) more easily than Muslin's
 monolithic assembly.
 
+### Supported video modes (INT 10h AH=00h)
+
+| Mode | Kind | Clear behaviour |
+|---|---|---|
+| 0x00 | CGA 40×25 mono text (remapped to 0x01) | 4 KB text buffer → spaces + black-on-white |
+| 0x01 | CGA 40×25 colour text | 4 KB text buffer → spaces + black-on-white |
+| 0x03 | CGA 80×25 colour text (default) | 4 KB text buffer → spaces + black-on-white |
+| 0x04 | CGA 320×200×4 graphics | 16 KB CGA aperture → 0 |
+| 0x13 | VGA Mode 13h 320×200×256 | 64 KB framebuffer → 0 |
+
+Any other mode byte is silently remapped to 0x03. The raw requested
+byte is shadowed to linear `0x04F2` so the JS renderer can surface
+"unsupported mode" warnings without the BIOS needing to know about
+player-side UI.
+
+CGA mode 0x04 also needs `memory.cgaGfx: true` in the cart manifest so
+the builder emits the 16 KB aperture at `0xB8000–0xBC000`. Programs
+configure the palette via `OUT 0x3D9, AL` — kiln shadows that byte to
+linear `0x04F3` for the renderer to pick up.
+
 ## Files
 
 | File | Role |

@@ -259,9 +259,15 @@ int10h_handler:
     iret
 
 .set_mode:
-    ; Store requested mode in BDA and reset cursor
+    ; Store requested mode in BDA and reset cursor.
+    ; Shadow the raw requested mode to linear 0x04F2 (BDA intra-app area)
+    ; so the player can diagnose "program asked for a mode we remapped".
+    ; Calcite's get_requested_video_mode() reads this byte.
     push di
     push cx
+    xor cx, cx
+    mov ds, cx
+    mov [0x04F2], al
     mov cx, BDA_SEG
     mov ds, cx
     mov byte [video_cur_pos], 0
@@ -269,6 +275,8 @@ int10h_handler:
     ; Only store modes we actually support; map anything else to 0x03.
     cmp al, 0x13
     je .set_mode_store
+    cmp al, 0x04           ; CGA 320x200x4 — 2bpp packed scanline-interleaved
+    je .set_mode_store     ; framebuffer at B8000 (16 KB aperture).
     cmp al, 0x01           ; CGA 40x25 color text — same buffer at B8000,
     je .set_mode_store     ; just a different column stride.
     cmp al, 0x00           ; CGA 40x25 mono text — same layout as 0x01;
@@ -281,6 +289,8 @@ int10h_handler:
     mov [video_mode], al
     cmp al, 0x13
     je .set_mode_13h
+    cmp al, 0x04
+    je .set_mode_04h
     ; --- Text mode: clear 80x25 text buffer at 0xB8000 ---
     mov ax, VGA_SEG
     mov ds, ax
@@ -292,6 +302,19 @@ int10h_handler:
     add di, 2
     dec cx
     jnz .clr_loop
+    jmp short .set_mode_done
+.set_mode_04h:
+    ; --- CGA Mode 04h: clear the 16 KB aperture at 0xB8000 ---
+    ; 320x200 at 2bpp = 16000 bytes of pixels, plus CGA hardware maps the
+    ; full 16 KB window (8000 bytes even scanlines at B8000, 8000 bytes odd
+    ; scanlines at BA000). Zero fills 8 KB words = 8192 iterations.
+    mov ax, VGA_SEG
+    mov es, ax
+    xor di, di
+    mov cx, 8192
+    xor ax, ax
+    cld
+    rep stosw
     jmp short .set_mode_done
 .set_mode_13h:
     ; --- Mode 13h: clear 320x200 framebuffer at 0xA0000 ---

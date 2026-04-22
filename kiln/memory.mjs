@@ -68,14 +68,31 @@ export function buildAddressSet(zones) {
  * Standard memory zones for .COM programs.
  * --mem controls the conventional memory size (program + stack area).
  */
-export function comMemoryZones(programBytes, programOffset, memBytes) {
+export function comMemoryZones(programBytes, programOffset, memBytes, prune = {}) {
   // memBytes = size of conventional memory area starting at 0
-  // (includes IVT + BDA + program + stack)
-  return [
+  // (includes IVT + BDA + program + stack).
+  //
+  // `prune` uses the same "skip this zone" sense as dosMemoryZones.
+  // Hack carts are minimalist by default: only the text VGA buffer and
+  // DAC shadow are included unconditionally. Graphics apertures are
+  // opt-in via `manifest.memory.gfx` / `memory.cgaGfx` in the builder,
+  // which translate to `prune.gfx === false` / `prune.cgaGfx === false`
+  // here.
+  const zones = [
     [0x0000, memBytes],                       // IVT + BDA + program + stack (contiguous)
     [0xB8000, 0xB8FA0],                       // VGA text mode (80x25x2 = 4000 bytes)
     [DAC_LINEAR, DAC_LINEAR + DAC_BYTES],     // VGA DAC palette (out-of-1MB shadow)
   ];
+  if (prune.gfx === false) {
+    // VGA Mode 13h framebuffer (320x200 palette-indexed).
+    zones.push([0xA0000, 0xAFA00]);
+  }
+  if (prune.cgaGfx === false) {
+    // CGA graphics aperture covers mode 0x04 (320x200x4) and 0x06
+    // (640x200x2). Overlaps the text buffer; buildAddressSet dedupes.
+    zones.push([0xB8000, 0xBC000]);
+  }
+  return zones;
 }
 
 /**
@@ -128,6 +145,14 @@ export function dosMemoryZones(programBytes, programOffset, memBytes, embeddedDa
   }
   if (!prune.textVga) {
     zones.push([0xB8000, 0xB8FA0]);         // VGA text mode (80x25x2)
+  }
+  if (!prune.cgaGfx) {
+    // CGA graphics aperture: 16 KB at 0xB8000-0xBC000. Covers modes 0x04
+    // (320x200x4, 2 bpp, even/odd scanline interleave) and 0x06 (640x200x2).
+    // Overlaps the 4 KB text buffer above; buildAddressSet dedupes so
+    // enabling both is free — the bytes literally share storage, which is
+    // also how real CGA hardware behaves.
+    zones.push([0xB8000, 0xBC000]);
   }
 
   // Include embedded data regions (non-disk: e.g. data files placed in memory).

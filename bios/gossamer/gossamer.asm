@@ -170,11 +170,15 @@ int10h_handler:
     ; Only store modes we support; map anything else to 0x03.
     cmp al, 0x13
     je .store_mode
+    cmp al, 0x04           ; CGA 320x200x4 — 16 KB aperture at B8000
+    je .store_mode
     mov al, 0x03
 .store_mode:
     mov [0x0049], al       ; store video_mode in BDA
     cmp al, 0x13
     je .set_mode_13h
+    cmp al, 0x04
+    je .set_mode_04h
     ; --- Text mode clear: 2000 words of space+attr at 0xB8000 ---
     mov ax, 0xB800
     mov ds, ax
@@ -186,6 +190,19 @@ int10h_handler:
     add di, 2
     dec cx
     jnz .clr_loop
+    jmp short .set_mode_done
+.set_mode_04h:
+    ; --- CGA mode 0x04 clear: 16 KB of 0 at B8000 ---
+    mov ax, 0xB800
+    mov ds, ax
+    xor di, di
+    mov cx, 8192
+    xor ax, ax
+.clr04_loop:
+    mov [di], ax           ; DS:DI = B800:offset, word write
+    add di, 2
+    dec cx
+    jnz .clr04_loop
     jmp short .set_mode_done
 .set_mode_13h:
     ; --- Mode 13h clear: 64000 bytes of 0 at 0xA0000 ---

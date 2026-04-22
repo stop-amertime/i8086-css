@@ -6,16 +6,23 @@
 // into any active /_stream/fb multipart responses.
 //
 // This is the "output device" side of /player/calcite.html: when that
-// page opens its <img> fetches /_stream/fb and the SW starts piping
-// frames it's been getting from us.
+// page opens its <img> fetches /_stream/fb 
 //
 // Lifetime: tied to the page that spawned the bridge. Close that tab
 // and this worker dies; the runner freezes on its last frame.
+//
+// The video-mode decoder/rasteriser module `video-modes.mjs` lives in
+// the sibling calcite repo (next to calcite-worker.js, which imports it
+// via `./video-modes.mjs`). CSS-DOS reaches it via the dev-server alias
+// `/calcite/` → `../calcite/web/` declared in web/scripts/dev.mjs. If
+// that alias is absent the import fails at boot with 404 — not a silent
+// breakage. The wasm module is reached the same way at `/calcite/pkg/`.
+
+import { pickMode, decodeCga4, rasteriseText } from '/calcite/video-modes.mjs';
 
 let initCalcite, CalciteEngine;
 
 let engine = null;
-let videoRegions = { text: null, gfx: null };
 let fontAtlas = null;
 let swPort = null;
 let cachedCss = null;     // the cabinet CSS, read once at boot
@@ -34,23 +41,12 @@ const MAX_BATCH = 50000;
 let batchCount = 200;
 let batchMsEma = TARGET_MS;
 
-// VGA 16-color palette for text-mode rasterisation (matches
-// calcite-worker.js). Duplicated here to keep this worker self-contained.
-const VGA_PALETTE_U32 = new Uint32Array([
-  0xFF000000, 0xFFAA0000, 0xFF00AA00, 0xFFAAAA00,
-  0xFF0000AA, 0xFFAA00AA, 0xFF0055AA, 0xFFAAAAAA,
-  0xFF555555, 0xFFFF5555, 0xFF55FF55, 0xFFFFFF55,
-  0xFF5555FF, 0xFFFF55FF, 0xFF55FFFF, 0xFFFFFFFF,
-]);
-
-const CYCLES_PER_FRAME = 68182; // 70 Hz at 4.77 MHz 8086 timebase
-
 // ---------- Bootstrap ----------
 
 // Canary — bump this when you change this file so you can confirm the
 // browser is actually serving the new version. Shows up in every status
 // line so it's impossible to miss in the console.
-const BRIDGE_VERSION = 'v23';
+const BRIDGE_VERSION = 'v24';
 
 async function boot() {
   postStatus(`bridge boot ${BRIDGE_VERSION}`);
@@ -111,8 +107,7 @@ async function compileCabinet() {
     return;
   }
   if (engine && css === cachedCss) {
-    // Already compiled this exact cabinet. Still refresh videoRegions
-    // in case we missed a detect_video() invalidation; cheap.
+    // Already compiled this exact cabinet.
     return;
   }
   cachedCss = css;
@@ -124,15 +119,6 @@ async function compileCabinet() {
   const t0 = performance.now();
   engine = new CalciteEngine(css);
   const compileMs = performance.now() - t0;
-  const videoJson = engine.detect_video();
-  const parsed = JSON.parse(videoJson) || {};
-  videoRegions = {
-    text: parsed.text || null,
-    gfx: parsed.gfx || null,
-  };
-  if (!videoRegions.text && !videoRegions.gfx) {
-    videoRegions.text = { addr: 0xB8000, size: 4000, width: 80, height: 25 };
-  }
   postStatus(`cabinet compiled in ${(compileMs / 1000).toFixed(1)}s (ready)`);
 }
 
@@ -148,15 +134,6 @@ function resetMachine() {
     // newer cabinet has since been built. (Re)compile now.
     if (!cachedCss) return;
     engine = new CalciteEngine(cachedCss);
-    const videoJson = engine.detect_video();
-    const parsed = JSON.parse(videoJson) || {};
-    videoRegions = {
-      text: parsed.text || null,
-      gfx: parsed.gfx || null,
-    };
-    if (!videoRegions.text && !videoRegions.gfx) {
-      videoRegions.text = { addr: 0xB8000, size: 4000, width: 80, height: 25 };
-    }
   } else if (typeof engine.reset === 'function') {
     // Fast path — state-only reset, no recompile.
     engine.reset();
@@ -222,9 +199,9 @@ tickChannel.port2.onmessage = () => tickLoop();
 // allocation + one .set() of the pixels.
 //
 // Why not JPEG/WebP: encoding cost (~20-30 ms) was dominating the pipeline.
-// BMP costs ~0 ms to "encode"; the trade is wire size (~512 KB/frame for
-// 320x200 gfx, ~2 MB for 640x400 text-through-font). The SW→<img> path
-// is entirely in-process so wire size is cheap.
+// BMP costs ~0 ms to "encode"; the trade is wire size (~256 KB/frame for
+// 320x200, ~2 MB for 640x400 text-through-font). The SW→<img> path is
+// entirely in-process so wire size is cheap.
 //
 // Header layout (122 bytes total):
 //   [0..14)   BITMAPFILEHEADER      "BM" + file size + pixel offset
@@ -274,31 +251,24 @@ function buildBmpHeader(w, h) {
 function maybeEmitFrame() {
   if (!swPort) return;
 
-  const mode = engine.get_video_mode();
-  const isGfxMode = mode === 0x13;
-
-  // Fallback: if the program entered Mode 13h but detect_video() didn't
-  // find a gfx region at init (common for hack-preset carts that set the
-  // mode after boot), synthesize the standard Mode 13h geometry here.
-  if (isGfxMode && !videoRegions.gfx) {
-    videoRegions.gfx = { addr: 0xA0000, size: 320*200, width: 320, height: 200 };
-  }
-
+  const modeByte = engine.get_video_mode();
+  const mode = pickMode(modeByte);
+  if (!mode) return;       // unsupported mode — nothing to render
+  const w = mode.width, h = mode.height;
   let rgba = null;
-  let w = 0, h = 0;
-  if (isGfxMode && videoRegions.gfx) {
-    const g = videoRegions.gfx;
-    rgba = engine.read_framebuffer_rgba(g.addr, g.width, g.height);
-    w = g.width; h = g.height;
-  } else if (!isGfxMode && videoRegions.text && fontAtlas) {
-    const t = videoRegions.text;
-    w = t.width * 8;
-    h = t.height * 16;
-    const vram = engine.read_memory_range(t.addr, t.width * t.height * 2);
+  if (mode.kind === 'mode13') {
+    rgba = engine.read_framebuffer_rgba(mode.vramAddr, w, h);
+  } else if (mode.kind === 'cga4') {
+    const vram = engine.read_memory_range(mode.vramAddr, 0x4000);
+    const palReg = engine.read_memory_range(0x04F3, 1)[0] | 0;
+    rgba = new Uint8Array(w * h * 4);
+    decodeCga4(vram, palReg, rgba);
+  } else if (mode.kind === 'text' && fontAtlas) {
+    const vram = engine.read_memory_range(mode.vramAddr, mode.textCols * mode.textRows * 2);
     rgba = new Uint8Array(w * h * 4);
     const cycles = engine.get_state_var('cycleCount') >>> 0;
     const bda = engine.read_memory_range(0x0450, 2);
-    rasteriseText(vram, t.width, t.height, rgba, {
+    rasteriseText(vram, mode.textCols, mode.textRows, rgba, fontAtlas, {
       cycleCount: cycles,
       cursorCol: bda[0],
       cursorRow: bda[1],
@@ -366,59 +336,6 @@ function startStatsInterval() {
       } catch {}
     }
   }, 1000);
-}
-
-// ---------- Text rasteriser (identical to calcite-worker.js) ----------
-
-function rasteriseText(buf, cols, rows, outRGBA, opts) {
-  const pxW = cols * 8;
-  const out32 = new Uint32Array(outRGBA.buffer, outRGBA.byteOffset, (outRGBA.byteLength / 4) | 0);
-  const frame = Math.floor((opts?.cycleCount || 0) / CYCLES_PER_FRAME);
-  const attrBlinkOn  = (frame & 16) === 0;
-  const cursorBlinkOn = (frame & 8) === 0;
-  const blinkMode = opts?.blinkMode !== false;
-  for (let cy = 0; cy < rows; cy++) {
-    for (let cx = 0; cx < cols; cx++) {
-      const off = (cy * cols + cx) * 2;
-      const ch = buf[off];
-      const attr = buf[off + 1];
-      let fgIdx = attr & 0x0F;
-      let bgIdx = (attr >> 4) & 0x0F;
-      if (blinkMode && (attr & 0x80)) {
-        bgIdx &= 0x07;
-        if (!attrBlinkOn) fgIdx = bgIdx;
-      }
-      const fg = VGA_PALETTE_U32[fgIdx];
-      const bg = VGA_PALETTE_U32[bgIdx];
-      const glyphBase = ch * 16;
-      const pxX = cx * 8;
-      for (let gy = 0; gy < 16; gy++) {
-        const row = fontAtlas[glyphBase + gy];
-        const outRow = (cy * 16 + gy) * pxW + pxX;
-        out32[outRow + 0] = (row & 0x80) ? fg : bg;
-        out32[outRow + 1] = (row & 0x40) ? fg : bg;
-        out32[outRow + 2] = (row & 0x20) ? fg : bg;
-        out32[outRow + 3] = (row & 0x10) ? fg : bg;
-        out32[outRow + 4] = (row & 0x08) ? fg : bg;
-        out32[outRow + 5] = (row & 0x04) ? fg : bg;
-        out32[outRow + 6] = (row & 0x02) ? fg : bg;
-        out32[outRow + 7] = (row & 0x01) ? fg : bg;
-      }
-    }
-  }
-  if (opts?.cursorEnabled && cursorBlinkOn
-      && opts.cursorRow >= 0 && opts.cursorRow < rows
-      && opts.cursorCol >= 0 && opts.cursorCol < cols) {
-    const cx = opts.cursorCol, cy = opts.cursorRow;
-    const attr = buf[(cy * cols + cx) * 2 + 1];
-    const cursorColor = VGA_PALETTE_U32[attr & 0x0F];
-    const startScan = 13, endScan = 14;
-    const pxX = cx * 8;
-    for (let gy = startScan; gy <= endScan; gy++) {
-      const outRow = (cy * 16 + gy) * pxW + pxX;
-      for (let k = 0; k < 8; k++) out32[outRow + k] = cursorColor;
-    }
-  }
 }
 
 // ---------- Main-thread messages ----------

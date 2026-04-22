@@ -217,6 +217,10 @@ int10h_handler:
     jne .not_write_char_only
     jmp .write_char_only
 .not_write_char_only:
+    cmp ah, 0x0B
+    jne .not_set_palette
+    jmp .set_palette
+.not_set_palette:
     cmp ah, 0x1A
     jne .int10_done
     jmp .get_display_combo
@@ -287,6 +291,42 @@ int10h_handler:
     mov al, 0x03
 .set_mode_store:
     mov [video_mode], al
+    ; Update BDA geometry fields so programs that poll them (instead of
+    ; calling AH=0Fh) see the real geometry of the mode we actually set.
+    ; Fields written: video_columns (word, 0x4A), video_page_size (word,
+    ; 0x4C), video_rows (byte, 0x84), video_char_height (word, 0x85).
+    ; DS = BDA_SEG still.
+    cmp al, 0x13
+    je .bda_mode_13h
+    cmp al, 0x04
+    je .bda_mode_04h
+    cmp al, 0x01
+    je .bda_mode_01h
+    ; fall through for text 0x03 / default
+.bda_mode_03h:
+    mov word [video_columns],    80
+    mov word [video_page_size],  0x1000   ; 4 KB per text page
+    mov byte [video_rows],       24
+    mov word [video_char_height], 16      ; VGA 8×16 glyphs
+    jmp short .bda_done
+.bda_mode_01h:
+    mov word [video_columns],    40
+    mov word [video_page_size],  0x0800   ; 2 KB per text page
+    mov byte [video_rows],       24
+    mov word [video_char_height], 16
+    jmp short .bda_done
+.bda_mode_04h:
+    mov word [video_columns],    40       ; CGA 320x200 = 40 char cells wide
+    mov word [video_page_size],  0x4000   ; 16 KB graphics page
+    mov byte [video_rows],       24
+    mov word [video_char_height], 8       ; CGA graphics glyph cell = 8px
+    jmp short .bda_done
+.bda_mode_13h:
+    mov word [video_columns],    40       ; Mode 13h = 40 cells wide
+    mov word [video_page_size],  0x4000   ; 16 KB graphics page (rounded)
+    mov byte [video_rows],       24
+    mov word [video_char_height], 8
+.bda_done:
     cmp al, 0x13
     je .set_mode_13h
     cmp al, 0x04
@@ -499,6 +539,46 @@ int10h_handler:
     pop cx
     pop dx
     pop di
+    pop bp
+    pop es
+    pop ds
+    iret
+
+.set_palette:
+    ; AH=0Bh: Set background / palette (CGA graphics modes).
+    ;   BH=00 → BL = border/background colour (bits 3..0) + intensity (bit 4)
+    ;   BH=01 → BL bit 0 = palette set (0 or 1)
+    ; We shadow the combined result to linear 0x04F3 in the same byte layout
+    ; that OUT 0x3D9 uses, so the renderer's cga4 decoder sees it.
+    push ax
+    push bx
+    push cx
+    xor cx, cx
+    mov ds, cx              ; DS=0 for [0x04F3]
+    mov al, [0x04F3]        ; current shadow
+    cmp bh, 0x01
+    je .sp_palette_select
+    ; BH=00: set bg colour + intensity. Keep bit 5 (palette set).
+    and al, 0x20            ; preserve palette-set bit
+    and bl, 0x1F            ; BL bits 0..4 = colour + intensity
+    or  al, bl
+    jmp short .sp_store
+.sp_palette_select:
+    ; BH=01: set palette bit (bit 5). Preserve bits 0..4.
+    and al, 0x1F
+    mov cl, bl
+    and cl, 0x01
+    shl cl, 1
+    shl cl, 1
+    shl cl, 1
+    shl cl, 1
+    shl cl, 1               ; CL = (BL & 1) << 5
+    or  al, cl
+.sp_store:
+    mov [0x04F3], al
+    pop cx
+    pop bx
+    pop ax
     pop bp
     pop es
     pop ds

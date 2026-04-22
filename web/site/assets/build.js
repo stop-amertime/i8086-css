@@ -57,33 +57,52 @@ function refreshAutorunDropdown() {
   // DOS presets always show the picker (COMMAND.COM is available even
   // without user uploads, since the builder fetches it from /assets/dos/).
   $('autorun-row').hidden = !isDos;
+  // Video row: only shown for DOS presets. Hack gets text-only (matches
+  // the hack preset's memory defaults and the fact that hack.json has
+  // always been text-only — no per-build override exposed). Reset the
+  // boxes to the current preset's defaults each time the preset changes.
+  const videoRow = $('video-row');
+  if (videoRow) {
+    videoRow.hidden = !isDos;
+    $('mem-textVga').checked = true;
+    $('mem-gfx').checked = isDos;
+    $('mem-cgaGfx').checked = false;
+  }
 
   // Preserve the user's current choice if it's still valid.
   const previous = sel.value;
   sel.innerHTML = '';
-  // Default: no autorun → boot straight to COMMAND.COM prompt (autorun=null).
-  const defaultOpt = document.createElement('option');
-  defaultOpt.value = '';
-  defaultOpt.textContent = '(none — drop to COMMAND.COM prompt)';
-  sel.appendChild(defaultOpt);
 
-  // Always offer COMMAND.COM on DOS presets. floppy-adapter supplies the
-  // bytes from dos/bin/command.com when the cart doesn't include its own.
-  const names = new Set(runnables);
-  if (isDos) names.add('COMMAND.COM');
+  // Ordered list: user-uploaded runnables first (most specific = most
+  // likely the user's actual target), then COMMAND.COM as the fallback.
+  // Deduplicate in case the user uploaded their own COMMAND.COM.
+  const seen = new Set();
+  const ordered = [];
+  for (const n of runnables) {
+    if (!seen.has(n)) { seen.add(n); ordered.push(n); }
+  }
+  if (isDos && !seen.has('COMMAND.COM')) ordered.push('COMMAND.COM');
 
-  for (const n of names) {
+  for (const n of ordered) {
     const opt = document.createElement('option');
     opt.value = n;
     opt.textContent = n;
     sel.appendChild(opt);
   }
 
-  if ([...sel.options].some(o => o.value === previous)) {
-    sel.value = previous;
-  } else {
-    // Default to "drop to prompt" — COMMAND.COM as SHELL= target is opt-in.
-    sel.value = '';
+  // Prefer the first user-runnable (e.g. ROGUE.COM) over a stale
+  // COMMAND.COM selection. Only preserve the previous pick if it was a
+  // real user choice — i.e. not the fallback.
+  const firstUserRunnable = ordered.find(n => n !== 'COMMAND.COM');
+  if (firstUserRunnable) {
+    if (previous && previous !== 'COMMAND.COM' && [...sel.options].some(o => o.value === previous)) {
+      sel.value = previous;
+    } else {
+      sel.value = firstUserRunnable;
+    }
+  } else if (ordered.length > 0) {
+    // No user files uploaded — COMMAND.COM is the only option.
+    sel.value = ordered[0];
   }
 }
 
@@ -162,8 +181,19 @@ $('start').addEventListener('click', async () => {
   const memorySel = $('memory').value;
   // Empty = auto-fit (let the preset's "autofit" default win); otherwise
   // the dropdown value is a preset string the sizes.mjs resolver understands.
-  const extraManifest = memorySel
-    ? { memory: { conventional: memorySel } }
+  // Video checkboxes: on DOS presets, override memory.{textVga,gfx,cgaGfx}.
+  // On hack preset the row is hidden and we leave the preset's defaults
+  // (text-only) alone.
+  const isDos = preset !== 'hack';
+  const memoryOverride = {};
+  if (memorySel) memoryOverride.conventional = memorySel;
+  if (isDos) {
+    memoryOverride.textVga = $('mem-textVga').checked;
+    memoryOverride.gfx     = $('mem-gfx').checked;
+    memoryOverride.cgaGfx  = $('mem-cgaGfx').checked;
+  }
+  const extraManifest = Object.keys(memoryOverride).length
+    ? { memory: memoryOverride }
     : {};
 
   let blob;
@@ -237,6 +267,7 @@ const PAGE_SIZE = 50 * 1024;
 
 function setupSourceViewer(blob) {
   const pre = $('source-pre');
+  const code = $('source-code');
   const pageNumEl = $('page-num');
   const pageTotalEl = $('page-total');
   const pageBytesEl = $('page-bytes');
@@ -255,7 +286,10 @@ function setupSourceViewer(blob) {
     const start = (clamped - 1) * PAGE_SIZE;
     const end = Math.min(blob.size, start + PAGE_SIZE);
     const text = await blob.slice(start, end).text();
-    pre.textContent = text;
+    code.textContent = text;
+    // Prism.highlightElement replaces the <code>'s textContent with spans.
+    // Safe to call every page change -- it's fast on 50 KB chunks.
+    if (window.Prism) window.Prism.highlightElement(code);
     pageNumEl.textContent = clamped;
     jump.value = clamped;
     pageBytesEl.textContent = `bytes ${start.toLocaleString()}–${(end - 1).toLocaleString()}`;

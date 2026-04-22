@@ -1,6 +1,4 @@
 // Execution engine: clock, double-buffer, store/execute keyframes, HTML wrapper.
-// Based on legacy/base_template.css pattern.
-
 // The 14 CPU registers, in the order used by the 8086.
 // Each has: name, initial value, debug-visible
 export const REGISTERS = [

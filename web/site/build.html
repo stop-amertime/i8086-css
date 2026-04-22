@@ -4,7 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CSS-DOS · build</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <style>
+    /* Self-host JetBrains Mono from jsDelivr so block-drawing glyphs
+       (U+2580-U+259F) load from the font instead of being substituted
+       by the system fallback -- Google Fonts' subsetting drops them. */
+    @font-face {
+      font-family: 'JetBrains Mono';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url('https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@master/fonts/webfonts/JetBrainsMono-Regular.woff2') format('woff2');
+      unicode-range: U+0000-10FFFF;
+    }
+  </style>
   <link rel="stylesheet" href="/assets/site.css">
+  <!-- Prism.js for CSS syntax highlighting in the source viewer.
+       Core + CSS grammar only -- about 8 KB total.
+       Theme is overridden by .source-pre rules in site.css. -->
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.js" data-manual></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-css.min.js"></script>
 </head>
 <body>
   <div class="window">
@@ -96,7 +115,7 @@
             <input id="page-jump" class="field page-jump-input" type="number" min="1" value="1">
             <button id="page-next" class="btn">Next &#187;</button>
           </div>
-          <pre id="source-pre" class="source-pre"></pre>
+          <pre id="source-pre" class="source-pre"><code id="source-code" class="language-css"></code></pre>
         </div>
       </section>
 

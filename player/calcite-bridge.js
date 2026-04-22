@@ -18,7 +18,7 @@
 // that alias is absent the import fails at boot with 404 — not a silent
 // breakage. The wasm module is reached the same way at `/calcite/pkg/`.
 
-import { pickMode, decodeCga4, rasteriseText } from '/calcite/video-modes.mjs';
+import { pickMode, decodeCga4, rasteriseText, modeName } from '/calcite/video-modes.mjs';
 
 let initCalcite, CalciteEngine;
 
@@ -46,7 +46,7 @@ let batchMsEma = TARGET_MS;
 // Canary — bump this when you change this file so you can confirm the
 // browser is actually serving the new version. Shows up in every status
 // line so it's impossible to miss in the console.
-const BRIDGE_VERSION = 'v24';
+const BRIDGE_VERSION = 'v26-modelog';
 
 async function boot() {
   postStatus(`bridge boot ${BRIDGE_VERSION}`);
@@ -248,21 +248,79 @@ function buildBmpHeader(w, h) {
   return bmpCachedHeader;
 }
 
+// Debug ring buffer — accumulates short one-line summaries from
+// maybeEmitFrame and flushes them at ~1 Hz via postStatus so you can
+// see exactly what the bridge decided each frame without flooding.
+let _dbgLast = '';
+let _dbgSame = 0;
+function dbgFrame(line) {
+  if (line === _dbgLast) { _dbgSame++; return; }
+  if (_dbgSame > 0) postStatus(`  (repeated ${_dbgSame}x) ${_dbgLast}`);
+  _dbgSame = 0;
+  _dbgLast = line;
+  postStatus(line);
+}
+
+// Mode-history log. Whenever the active mode, the last-requested mode
+// (0x04F2 shadow, written by corduroy on every INT 10h AH=00h), or the
+// CGA palette register (0x04F3 shadow) changes, emit a one-line trace
+// with the current cycle count. Lets us see exactly what video state the
+// guest program is driving without wiring a full tracer.
+let _lastActiveMode = -1;
+let _lastReqMode = -1;
+let _lastPalReg = -1;
+function traceVideoState(activeMode, reqMode, palReg) {
+  const cycles = engine.get_state_var('cycleCount') >>> 0;
+  if (activeMode !== _lastActiveMode) {
+    const name = modeName(activeMode);
+    postStatus(`[video @cyc ${cycles.toLocaleString()}] active mode → 0x${activeMode.toString(16).padStart(2,'0')} (${name})`);
+    _lastActiveMode = activeMode;
+  }
+  if (reqMode !== _lastReqMode && reqMode !== 0) {
+    const name = modeName(reqMode);
+    const remapped = reqMode !== activeMode ? ` — REMAPPED (active=0x${activeMode.toString(16)})` : '';
+    postStatus(`[video @cyc ${cycles.toLocaleString()}] requested → 0x${reqMode.toString(16).padStart(2,'0')} (${name})${remapped}`);
+    _lastReqMode = reqMode;
+  }
+  if (palReg !== _lastPalReg) {
+    const bg = palReg & 0x0F;
+    const intensity = (palReg >> 4) & 1;
+    const palSet = (palReg >> 5) & 1;
+    postStatus(`[video @cyc ${cycles.toLocaleString()}] pal-reg 0x04F3 → 0x${palReg.toString(16).padStart(2,'0')} (bg=${bg} intensity=${intensity} palette=${palSet})`);
+    _lastPalReg = palReg;
+  }
+}
+
 function maybeEmitFrame() {
   if (!swPort) return;
 
   const modeByte = engine.get_video_mode();
+  const reqMode = engine.get_requested_video_mode ? engine.get_requested_video_mode() : 0;
+  const palReg = engine.read_memory_range(0x04F3, 1)[0] | 0;
+  traceVideoState(modeByte, reqMode, palReg);
+
   const mode = pickMode(modeByte);
-  if (!mode) return;       // unsupported mode — nothing to render
+  if (!mode) {
+    dbgFrame(`frame: mode=0x${modeByte.toString(16)} pickMode=null — skipping`);
+    return;
+  }
   const w = mode.width, h = mode.height;
   let rgba = null;
   if (mode.kind === 'mode13') {
     rgba = engine.read_framebuffer_rgba(mode.vramAddr, w, h);
+    dbgFrame(`frame: mode=0x${modeByte.toString(16)} kind=mode13 ${w}x${h} @0x${mode.vramAddr.toString(16)} rgba[0..4]=${[rgba[0],rgba[1],rgba[2],rgba[3]].join(',')}`);
   } else if (mode.kind === 'cga4') {
     const vram = engine.read_memory_range(mode.vramAddr, 0x4000);
-    const palReg = engine.read_memory_range(0x04F3, 1)[0] | 0;
     rgba = new Uint8Array(w * h * 4);
     decodeCga4(vram, palReg, rgba);
+    // Count non-zero bytes to tell a "blank VRAM" frame from a "decoder
+    // is eating pixels" frame. Also sample a few offsets so we can see
+    // whether the game is writing even-plane (0..0x1FFF) vs odd-plane
+    // (0x2000..0x3FFF) vs both.
+    let nzEven = 0, nzOdd = 0;
+    for (let i = 0; i < 0x2000; i++) if (vram[i]) nzEven++;
+    for (let i = 0x2000; i < 0x4000; i++) if (vram[i]) nzOdd++;
+    dbgFrame(`frame: mode=0x${modeByte.toString(16)} kind=cga4 pal=0x${palReg.toString(16)} nz-even=${nzEven} nz-odd=${nzOdd} vram[0..4]=${Array.from(vram.slice(0,4)).join(',')}`);
   } else if (mode.kind === 'text' && fontAtlas) {
     const vram = engine.read_memory_range(mode.vramAddr, mode.textCols * mode.textRows * 2);
     rgba = new Uint8Array(w * h * 4);
@@ -275,7 +333,24 @@ function maybeEmitFrame() {
       cursorEnabled: true,
       blinkMode: true,
     });
+    // Count non-zero, non-space chars in text VRAM so we can tell if
+    // the kernel has written anything.
+    let nonEmpty = 0;
+    for (let i = 0; i < vram.length; i += 2) {
+      if (vram[i] !== 0 && vram[i] !== 0x20) nonEmpty++;
+    }
+    // First row as ASCII (non-printables → '.').
+    let row0 = '';
+    for (let c = 0; c < mode.textCols && c < 40; c++) {
+      const ch = vram[c * 2];
+      row0 += (ch >= 0x20 && ch < 0x7F) ? String.fromCharCode(ch) : '.';
+    }
+    dbgFrame(`frame: mode=0x${modeByte.toString(16)} kind=text ${mode.textCols}x${mode.textRows} chars=${nonEmpty} row0="${row0}"`);
+  } else if (mode.kind === 'text' && !fontAtlas) {
+    dbgFrame(`frame: mode=0x${modeByte.toString(16)} kind=text — SKIPPED (no fontAtlas)`);
+    return;
   } else {
+    dbgFrame(`frame: mode=0x${modeByte.toString(16)} kind=${mode.kind} — unhandled, skipping`);
     return;
   }
 

@@ -95,7 +95,7 @@ class DispatchTable {
     const wrapIP = (reg === 'IP');
     let normalExpr;
     if (!hasEntries) {
-      // No dispatch entries → the "normal path" is just the default.
+      // No dispatch entries -> the "normal path" is just the default.
       // We still wrap with TF/IRQ overrides below so interrupt delivery can
       // override registers that only have custom-default behavior (e.g.
       // picPending latches edges by default but clears --_irqBit on ack).
@@ -312,16 +312,9 @@ export function emitCSS(opts, writeStream) {
 
   // =====================================================================
   // THE INTERESTING PART — CPU logic, decode, functions, dispatch tables
-  // (Placed first so readers see the actual 8086 implementation up front,
-  //  not millions of @property declarations.)
   // =====================================================================
 
   // 1. Utility @functions
-  w('/* ===== CSS-DOS: An 8086 CPU in pure CSS ===== */');
-  w('/* This file is a complete Intel 8086 processor implemented in CSS.\n' +
-    '   Every register, every flag, every instruction decode, every byte of\n' +
-    '   memory is a CSS custom property driven by calc().\n' +
-    '   Open this file in Chrome and it runs. Slowly — but it runs. */\n');
   w(emitCSSLib());
 
   // 2. Decode @functions

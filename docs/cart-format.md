@@ -282,6 +282,26 @@ for a cart with `FROTZ.EXE` becomes `SHELL=\FROTZ.EXE ZORK1.Z3`.
 Hack carts only. Filename of the `.COM` to load raw at `0x100`. Mutually
 exclusive with `boot.autorun`. Required on hack carts.
 
+### `display.vsyncMode` · aspirational
+
+Which paint cadence the player should use when running this cart. One of:
+
+- `"sim"` (default) — paint on the simulated 70 Hz vertical-retrace edge
+  derived from the CPU cycle counter. This is the same clock the guest
+  program sees when it polls port `0x3DA`, so tearing behaves like real
+  hardware: a program that waits for retrace gets tear-free frames, a
+  program that doesn't tears.
+- `"wall"` — paint on wall-clock 70 Hz regardless of how fast the CPU is
+  running. Smooth to the viewer but decoupled from the emulated beam.
+- `"turbo"` — paint every eval batch, no throttling. For debugging.
+
+The CPU-side decode of port `0x3DA` is always live (independent of this
+field); the field only affects how often the canvas is repainted.
+
+**Not yet plumbed.** Today the mode is picked by `?vsync=...` on the
+player URL or the status-bar dropdown; this field records the cart's
+preferred default so future builder/player wiring can pick it up.
+
 ## Presets in full
 
 ### `dos-corduroy` (default)

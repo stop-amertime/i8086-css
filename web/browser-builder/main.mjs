@@ -172,11 +172,14 @@ export async function buildCabinetInBrowser({
       header,
     });
   } else {
-    // DOS path: fetch kernel + command.com, assemble FAT12 floppy, run Kiln.
-    onProgress({ stage: 'dos', message: 'Loading DOS kernel and command.com...' });
-    const [kernelArr, commandArr] = await Promise.all([
+    // DOS path: fetch kernel + command.com + ansi.sys, assemble FAT12 floppy,
+    // run Kiln. ansi.sys is NANSI (GPLv2), loaded by DEVICE=\ANSI.SYS in the
+    // synthesized CONFIG.SYS so programs emitting terminal escapes work.
+    onProgress({ stage: 'dos', message: 'Loading DOS kernel, command.com, and ansi.sys...' });
+    const [kernelArr, commandArr, ansiArr] = await Promise.all([
       fetchBytes('/assets/dos/kernel.sys'),
       fetchBytes('/assets/dos/command.com'),
+      fetchBytes('/assets/dos/ansi.sys'),
     ]);
 
     onProgress({ stage: 'floppy', message: 'Assembling FAT12 floppy image...' });
@@ -192,6 +195,7 @@ export async function buildCabinetInBrowser({
     const floppy = buildFloppyInBrowser({
       kernelBytes: kernelArr,
       commandBytes: commandArr,
+      ansiBytes: ansiArr,
       programName: progName,
       programBytes: progArr,
       programFiles: extraFiles,
@@ -222,21 +226,199 @@ export async function buildCabinetInBrowser({
   return writer.finish();
 }
 
-function buildHeader({ preset, biosFlavor, biosVersion, programName, floppyLayout = null }) {
-  const biosTag = biosVersion ? `${biosFlavor} v${biosVersion}` : `${biosFlavor} (unversioned)`;
-  const lines = [
-    '/* CSS-DOS cabinet (built in browser)',
-    ` * Preset:   ${preset}`,
-    ` * BIOS:     ${biosTag}`,
-    ` * Program:  ${programName}`,
-    ` * Built:    ${new Date().toISOString()}`,
+// 16-row half-block rendering of icons/css-dos-logo-32x32.png. Hand-touched
+// from the auto-converted version; canonical source is
+// icons/css-dos-asciiart-5.txt. Each line is padded to exactly 32 columns.
+const LOGO_LINES = [
+  '  \u2584\u2584\u2580\u2580\u2580\u2580\u2584\u2584 \u2584\u2584\u2580\u2580\u2580\u2580\u2580\u2584\u2584 \u2584\u2584\u2580\u2580\u2580\u2580\u2580\u2584\u2584  ',
+  ' \u2588  \u2584\u2580\u2580\u2584  \u2588  \u2584\u2580\u2580\u2580\u2584  \u2588  \u2584\u2580\u2580\u2580\u2584  \u2588 ',
+  ' \u2588  \u2588  \u2580\u2580\u2580\u2588  \u2580\u2584\u2584\u2584\u2580\u2580\u2580\u2588  \u2580\u2584\u2584\u2584\u2580\u2580\u2580\u2580 ',
+  ' \u2588  \u2588      \u2580\u2580\u2584\u2584\u2584 \u2580\u2580\u2584 \u2580\u2580\u2584\u2584\u2584 \u2580\u2580\u2584  ',
+  ' \u2588  \u2588  \u2588\u2580\u2580\u2584\u2580\u2580\u2584  \u2580\u2584  \u2588\u2580\u2580\u2584  \u2580\u2584  \u2588 ',
+  ' \u2580\u2584  \u2580\u2580  \u2584\u2580\u2584 \u2580\u2580\u2580\u2580  \u2584\u2580\u2584 \u2580\u2580\u2580\u2580  \u2584\u2580 ',
+  ' \u2584\u2588\u2588\u2584\u2584\u2584\u2584\u2588\u2588\u2584\u2580\u2588\u2584\u2584\u2584\u2584\u2584\u2588\u2580\u2584\u2588\u2588\u2584\u2584\u2584\u2584\u2584\u2588\u2580  ',
+  ' \u2588\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2584\u2580\u2584\u2580\u2584\u2580\u2584\u2588\u2580\u2591\u2591\u2591\u2591\u2591\u2591\u2592\u2592\u2580\u2584  ',
+  ' \u2588\u2593\u2593\u2593\u2588\u2580\u2580\u2588\u2580\u2584\u2580\u2584\u2593\u2593\u2588\u2580\u2588\u2591\u2591\u2591\u2584\u2588\u2588\u2588\u2580\u2584\u2592\u2592\u2588  ',
+  ' \u2588\u2593\u2593\u2593\u2588  \u2588\u2580\u2584\u2588\u2593\u2593\u2593\u2588 \u2588\u2584\u2591\u2588\u2580\u2584\u2580\u2588\u2584\u2584\u2580\u2580\u2580  ',
+  ' \u2588\u2593\u2593\u2593\u2588  \u2588\u2580\u2584\u2588\u2593\u2593\u2593\u2588  \u2580\u2588\u2588\u2580\u2584\u2580\u2588\u2591\u2592\u2580\u2580\u2584  ',
+  ' \u2588\u2593\u2593\u2593\u2588  \u2588\u2580\u2584\u2588\u2593\u2593\u2593\u2588  \u2584\u2580\u2584\u2580\u2584\u2588\u2588\u2584\u2591\u2591\u2592\u2592\u2588 ',
+  ' \u2588\u2593\u2593\u2593\u2588\u2584\u2584\u2584\u2588\u2588\u2593\u2593\u2593\u2588\u2588\u2584\u2588\u2584\u2580\u2584\u2580\u2584\u2588\u2584\u2584\u2580\u2591\u2592\u2592\u2588 ',
+  ' \u2588\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2593\u2588\u2588\u2580\u2584\u2580\u2584\u2580\u2588\u2591\u2591\u2591\u2591\u2591\u2591\u2591\u2592\u2592\u2588\u2588 ',
+  ' \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2580  ',
+  '                                ',
+];
+
+// Tagline shown next to the logo. Kept narrow so the left box doesn't
+// outrun the logo's width by much.
+const TAGLINE = [
+  'CSS-DOS',
+  'An 80s PC in stylesheets.',
+  '',
+  'A complete VM: every',
+  'register, flag, instruction',
+  'decode and byte of memory',
+  'is a CSS custom property',
+  'driven by calc().',
+  '',
+];
+
+// Format a Date as "YYYY-MM-DD HH:MM" -- human-readable, no ms.
+function formatBuildTime(d) {
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
+    `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
+// Build a " key  value"-style row, padded to `width` chars.
+function pad(s, width) { return s.length >= width ? s : s + ' '.repeat(width - s.length); }
+function padRight(s, width) { return s.length >= width ? s : ' '.repeat(width - s.length) + s; }
+
+// -----------------------------------------------------------------------
+// Stacked layout (original): one box with the logo + meta on top, floppy
+// contents appended below via a horizontal separator. Kept as a fallback.
+// Not currently wired in; swap the export at the bottom of buildHeader to
+// switch back.
+// -----------------------------------------------------------------------
+function buildHeaderStacked({ preset, biosFlavor, biosVersion, programName, floppyLayout = null }) {
+  const biosTag = biosVersion ? `${biosFlavor} v${biosVersion}` : biosFlavor;
+  const meta = [
+    ['Built',   formatBuildTime(new Date())],
+    ['Preset',  preset],
+    ['BIOS',    biosTag],
+    ['Autorun', programName],
   ];
-  if (floppyLayout) {
-    lines.push(' * Floppy layout:');
+  const rightCol = [...TAGLINE];
+  while (rightCol.length < 8) rightCol.push('');
+  for (const [k, v] of meta) rightCol.push(`${pad(k, 8)} ${v}`);
+  while (rightCol.length < LOGO_LINES.length) rightCol.push('');
+
+  const LOGO_W = 32, GAP = 2;
+  const rightW = Math.max(...rightCol.map(s => s.length));
+  const inner = LOGO_W + GAP + rightW;
+
+  const top    = '/* \u2554' + '\u2550'.repeat(inner + 2) + '\u2557';
+  const sep    = '   \u2560' + '\u2550'.repeat(inner + 2) + '\u2563';
+  const bottom = '   \u255A' + '\u2550'.repeat(inner + 2) + '\u255D */';
+
+  const lines = [top];
+  for (let i = 0; i < LOGO_LINES.length; i++) {
+    const left = LOGO_LINES[i].padEnd(LOGO_W);
+    const right = rightCol[i].padEnd(rightW);
+    lines.push(`   \u2551 ${left}${' '.repeat(GAP)}${right} \u2551`);
+  }
+  if (floppyLayout && floppyLayout.length) {
+    lines.push(sep);
+    const title = 'Floppy contents:';
+    lines.push(`   \u2551 ${title.padEnd(inner)} \u2551`);
+    const nameW = Math.max(...floppyLayout.map(f => f.name.length));
     for (const f of floppyLayout) {
-      lines.push(` *   ${f.name.padEnd(12)} ${String(f.size).padStart(7)} bytes  (${f.source})`);
+      const sizeStr = `${f.size.toLocaleString('en-US')} bytes`;
+      const row = `  ${pad(f.name, nameW)}   ${padRight(sizeStr, inner - nameW - 5)}`;
+      lines.push(`   \u2551 ${row.padEnd(inner)} \u2551`);
     }
   }
-  lines.push(' */');
+  lines.push(bottom);
   return lines.join('\n');
+}
+
+// -----------------------------------------------------------------------
+// Side-by-side layout (active): two boxes on the same rows. Left box holds
+// the logo + tagline + meta. Right box holds the floppy contents. Both
+// boxes are padded to the height of the taller one so their top/bottom
+// borders line up. Right box width is just wide enough for its widest row.
+// -----------------------------------------------------------------------
+function buildHeader({ preset, biosFlavor, biosVersion, programName, floppyLayout = null }) {
+  const biosTag = biosVersion ? `${biosFlavor} v${biosVersion}` : biosFlavor;
+
+  // ----- Left box content (logo | tagline+meta) -----
+  const meta = [
+    ['Built',   formatBuildTime(new Date())],
+    ['Preset',  preset],
+    ['BIOS',    biosTag],
+    ['Autorun', programName],
+  ];
+  const leftRight = [...TAGLINE];
+  while (leftRight.length < 8) leftRight.push('');
+  for (const [k, v] of meta) leftRight.push(`${pad(k, 8)} ${v}`);
+  while (leftRight.length < LOGO_LINES.length) leftRight.push('');
+
+  const LOGO_W = 32, GAP = 2;
+  const leftRightW = Math.max(...leftRight.map(s => s.length));
+  const leftInner = LOGO_W + GAP + leftRightW;      // chars inside left box
+  const leftContentRows = LOGO_LINES.length;
+
+  // ----- Right box content (floppy listing) -----
+  const floppy = floppyLayout && floppyLayout.length ? floppyLayout : [];
+  const nameW = floppy.length ? Math.max(...floppy.map(f => f.name.length)) : 0;
+  const sizes = floppy.map(f => `${f.size.toLocaleString('en-US')} bytes`);
+  const sizeW = sizes.length ? Math.max(...sizes.map(s => s.length)) : 0;
+
+  // Each floppy row is "  <name padded to nameW>   <size right-aligned to sizeW>"
+  // = 2 + nameW + 3 + sizeW = nameW + sizeW + 5 chars.
+  const floppyRowW = nameW + sizeW + 5;
+  const floppyTitle = 'Floppy contains:';
+  const rightInner = Math.max(floppyTitle.length, floppyRowW);
+  // Rows: title + blank + one row per file.
+  const rightContentRows = floppy.length ? 2 + floppy.length : 0;
+
+  // ----- Shared height -----
+  const contentRows = Math.max(leftContentRows, rightContentRows);
+
+  // ----- Borders -----
+  const hasRight = floppy.length > 0;
+
+  // When joined, the two boxes share a ║ wall. Top/bottom use ╦/╩ to connect
+  // the divider to the outer borders; unjoined (hasRight=false) just uses
+  // ╔/╗ and ╚/╝.
+  const topBorder = hasRight
+    ? '\u2554' + '\u2550'.repeat(leftInner + 2) + '\u2566' + '\u2550'.repeat(rightInner + 2) + '\u2557'
+    : '\u2554' + '\u2550'.repeat(leftInner + 2) + '\u2557';
+  const botBorder = hasRight
+    ? '\u255A' + '\u2550'.repeat(leftInner + 2) + '\u2569' + '\u2550'.repeat(rightInner + 2) + '\u255D'
+    : '\u255A' + '\u2550'.repeat(leftInner + 2) + '\u255D';
+
+  const out = [];
+  out.push(`/* ${topBorder}`);
+
+  for (let i = 0; i < contentRows; i++) {
+    // Left-box cell for this row.
+    let leftInside;
+    if (i < leftContentRows) {
+      const l = LOGO_LINES[i].padEnd(LOGO_W);
+      const r = leftRight[i].padEnd(leftRightW);
+      leftInside = `${l}${' '.repeat(GAP)}${r}`;
+    } else {
+      leftInside = ' '.repeat(leftInner);
+    }
+
+    // Right-box cell for this row.
+    //   row 0   = title
+    //   row 1   = blank spacer
+    //   row 2+  = files
+    let rightInside = null;
+    if (hasRight) {
+      if (i === 0) {
+        rightInside = floppyTitle;
+      } else if (i === 1) {
+        rightInside = '';
+      } else {
+        const fi = i - 2;
+        if (fi < floppy.length) {
+          rightInside = `  ${pad(floppy[fi].name, nameW)}   ${padRight(sizes[fi], sizeW)}`;
+        } else {
+          rightInside = '';
+        }
+      }
+    }
+
+    if (hasRight) {
+      out.push(`   \u2551 ${leftInside} \u2551 ${rightInside.padEnd(rightInner)} \u2551`);
+    } else {
+      out.push(`   \u2551 ${leftInside} \u2551`);
+    }
+  }
+
+  out.push(`   ${botBorder} */`);
+
+  return out.join('\n');
 }

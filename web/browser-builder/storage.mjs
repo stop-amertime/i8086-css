@@ -10,12 +10,23 @@ const CACHE_NAME = 'cssdos-cabinets-v2';
 const LEGACY_CACHE_NAMES = ['cssdos-cabinets-v1'];
 const CURRENT_URL = '/cabinet.css';
 
+// Broadcast channel for cabinet lifecycle events. Anyone (workers,
+// other tabs on the same origin) can listen for these. The calcite
+// bridge uses `cabinet-ready` to start compiling as soon as a new
+// cabinet is cached, without waiting for the viewer tab to open.
+const CABINET_CHANNEL = 'cssdos-cabinet';
+
 export async function saveCabinet(blob, url = CURRENT_URL) {
   const cache = await caches.open(CACHE_NAME);
   const response = new Response(blob, {
     headers: { 'Content-Type': 'text/css', 'Content-Length': String(blob.size) },
   });
   await cache.put(url, response);
+  try {
+    const bc = new BroadcastChannel(CABINET_CHANNEL);
+    bc.postMessage({ type: 'cabinet-ready', url, size: blob.size });
+    bc.close();
+  } catch {}
   return url;
 }
 

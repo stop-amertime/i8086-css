@@ -1,8 +1,7 @@
 {
   "flavor": "gossamer",
-  "version": null,
   "entrySegment": null,
   "entryOffset": null,
-  "sizeBytes": 639,
-  "sourceHash": "bb95325ec6df6b98bf0de76c170824a83b173123a2dbf7fc229c7967fc77a9ef"
+  "sizeBytes": 669,
+  "sourceHash": "e0121584d749d46aba9c5b6c7a4c1ba5220a19269a53324224361243d882c262"
 }

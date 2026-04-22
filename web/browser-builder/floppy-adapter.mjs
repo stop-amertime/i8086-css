@@ -13,6 +13,7 @@ import { buildFat12Image } from '../../tools/mkfat12.mjs';
  * @param {object} opts
  * @param {Uint8Array} opts.kernelBytes      dos/bin/kernel.sys
  * @param {Uint8Array} opts.commandBytes     dos/bin/command.com
+ * @param {Uint8Array} opts.ansiBytes        dos/bin/ansi.sys (NANSI, GPLv2)
  * @param {string}     opts.programName      Filename on disk (e.g. "BCD.COM")
  * @param {Uint8Array} opts.programBytes     The .COM/.EXE to put on disk
  * @param {Array}      [opts.programFiles]   Extra {name, bytes, source} entries
@@ -26,6 +27,7 @@ import { buildFat12Image } from '../../tools/mkfat12.mjs';
 export function buildFloppyInBrowser({
   kernelBytes,
   commandBytes,
+  ansiBytes,
   programName,
   programBytes,
   programFiles = [],
@@ -38,18 +40,25 @@ export function buildFloppyInBrowser({
   if (!(commandBytes instanceof Uint8Array)) {
     throw new Error('buildFloppyInBrowser: commandBytes must be Uint8Array');
   }
+  if (!(ansiBytes instanceof Uint8Array)) {
+    throw new Error('buildFloppyInBrowser: ansiBytes must be Uint8Array');
+  }
 
-  // Synthesize CONFIG.SYS (mirror builder/stages/floppy.mjs logic).
+  // Synthesize CONFIG.SYS (mirror builder/stages/floppy.mjs logic). The
+  // DEVICE=\ANSI.SYS line loads NANSI so programs that emit terminal
+  // escapes (Zork+FROTZ, SVARCOM colored prompt) render correctly
+  // instead of dumping raw ESC sequences to VRAM.
   const shellTarget = autorun ?? 'COMMAND.COM';
   // SWITCHES=/F skips the ~2s F5/F8 startup delay — we don't need it in the emulator.
   const shellLine = args
     ? `SHELL=\\${shellTarget} ${args}\n`
     : `SHELL=\\${shellTarget}\n`;
-  const configContent = `SWITCHES=/F\n${shellLine}`;
+  const configContent = `SWITCHES=/F\nDEVICE=\\ANSI.SYS\n${shellLine}`;
   const configBytes = new TextEncoder().encode(configContent);
 
   const layout = [
     { name: 'KERNEL.SYS', bytes: kernelBytes, source: 'dos/bin/kernel.sys' },
+    { name: 'ANSI.SYS',   bytes: ansiBytes,   source: 'dos/bin/ansi.sys' },
     { name: 'CONFIG.SYS', bytes: configBytes, source: `synthesized: ${configContent.trimEnd()}` },
   ];
 

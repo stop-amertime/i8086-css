@@ -1,0 +1,5 @@
+{
+  "name": "DOS text smoke",
+  "preset": "dos-corduroy",
+  "boot": { "autorun": "HELLO.COM" }
+}

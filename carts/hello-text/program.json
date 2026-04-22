@@ -1,0 +1,6 @@
+{
+  "name": "hello text smoke",
+  "preset": "hack",
+  "program": "program.com",
+  "boot": { "raw": "program.com" }
+}

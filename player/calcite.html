@@ -5,18 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CSS-DOS · Calcite</title>
   <!--
-    The cabinet CSS this page is "running". The <style> block below
-    uses @import with media="not all" so Chrome fetches /cabinet.css
-    (showing the import in view-source) but never parses or applies
-    the rules it contains — that would be many megabytes of CSS and
-    Chrome would struggle. The bytes come from the user's own Cache
-    Storage via the service worker at /sw.js, not from the network.
-    Calcite (in the driver worker) is what actually evaluates the
-    cabinet and streams its framebuffer into the <img> below.
+    The cabinet CSS is not <link>'d or @import'd on this page. Even
+    with media="not all" Chrome still downloads and parses the file,
+    which at ~273 MB blocks page load for seconds. Calcite (running
+    in the bridge worker spawned by build.html) is what actually
+    evaluates the cabinet and streams its framebuffer into the <img>
+    below. See player/raw.html for a cabinet-linking theoretical
+    runner that demonstrates what Chrome would do if left to render
+    the CSS directly.
   -->
-  <style>
-    @import url("/cabinet.css") not all;
-  </style>
   <!--
     Pure HTML + CSS runner. No <script> tag anywhere in this file.
     The calcite-bridge worker (engine + JPEG encoder) runs on build.html
@@ -292,5 +289,14 @@
     </div>
   </div>
   <iframe name="kbd-sink" class="kbd-sink"></iframe>
+  <!-- Bench mode: ?bench=1 loads a tiny HUD + measurement script. No JS
+       is loaded otherwise; the default pure-HTML runner stays pure. -->
+  <script>
+    if (new URLSearchParams(location.search).get('bench') === '1') {
+      const s = document.createElement('script');
+      s.src = '/player/assets/calcite-bench.js';
+      document.body.appendChild(s);
+    }
+  </script>
 </body>
 </html>

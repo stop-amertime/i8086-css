@@ -17,6 +17,7 @@ const repoRoot = resolve(__dirname, '..', '..');
 
 const KERNEL_SYS  = resolve(repoRoot, 'dos', 'bin', 'kernel.sys');
 const COMMAND_COM = resolve(repoRoot, 'dos', 'bin', 'command.com');
+const ANSI_SYS    = resolve(repoRoot, 'dos', 'bin', 'ansi.sys');
 
 export function buildFloppy({ cart, manifest, cacheDir }) {
   if (!manifest.disk) {
@@ -30,16 +31,25 @@ export function buildFloppy({ cart, manifest, cacheDir }) {
   const args = manifest.boot?.args ?? '';
   const shellTarget = autorun ?? 'COMMAND.COM';
   // SWITCHES=/F skips the ~2s F5/F8 startup delay — we don't need it in the emulator.
+  // DEVICE=\ANSI.SYS loads NANSI (a GPLv2 DOS ANSI driver shipped in dos/bin/).
+  // Programs that emit terminal escapes (Zork via FROTZ, SVARCOM's colored prompt,
+  // any BBS-era software) rely on an ANSI driver being present. Without it the
+  // escape bytes go straight to VRAM as literal text. NANSI is ~5 KB resident —
+  // negligible given our default memory sizing.
   const shellLine = args
     ? `SHELL=\\${shellTarget} ${args}\n`
     : `SHELL=\\${shellTarget}\n`;
-  const configContent = `SWITCHES=/F\n${shellLine}`;
+  const configContent = `SWITCHES=/F\nDEVICE=\\ANSI.SYS\n${shellLine}`;
   const configPath = join(cacheDir, 'CONFIG.SYS');
   writeFileSync(configPath, configContent);
 
-  // Assemble the file list: KERNEL.SYS + CONFIG.SYS + cart files + (COMMAND.COM?).
+  // Assemble the file list: KERNEL.SYS + ANSI.SYS + CONFIG.SYS + cart files +
+  // (COMMAND.COM?). ANSI.SYS must be on the disk before CONFIG.SYS loads it,
+  // but file order within the FAT image doesn't matter — the driver is located
+  // by name, not position.
   const layout = [
     { name: 'KERNEL.SYS', source: 'dos/bin/kernel.sys',   path: KERNEL_SYS },
+    { name: 'ANSI.SYS',   source: 'dos/bin/ansi.sys',    path: ANSI_SYS },
     { name: 'CONFIG.SYS', source: `synthesized: ${configContent.trimEnd()}`, path: configPath },
   ];
 

@@ -30,8 +30,9 @@
           ],
           "description": "Size of conventional RAM in bytes. String = preset; number = exact bytes; 'autofit' sizes to the program. NOTE: on DOS carts, values below 640K are accepted by the schema but are not currently known to boot — the builder warns. Tracked as a follow-up."
         },
-        "gfx":     { "type": "boolean", "description": "Include the VGA Mode 13h framebuffer at 0xA0000–0xAFA00." },
-        "textVga": { "type": "boolean", "description": "Include the VGA text buffer at 0xB8000–0xB8FA0." }
+        "gfx":     { "type": "boolean", "description": "Include the VGA Mode 13h framebuffer at 0xA0000–0xAFA00 (64000 bytes). Required for Mode 13h programs and the Corduroy boot splash." },
+        "textVga": { "type": "boolean", "description": "Include the VGA text buffer at 0xB8000–0xB8FA0 (4000 bytes). Required for any program that writes text via direct video memory (i.e. almost every DOS program)." },
+        "cgaGfx":  { "type": "boolean", "description": "Include CGA graphics memory at 0xB8000–0xBC000 (16384 bytes). Covers modes 0x04 (320×200×4) and 0x06 (640×200×2). Overlaps the text buffer's address range — enabling both is fine, the bytes share storage the same way real CGA hardware shares the 16 KB aperture between text and graphics." }
       }
     },
 
@@ -76,6 +77,18 @@
           }
         }
       ]
+    },
+
+    "display": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "vsyncMode": {
+          "enum": ["sim", "wall", "turbo"],
+          "default": "sim",
+          "description": "Player paint cadence. 'sim' paints on the simulated 70 Hz vertical-retrace edge derived from the CPU cycle counter (matches what the guest program sees when it polls port 0x3DA). 'wall' paints on wall-clock 70 Hz regardless of CPU speed. 'turbo' paints every eval batch, no throttling. NOT YET PLUMBED — today the mode is picked by ?vsync=... on the player URL or the status-bar dropdown; this field records the cart's preferred default for future builder/player wiring."
+        }
+      }
     },
 
     "boot": {

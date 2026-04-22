@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CSS-DOS · canvas2 (benchmark)</title>
+  <style>
+    body { font-family: monospace; background: #008080; color: #fff; padding: 8px; margin: 0; }
+    canvas { image-rendering: pixelated; background: #000; border: 2px solid #808080; }
+    #stats { background: #000; color: #0f0; padding: 6px; margin-top: 6px; font-size: 13px; white-space: pre; min-width: 720px; }
+  </style>
+</head>
+<body>
+  <h3>canvas2 — minimal canvas player (grid.html worker protocol)</h3>
+  <canvas id="screen" width="640" height="400" style="width:640px;height:400px;"></canvas>
+  <div id="stats">loading...</div>
+
+  <script>
+    const worker = new Worker('/calcite/calcite-worker.js', { type: 'module' });
+    const canvas = document.getElementById('screen');
+    const ctx = canvas.getContext('2d');
+    const statsEl = document.getElementById('stats');
+    const REAL_8086_HZ = 4_772_727;
+
+    let video = { text: null, gfx: null };
+    let engineReady = false;
+    let sharedView = null;     // Uint8Array view over SAB
+    let sharedGeom = null;     // {w, h} of the SAB
+    let imageData = null;
+    let imageDataGeom = null;
+
+    // Same mode-geometry table grid.html uses. For text modes the worker
+    // rasterises through the VGA font into the SAB; for Mode 13h it writes
+    // RGBA from 0xA0000. We just paint what's in the SAB.
+    const MODE_GEOMETRY = {
+      0x01: { width: 320, height: 400 },
+      0x03: { width: 640, height: 400 },
+      0x13: { width: 320, height: 200 },
+    };
+
+    let currentGeom = null;
+    function ensureGeom(mode) {
+      const g = MODE_GEOMETRY[mode];
+      if (!g) return;
+      if (currentGeom && currentGeom.width === g.width && currentGeom.height === g.height) return;
+      currentGeom = g;
+      canvas.width = g.width;
+      canvas.height = g.height;
+      canvas.style.width = (g.width >= 640 ? g.width : g.width * 2) + 'px';
+      canvas.style.height = (g.height >= 400 ? g.height : g.height * 2) + 'px';
+      imageData = ctx.createImageData(g.width, g.height);
+      imageDataGeom = { w: g.width, h: g.height };
+      // Rebuild SAB at the right size.
+      if (typeof SharedArrayBuffer !== 'undefined' && self.crossOriginIsolated) {
+        const sab = new SharedArrayBuffer(g.width * g.height * 4);
+        sharedView = new Uint8Array(sab);
+        sharedGeom = { width: g.width, height: g.height };
+        const vramAddr = (mode === 0x13) ? 0xA0000 : 0xB8000;
+        worker.postMessage({ type: 'setFramebufferSAB', sab, width: g.width, height: g.height, addr: vramAddr });
+      }
+    }
+
+    async function loadFontAndSend() {
+      const r = await fetch('/player/fonts/vga-8x16.bin');
+      const buf = new Uint8Array(await r.arrayBuffer());
+      worker.postMessage({ type: 'setFont', font: buf });
+    }
+
+    // Frame throttle: one outstanding frame request at a time, requested
+    // on rAF. Same shape as grid.html. We don't care about vsync modes —
+    // just pump frames as the worker can deliver them.
+    let frameInFlight = false;
+    function requestFrame() {
+      if (!engineReady || frameInFlight) return;
+      frameInFlight = true;
+      worker.postMessage({ type: 'frame', includeText: false });
+    }
+    function raf() {
+      requestAnimationFrame(raf);
+      requestFrame();
+    }
+
+    // Stats
+    let startMs = 0;
+    let totalCycles = 0;
+    let frameCount = 0, lastFpsWindow = 0, lastFpsMs = 0;
+    let currentFps = 0;
+    let lastTickBatch = 0, lastTickEma = 0;
+
+    function updateStats() {
+      const elapsed = (performance.now() - startMs) / 1000;
+      const cps = elapsed > 0 ? totalCycles / elapsed : 0;
+      const pct = cps / REAL_8086_HZ * 100;
+      statsEl.textContent =
+        `cycles ${totalCycles.toLocaleString()} | ${(cps/1e6).toFixed(2)} MHz (${pct.toFixed(1)}% of 4.77 MHz)` +
+        ` | batch ${lastTickBatch} (${lastTickEma.toFixed(1)}ms)` +
+        ` | paint ${currentFps.toFixed(1)} fps`;
+    }
+
+    worker.onmessage = ({ data }) => {
+      switch (data.type) {
+        case 'ready': {
+          engineReady = true;
+          video = data.video || { text: null, gfx: null };
+          loadFontAndSend();
+          startMs = performance.now();
+          worker.postMessage({ type: 'start' });
+          requestAnimationFrame(raf);
+          break;
+        }
+        case 'tick-stats': {
+          totalCycles = data.cycles ?? totalCycles;
+          lastTickBatch = data.tickBatch;
+          lastTickEma = data.tickEma;
+          ensureGeom(data.videoMode);
+          updateStats();
+          break;
+        }
+        case 'frame-result': {
+          frameInFlight = false;
+          if (!sharedView) return;
+          if (!imageData) return;
+          // Blit SAB → canvas via putImageData.
+          imageData.data.set(sharedView.subarray(0, imageData.data.length));
+          ctx.putImageData(imageData, 0, 0);
+          frameCount++;
+          const now = performance.now();
+          if (lastFpsMs === 0) lastFpsMs = now;
+          if (now - lastFpsMs >= 1000) {
+            currentFps = (frameCount - lastFpsWindow) * 1000 / (now - lastFpsMs);
+            lastFpsWindow = frameCount;
+            lastFpsMs = now;
+          }
+          break;
+        }
+        case 'error':
+          statsEl.textContent = `error: ${data.message}`;
+          break;
+      }
+    };
+
+    (async () => {
+      const r = await fetch('/cabinet.css');
+      if (!r.ok) { statsEl.textContent = 'no cabinet'; return; }
+      const css = await r.text();
+      if (!css || css.startsWith('/* CSS-DOS: no cabinet')) { statsEl.textContent = 'no cabinet'; return; }
+      statsEl.textContent = `compiling ${(css.length/1024/1024).toFixed(1)} MB...`;
+      worker.postMessage({ type: 'init', css });
+    })();
+  </script>
+</body>
+</html>

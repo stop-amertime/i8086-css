@@ -218,9 +218,9 @@ select.field {
   height: 400px;
   overflow: auto;
   white-space: pre;
-  font-family: 'DOS', 'Fixedsys', 'Terminal', monospace;
+  font-family: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Consolas', monospace;
   font-size: 11px;
-  line-height: 1.3;
+  line-height: 1.15;
   background: #000;
   color: #33ff33;
   padding: 8px;
@@ -231,6 +231,25 @@ select.field {
   /* Don't wrap — let long lines scroll horizontally. */
   overflow-x: auto;
 }
+
+/* Prism token colours, tuned to the green-terminal background.
+   Tokens Prism emits for CSS: comment, selector, property,
+   punctuation, function, atrule, rule, keyword, number, url, string. */
+.source-pre code[class*="language-"] { font: inherit; color: inherit; background: transparent; }
+.source-pre .token.comment     { color: #dddddd; }
+.source-pre .token.selector,
+.source-pre .token.atrule      { color: #66ff66; }
+.source-pre .token.property    { color: #aaffaa; }
+.source-pre .token.function    { color: #33ffcc; }
+.source-pre .token.string,
+.source-pre .token.url         { color: #ffff66; }
+.source-pre .token.number,
+.source-pre .token.unit,
+.source-pre .token.hexcode     { color: #ff9966; }
+.source-pre .token.punctuation { color: #33aa33; }
+.source-pre .token.important,
+.source-pre .token.keyword     { color: #ff66ff; font-weight: bold; }
+.source-pre .token.variable    { color: #66ccff; }
 
 /* ── Groove separator ── */
 hr.groove {

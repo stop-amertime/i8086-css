@@ -1,4 +1,3 @@
-// Utility @function definitions ported from legacy/base_template.css
 // These are proven to work in Chrome. Emitted verbatim.
 
 export function emitCSSLib() {

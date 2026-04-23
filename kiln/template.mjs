@@ -55,6 +55,12 @@ export const STATE_VARS = [
   //   Advances on each OUT 0x3C9; wraps to 0 and bumps dacWriteIndex on 3.
   { name: 'dacWriteIndex', init: 0, debug: false },
   { name: 'dacSubIndex',   init: 0, debug: false },
+  // Read side of the DAC. Written by OUT 0x3C7; every three IN 0x3C9 reads
+  // bump dacReadIndex by 1 (wrapping the sub-index). Read and write paths
+  // keep separate sub-indices so a program that interleaves the two (rare)
+  // doesn't corrupt either cursor.
+  { name: 'dacReadIndex',    init: 0, debug: false },
+  { name: 'dacReadSubIndex', init: 0, debug: false },
 
   // Sticky latch: set to the offending opcode byte the first time the CPU
   // hits an instruction with no dispatch entry (unknownOp=1). Once set, never

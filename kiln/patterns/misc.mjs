@@ -674,6 +674,11 @@ export function emitIO(dispatch) {
     `max(0, sign(calc(mod(var(--__1cycleCount), 68182) - 3409)))`;
   const VGA_STATUS1 = `calc(${VSYNC_RETRACE_BIT3} + ${VSYNC_DISPENA_BIT0})`;
 
+  // DAC palette storage — 768 bytes at the linear address below (outside
+  // the 1 MB address space, accessed via --readMem/addMemWrite). See the
+  // OUT 0x3C8/0x3C9 block further down for the full protocol.
+  const DAC_LINEAR = 0x100000;
+
   // --- Reads ---
 
   // IN AL, imm8 (0xE4):
@@ -681,36 +686,48 @@ export function emitIO(dispatch) {
   //   port 0x60  → scancode = rightShift(keyboard, 8)
   //   port 0x3DA → VGA input status 1 (vsync bit 3 + display-enable bit 0)
   //   other      → 0
+  // DAC read byte: mem[DAC_LINEAR + dacReadIndex*3 + dacReadSubIndex].
+  // Re-computed per-opcode; CSS evaluates it lazily inside the if() so
+  // ports other than 0x3C9 never trigger the memory read.
+  const dacReadByte = `--readMem(calc(${DAC_LINEAR} + var(--__1dacReadIndex) * 3 + var(--__1dacReadSubIndex)))`;
+
   dispatch.addEntry('AX', 0xE4,
-    `--mergelow(var(--__1AX), if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--_kbdPort60); style(--q1: 986): ${VGA_STATUS1}; else: 0))`,
-    `IN AL, imm8 (0x21=picMask, 0x60=kbdPort60, 0x3DA=vgaStatus1)`);
+    `--mergelow(var(--__1AX), if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--_kbdPort60); style(--q1: 986): ${VGA_STATUS1}; style(--q1: 967): 0; style(--q1: 968): var(--__1dacWriteIndex); style(--q1: 969): ${dacReadByte}; else: 0))`,
+    `IN AL, imm8 (0x21=picMask, 0x60=kbdPort60, 0x3DA=vgaStatus1, 0x3C7/8/9=DAC)`);
   dispatch.addEntry('IP', 0xE4, `calc(var(--__1IP) + 2)`, `IN AL, imm8`);
 
   // IN AX, imm8 (0xE5):
   //   port 0x21  → picMask
   //   port 0x60  → full keyboard word
   //   port 0x3DA → VGA input status 1 (low byte only; high byte is 0)
+  //   DAC ports  → same byte-read as 0xE4 in low, 0 in high (games that
+  //                 do `in ax, 0x3C9` are buggy but real; mask to low byte)
   dispatch.addEntry('AX', 0xE5,
-    `if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--__1keyboard); style(--q1: 986): ${VGA_STATUS1}; else: 0)`,
-    `IN AX, imm8 (0x21=picMask, 0x60=keyboard, 0x3DA=vgaStatus1)`);
+    `if(style(--q1: 33): var(--__1picMask); style(--q1: 96): var(--__1keyboard); style(--q1: 986): ${VGA_STATUS1}; style(--q1: 967): 0; style(--q1: 968): var(--__1dacWriteIndex); style(--q1: 969): ${dacReadByte}; else: 0)`,
+    `IN AX, imm8 (0x21=picMask, 0x60=keyboard, 0x3DA=vgaStatus1, 0x3C7/8/9=DAC)`);
   dispatch.addEntry('IP', 0xE5, `calc(var(--__1IP) + 2)`, `IN AX, imm8`);
 
   // IN AL, DX (0xEC):
   //   DX=0x21  → picMask
   //   DX=0x60  → scancode
   //   DX=0x3DA → VGA input status 1
+  //   DX=0x3C7 → 0 (DAC state byte: 0=write-ready, 3=read-ready; we don't
+  //              distinguish — returning 0 keeps games happy)
+  //   DX=0x3C8 → current write index
+  //   DX=0x3C9 → DAC byte at [readIndex*3 + readSubIndex]
   dispatch.addEntry('AX', 0xEC,
-    `--mergelow(var(--__1AX), if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--_kbdPort60); style(--__1DX: 986): ${VGA_STATUS1}; else: 0))`,
-    `IN AL, DX (0x21=picMask, 0x60=kbdPort60, 0x3DA=vgaStatus1)`);
+    `--mergelow(var(--__1AX), if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--_kbdPort60); style(--__1DX: 986): ${VGA_STATUS1}; style(--__1DX: 967): 0; style(--__1DX: 968): var(--__1dacWriteIndex); style(--__1DX: 969): ${dacReadByte}; else: 0))`,
+    `IN AL, DX (0x21=picMask, 0x60=kbdPort60, 0x3DA=vgaStatus1, 0x3C7/8/9=DAC)`);
   dispatch.addEntry('IP', 0xEC, `calc(var(--__1IP) + 1)`, `IN AL, DX`);
 
   // IN AX, DX (0xED):
   //   DX=0x21  → picMask
   //   DX=0x60  → full keyboard word
   //   DX=0x3DA → VGA input status 1
+  //   DX=0x3C7 → 0; DX=0x3C8 → write index; DX=0x3C9 → DAC byte (low)
   dispatch.addEntry('AX', 0xED,
-    `if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--__1keyboard); style(--__1DX: 986): ${VGA_STATUS1}; else: 0)`,
-    `IN AX, DX (0x21=picMask, 0x60=keyboard, 0x3DA=vgaStatus1)`);
+    `if(style(--__1DX: 33): var(--__1picMask); style(--__1DX: 96): var(--__1keyboard); style(--__1DX: 986): ${VGA_STATUS1}; style(--__1DX: 967): 0; style(--__1DX: 968): var(--__1dacWriteIndex); style(--__1DX: 969): ${dacReadByte}; else: 0)`,
+    `IN AX, DX (0x21=picMask, 0x60=keyboard, 0x3DA=vgaStatus1, 0x3C7/8/9=DAC)`);
   dispatch.addEntry('IP', 0xED, `calc(var(--__1IP) + 1)`, `IN AX, DX`);
 
   // --- Writes ---
@@ -813,10 +830,14 @@ export function emitIO(dispatch) {
   // Mode 13h framebuffer. Values are stored as-is (6-bit 0..63); the frame-
   // buffer renderer does the 6-to-8-bit expansion.
   //
-  // Port 0x3C7 (DAC read index) is not implemented here — fire doesn't read
-  // the DAC back. Add when a program needs it.
-
-  const DAC_LINEAR = 0x100000;
+  // Port 0x3C7 (DAC read index) and IN 0x3C9 (read DAC byte) are both wired
+  // below. Games that read the palette back — e.g. palette-fade effects
+  // that re-derive their target palette from the live DAC, or screensavers
+  // that blend between whatever the previous program left and a new
+  // palette — use the sequence OUT 0x3C7, n; IN 0x3C9; IN 0x3C9; IN 0x3C9.
+  // OUT 0x3C7 mirrors OUT 0x3C8 except it sets the *read* cursor.
+  // (DAC_LINEAR is declared above the IN handlers so the dacReadByte
+  // helper can reference it — both reads and writes share that address.)
 
   // OUT 0x3C8 — set write index, reset sub-index.
   // Written as "968" and "969" in CSS since style() takes integer literals.
@@ -828,12 +849,52 @@ export function emitIO(dispatch) {
     `OUT DX=0x3C8: set DAC write index; DX=0x3C9: auto-advance on wrap`);
 
   // dacSubIndex: OUT 0x3C8 resets to 0. OUT 0x3C9 advances (0→1→2→0).
+  // OUT 0x3C7 also resets — programs that transition from reading to
+  // writing the DAC (rare, but spec-legal) expect a clean slate.
   dispatch.addEntry('dacSubIndex', 0xE6,
-    `if(style(--q1: 968): 0; style(--q1: 969) and style(--__1dacSubIndex: 2): 0; style(--q1: 969): calc(var(--__1dacSubIndex) + 1); else: var(--__1dacSubIndex))`,
-    `OUT 0x3C8/0x3C9: DAC sub-index state`);
+    `if(style(--q1: 968): 0; style(--q1: 967): 0; style(--q1: 969) and style(--__1dacSubIndex: 2): 0; style(--q1: 969): calc(var(--__1dacSubIndex) + 1); else: var(--__1dacSubIndex))`,
+    `OUT 0x3C7/0x3C8/0x3C9: DAC write sub-index state`);
   dispatch.addEntry('dacSubIndex', 0xEE,
-    `if(style(--__1DX: 968): 0; style(--__1DX: 969) and style(--__1dacSubIndex: 2): 0; style(--__1DX: 969): calc(var(--__1dacSubIndex) + 1); else: var(--__1dacSubIndex))`,
-    `OUT DX=0x3C8/0x3C9: DAC sub-index state`);
+    `if(style(--__1DX: 968): 0; style(--__1DX: 967): 0; style(--__1DX: 969) and style(--__1dacSubIndex: 2): 0; style(--__1DX: 969): calc(var(--__1dacSubIndex) + 1); else: var(--__1dacSubIndex))`,
+    `OUT DX=0x3C7/0x3C8/0x3C9: DAC write sub-index state`);
+
+  // Read cursor: OUT 0x3C7 loads AL into dacReadIndex and resets the read
+  // sub-index to 0. Three successful IN reads of 0x3C9 advance the sub-
+  // index 0→1→2→0 and on the wrap also bump dacReadIndex by 1.
+  //
+  // OUT 0x3C7 → index := AL
+  dispatch.addEntry('dacReadIndex', 0xE6,
+    `if(style(--q1: 967): ${al}; style(--q1: 971) and style(--__1dacReadSubIndex: 2): calc(var(--__1dacReadIndex) + 1); else: var(--__1dacReadIndex))`,
+    `OUT 0x3C7: set DAC read index; IN 0x3C9 auto-advance on wrap`);
+  dispatch.addEntry('dacReadIndex', 0xEE,
+    `if(style(--__1DX: 967): ${al}; else: var(--__1dacReadIndex))`,
+    `OUT DX=0x3C7: set DAC read index`);
+  // IN AL, imm8 (0xE4): port 0x3C9 advances the read cursor on wrap.
+  // We use 971 as the sentinel "imm=0x3C9 AND this is an IN" — but the
+  // port value in --q1 is just 0x3C9 (969). Disambiguate with the opcode
+  // itself: addEntry is per-opcode, so this branch only fires on 0xE4.
+  dispatch.addEntry('dacReadIndex', 0xE4,
+    `if(style(--q1: 969) and style(--__1dacReadSubIndex: 2): calc(var(--__1dacReadIndex) + 1); else: var(--__1dacReadIndex))`,
+    `IN AL, 0x3C9: DAC read cursor auto-advance on wrap`);
+  dispatch.addEntry('dacReadIndex', 0xEC,
+    `if(style(--__1DX: 969) and style(--__1dacReadSubIndex: 2): calc(var(--__1dacReadIndex) + 1); else: var(--__1dacReadIndex))`,
+    `IN AL, DX=0x3C9: DAC read cursor auto-advance on wrap`);
+
+  // dacReadSubIndex: OUT 0x3C7 resets to 0. IN 0x3C9 advances (0→1→2→0).
+  // OUT 0x3C8 also resets (read-to-write transition — spec-legal to reuse
+  // the sub-index state).
+  dispatch.addEntry('dacReadSubIndex', 0xE6,
+    `if(style(--q1: 967): 0; style(--q1: 968): 0; else: var(--__1dacReadSubIndex))`,
+    `OUT 0x3C7/0x3C8: reset DAC read sub-index`);
+  dispatch.addEntry('dacReadSubIndex', 0xEE,
+    `if(style(--__1DX: 967): 0; style(--__1DX: 968): 0; else: var(--__1dacReadSubIndex))`,
+    `OUT DX=0x3C7/0x3C8: reset DAC read sub-index`);
+  dispatch.addEntry('dacReadSubIndex', 0xE4,
+    `if(style(--q1: 969) and style(--__1dacReadSubIndex: 2): 0; style(--q1: 969): calc(var(--__1dacReadSubIndex) + 1); else: var(--__1dacReadSubIndex))`,
+    `IN AL, 0x3C9: advance DAC read sub-index`);
+  dispatch.addEntry('dacReadSubIndex', 0xEC,
+    `if(style(--__1DX: 969) and style(--__1dacReadSubIndex: 2): 0; style(--__1DX: 969): calc(var(--__1dacReadSubIndex) + 1); else: var(--__1dacReadSubIndex))`,
+    `IN AL, DX=0x3C9: advance DAC read sub-index`);
 
   // OUT 0x3C9 — write a byte to DAC_LINEAR + writeIndex*3 + subIndex.
   // The address expression evaluates to -1 (unused-slot sentinel) on any

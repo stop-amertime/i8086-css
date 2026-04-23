@@ -353,8 +353,11 @@ export function emitCSS(opts, writeStream) {
                     'pitMode', 'pitReload', 'pitCounter', 'pitWriteState',
                     // Keyboard-edge detection: snapshot current --keyboard.
                     'prevKeyboard',
-                    // VGA DAC write-state machine — updated by OUT 0x3C8 / 0x3C9.
-                    'dacWriteIndex', 'dacSubIndex'];
+                    // VGA DAC state machines — write side updated by OUT
+                    // 0x3C8 / 0x3C9, read side updated by OUT 0x3C7 / IN 0x3C9.
+                    // See kiln/patterns/misc.mjs emitIO() for protocol.
+                    'dacWriteIndex', 'dacSubIndex',
+                    'dacReadIndex', 'dacReadSubIndex'];
   // Custom defaults: the fall-through expression when no dispatch entry fires
   // for this opcode. pitCounter ticks every instruction; picPending latches
   // PIT+keyboard edges; prevKeyboard snapshots --keyboard. Everything else

@@ -5,7 +5,7 @@ before starting work and MUST update it before finishing.
 See `PROTOCOL.md` for the entry format. Pre-session-12 entries archived to
 `docs/archive/logbook-sessions-1-12-2026-04.md`.
 
-Last updated: 2026-04-22 (session 16 — CGA mode 0x04 end-to-end; shared video-mode table across bridge and worker)
+Last updated: 2026-04-23 (session 17 — Doom8088 crash triaged to lost IRET return frame from INT 21h)
 
 ---
 
@@ -29,11 +29,20 @@ IN, IRQ delivery) already works. Build with
 
 ## Active blocker
 
-Eliza / COMMAND.COM "keyboard doesn't work" (session 12, unresolved).
-Eliza is stuck in a linked-list walk in the Watcom runtime at
-CS:IP=0FC8:0BE0 with all-zero nodes; RESPONSE.DAT contents aren't in
-memory. Working hypothesis: file-read fails, eliza hangs pre-input, and
-"keyboard" is a misdiagnosis — unverified. See session 12 entry.
+**Doom8088 crashes at cycleCount ~15.09M (tick 879509)** with
+`--unknownOp=1, --haltCode=0xC0` at CS=0 IP=0x4C. 0xC0 is a 186+ opcode
+(shift r/m8, imm8); execution has wandered into the IVT (linear 0x4C
+is the IP-low byte of IVT[0x13]). Root cause traced to a lost IRET
+return frame from `INT 21h AH=0x30` (Get DOS Version) — see session 17
+entry for the full causal chain.
+
+**Key observation:** This may unblock eliza too. Eliza's symptom
+(stuck on all-zero data in Watcom runtime) is consistent with the same
+pattern: Watcom C apps' restore-context stubs ending up with zero
+registers. Worth retesting eliza after the Doom fix.
+
+Prior blocker (eliza / COMMAND.COM "keyboard doesn't work", session 12)
+still open but demoted — Doom has the cleaner reproduction.
 
 ## What's working
 
@@ -70,11 +79,15 @@ memory. Working hypothesis: file-read fails, eliza hangs pre-input, and
 
 ## What's next (priority order)
 
-1. **Resolve eliza/keyboard (active blocker).** First step: run the
-   prebuilt echo test (`/tmp/echo_test.css`, source at
-   `AppData/Local/Temp/echo_test/ECHO.COM`) and see whether INT 21h
-   AH=01h returns keys under corduroy. That single test rules keyboard
-   in or out.
+1. **Resolve Doom8088 crash (active blocker).** Replay from tick 879341
+   (the moment Doom hits `INT 21h AH=0x30`) and step through Corduroy's
+   INT 21h handler watching SS:SP = 0x31CD:0xFFFA (linear 0x41CE4). The
+   question to answer: why does the IRET at tick 879468 pop zeros
+   instead of the flags/CS/IP pushed at tick 879341? Either (a)
+   Corduroy's int21 handler trampled the return frame, (b) the stack
+   wrap put the frame somewhere the handler cleared, or (c) we have a
+   corduroy bug specific to `AH=0x30`. Cart at `tmp/doom8088.css`
+   (549.7 MB), source at `carts/doom8088/`. See session 17.
 2. **INT 13h hard disk rejection.** DL >= 0x80 → CF=1. Previously
    caused a stall in a timeout loop; with the PIT now firing, should
    self-unblock. Retest.
@@ -118,6 +131,13 @@ written.
 - C BIOS is long-term plan; asm is interim. (2026-04-13)
 
 ## Uncommitted work
+
+**CSS-DOS (session 17):**
+- `carts/doom8088/program.json` + DOOM.EXE + DOOM1.WAD + README.TXT —
+  Doom8088 v20260304 cart (D8M13L.EXE, Mode 13h low-detail, 8088 build)
+  + id Software shareware WAD. Reproduces the cycleCount ~15.09M crash.
+- `docs/logbook/LOGBOOK.md` — session 17 entry + active-blocker swap
+  (Doom8088 > eliza).
 
 **CSS-DOS (session 16):**
 - `bios/corduroy/handlers.asm` + `bios/gossamer/gossamer.asm` — INT 10h
@@ -186,6 +206,140 @@ written.
 Newest first. See `PROTOCOL.md` for format. Pre-session-12 history is
 archived at `docs/archive/logbook-sessions-1-12-2026-04.md`; one-line
 summaries below.
+
+### 2026-04-23 — Session 17: Doom8088 crash triage — lost IRET return frame from INT 21h
+
+**What:** Built Doom8088 cart (FrenkelS/Doom8088 v20260304, D8M13L.EXE
+Mode 13h low-detail build + shareware DOOM1.WAD) and ran it under
+corduroy. Confirmed user-reported crash at cycleCount ~15.09M.
+Instrumented the crash backward using the calcite-debugger MCP
+(`run_until` with `property_equals`, `cs_ip`, and `int` conditions) to
+reconstruct the causal chain.
+
+Implementation side (prior to triage, also in this session):
+- `tests/dac-readback.test.mjs` (18/18 passing): verifies kiln emits
+  dispatch entries for ports 0x3C7/0x3C8/0x3C9 with DAC shadow at
+  linear 0x100000 and 12-read auto-index sequence semantics.
+- `kiln/emit-css.mjs`: added `dacReadIndex`, `dacReadSubIndex` to
+  `regOrder` — this unblocked dispatch emission for the new state vars
+  (the declarations in `template.mjs` were already there; `regOrder`
+  gates which ones become dispatch cases).
+- `kiln/template.mjs`: added `--dacReadIndex` and `--dacReadSubIndex`
+  state vars immediately after `--dacSubIndex`.
+- `kiln/patterns/misc.mjs`: dispatch for IN on opcodes 0xE4/0xE5/0xEC/
+  0xED routing ports 0x3C7/0x3C8/0x3C9 through the DAC path via
+  `--readMem` on DAC_LINEAR.
+- Committed as `3e78b69` before cart work.
+
+Cart construction:
+- Downloaded Doom8088 v20260304 release zip from GitHub
+  (FrenkelS/Doom8088). No local ia16-elf-gcc cross-compiler — took the
+  prebuilt executables instead. Picked D8M13L.EXE (the 8088 build,
+  Mode 13h, low-detail 60×128 viewport) as DOOM.EXE, since it's the
+  variant that matches what our emulation supports.
+- `carts/doom8088/program.json` + DOOM.EXE (189,248 bytes, MD5
+  736e97227aee0f80063b5f511547d643) + DOOM1.WAD (1,535,426 bytes,
+  shareware). Boot args `-noxms -noems -nosound`.
+- Build produces `tmp/doom8088.css` at 549.7 MB (the rom-disk window
+  streams the 1.5 MB WAD; most of the cabinet size is WAD data).
+
+**Triage findings:**
+
+Crash at tick 879509: `--CS=0`, `--IP=76`, `--unknownOp=1`,
+`--haltCode=192` (0xC0). 0xC0 is ROL/ROR/SHL/etc. r/m8,imm8 — a
+186+ instruction, not 8086. The landing spot is inside the IVT
+(linear 0x4C = middle of IVT[0x13], whose stored vector is
+`0x0070:0x01C0` for DOS's hooked INT 13h). Execution has gone
+badly astray and is walking through zero bytes (valid `ADD [BX+SI], AL`
+on 8086) until it hits a non-8086 opcode.
+
+Working back via the debugger:
+
+1. **Tick 879468** — An IRET pops IP=0, CS=0, FLAGS=0. Previous tick
+   had CS=0x55, IP=0x3941, SP=0xFFFA — Watcom runtime territory. The
+   six bytes at SS:0xFFFA are all zeros, so the IRET pops zeros. After
+   this tick, CPU is at CS=0 IP=0 with SP=0x10000 (wrapped).
+
+2. **Tick 879341** — Program executes `INT 21h` with AH=0x30 (Get DOS
+   Version) at CS=0x0DBB, IP=0x24. At the moment of the INT, SP=0.
+   The INT pushes 6 bytes (flags, CS, IP), wrapping SP from 0 to
+   0xFFFA, writing to SS:0xFFFA (SS=0x31CD, linear 0x41CE4). Values
+   pushed: flags=0x0246, CS=0x0DBB, IP=0x0024 — all non-zero, all
+   correct. Verified via `read_memory` at tick 879342.
+
+3. **Tick 879333** — A restore trampoline at CS=0x0BFE, IP=0x10C2 sets
+   SS:SP = CX:DI where DI=0. Disassembly of the stub (bytes I read
+   from memory):
+   ```
+   8E D1    MOV SS, CX      ; CX=0x31CD
+   8B E7    MOV SP, DI      ; DI=0   ← SP becomes 0
+   06       PUSH ES
+   56       PUSH SI
+   8E DA    MOV DS, DX
+   8E C2    MOV ES, DX
+   33 DB    XOR BX, BX
+   FB       STI
+   CB       RETF
+   ```
+   This is the classic Watcom C runtime context-restore trampoline
+   (setjmp/longjmp-style). It was called with DI=0, so either the
+   saved context buffer held zero for SP, or the caller loaded
+   registers incorrectly before calling.
+
+The crash sequence: DOOM restore stub called with DI=0 → SP=0 → first
+INT 21h push wraps SP to 0xFFFA → INT handler runs → IRET at tick
+879468 pops zeros (not the flags/CS/IP that we know were pushed at
+tick 879342) → CS:IP = 0:0 → CPU walks forward through the IVT as
+zero-byte `ADD` instructions → hits 0xC0 inside IVT[0x13] → unknown
+opcode → halt.
+
+**The open question:** Between tick 879341 (INT 21h pushes correct
+frame to SS:0xFFFA) and tick 879468 (IRET pops zeros from SS:0xFFFA),
+something has zeroed those six bytes. Three possibilities:
+- (a) Corduroy's INT 21h handler trampled the caller's frame — most
+  likely suspect given the specific call is AH=0x30 which should be a
+  trivial "return AX=major/minor" and would not normally touch the
+  caller's stack. Worth looking at corduroy's int21h AH=0x30 path.
+- (b) A BIOS handler between the INT and IRET pushed a deeper frame
+  that zeroed that region.
+- (c) A calcite/kiln bug around the SP=0 → 0xFFFA wrap for the push,
+  such that the push *appeared* to succeed but wrote to a different
+  linear address than the IRET's pop reads from. (Tests so far show
+  the push DID write there; the wrap itself behaves correctly.)
+
+The user's prior "keyboard doesn't work" eliza blocker (session 12)
+has the same fingerprint — Watcom C app stuck in all-zero runtime
+data. Fixing whichever of (a)/(b)/(c) is the cause may unblock eliza
+too.
+
+**Mistakes to avoid:** I initially reported the crash tick as "15
+million" but that's the `cycleCount` (~17 cycles/tick). Real tick
+count is 879509. The debugger returns both; call out the distinction
+explicitly in reports.
+
+The debugger server died twice during investigation (once at ~879466
+during a `seek`). The user restarted it manually; on a fresh session
+the background `run_until` jobs didn't persist. Worth making those
+survive restart, or at least failing the poll cleanly.
+
+**Blocked on:** Need debugger session to resume. Next steps:
+seek to tick 879341, tick through INT 21h into corduroy's handler,
+watch linear 0x41CE4..0x41CE9 (the return frame), identify what
+writes zero to those bytes.
+
+**Uncommitted work (this session):**
+- `carts/doom8088/` (new cart: program.json, DOOM.EXE, DOOM1.WAD,
+  README.TXT). The .EXE and .WAD are copies of FrenkelS's release +
+  id Software's shareware WAD; not new code, but bundled for repro.
+- Logbook updates (this entry, active-blocker change, priority list
+  reshuffle).
+- `tmp/doom8088.css` (generated, gitignored).
+
+DAC read-back work (`tests/dac-readback.test.mjs`, `kiln/emit-css.mjs`,
+`kiln/template.mjs`, `kiln/patterns/misc.mjs`) already committed as
+`3e78b69` earlier this session.
+
+---
 
 ### 2026-04-22 — Session 16: CGA mode 0x04 end-to-end + shared mode table
 

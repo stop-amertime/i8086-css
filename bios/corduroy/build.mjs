@@ -47,7 +47,8 @@ const asmSources = ['entry.asm', 'handlers.asm'];
 for (const src of asmSources) {
     const obj = join(BUILD_DIR, src.replace('.asm', '.obj'));
     if (needsRebuild(join(__dirname, src), obj)) {
-        run(env.NASM, ['-f', 'obj', '-o', obj, join(__dirname, src)]);
+        // -I adds the source dir so `incbin` resolves relative files (e.g. cga-8x8.bin).
+        run(env.NASM, ['-f', 'obj', '-I', __dirname + '/', '-o', obj, join(__dirname, src)]);
     }
 }
 

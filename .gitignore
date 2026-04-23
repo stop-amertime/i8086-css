@@ -21,6 +21,7 @@ tests/*.html
 *.o
 !bios/gossamer/gossamer.bin
 !bios/gossamer/gossamer.lst
+!bios/corduroy/cga-8x8.bin
 
 # Build outputs
 bios/corduroy/build/

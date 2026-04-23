@@ -112,6 +112,17 @@ int10h_handler:
     cmp al, 7
     je .tty_done
 
+    ; Dispatch on video mode. Graphics modes (04/05) use the CGA 8x8 font
+    ; rasteriser; text modes use the char+attr pair path.
+    push ax
+    mov al, [video_mode]
+    cmp al, 0x04
+    je .tty_gfx
+    cmp al, 0x05
+    je .tty_gfx
+    pop ax
+
+    ; --- Text-mode path: write char+attr pair to B800:offset ---
     ; Compute VGA offset = (row*cols+col)*2 where cols = 80 (mode 03h) or 40 (mode 01h).
     push ax                ; save char
     push dx                ; save cursor
@@ -152,6 +163,221 @@ int10h_handler:
     jb .tty_save
     dec dh
     call scroll_up_one
+    jmp .tty_save
+
+.tty_gfx:
+    ; --- Graphics-mode path (CGA mode 04/05): rasterise 8x8 glyph ---
+    ; Called after detecting mode 04/05. At entry:
+    ;   - Prior instruction pushed AX for the mode check; we pop that first.
+    ;   - The original character is still saved on the stack from .teletype's
+    ;     top-of-prolog push AX (at line ~95).
+    ;   - DL = column (text cell, 0..39), DH = row (0..24).
+    ;
+    ; We'll render a glyph cell at pixel origin (col*8, row*8) into the CGA
+    ; aperture. Layout: 320x200 2bpp, planes interleaved — even scanlines
+    ; at B800:0000, odd at B800:2000, each scanline 80 bytes. A text cell
+    ; is 8px wide = 2 bytes at 2 bpp.
+    pop ax                   ; discard the mode-branch save
+    ; Read char: AL was discarded, recover from top-of-stack save.
+    pop ax                   ; AX = char (restores .teletype's saved AX)
+    push ax                  ; keep it saved for .tty_done
+
+    ; Save working registers
+    push ds
+    push si
+    push di
+    push bx
+    push cx
+    push dx                  ; save DL (col) + DH (row) for cursor advance
+
+    ; Font lookup offset = char*8. Keep in BP for reuse across 8 iterations.
+    mov bl, al               ; BL = char
+    xor bh, bh
+    mov cl, 3
+    shl bx, cl               ; BX = char*8
+    ; BP = glyph pointer (within BIOS segment). Caller saved BP on entry.
+    lea bp, [cga_font_8x8]
+    add bp, bx               ; BP = &font[char*8], accessed via CS (we'll switch DS to CS).
+
+    ; Switch DS to BIOS seg for font reads. Save/restore per-row so the
+    ; aperture writes go through DS=0xB800.
+    ; Strategy: read all 8 font bytes up front into a scratch buffer on stack.
+    push cs
+    pop ds                   ; DS = CS (BIOS)
+    mov si, bp               ; DS:SI = glyph
+    mov al, [si+0]
+    push ax                  ; push 8 font bytes as 4 words (little endian)
+    mov al, [si+1]
+    mov ah, [si+2]
+    push ax
+    mov al, [si+3]
+    mov ah, [si+4]
+    push ax
+    mov al, [si+5]
+    mov ah, [si+6]
+    push ax
+    mov al, [si+7]
+    push ax                  ; last byte in low of final word
+    ; Stack now (top→bottom): word(f7), word(f6:f5), word(f4:f3), word(f2:f1), word(f0)
+
+    ; DS = CGA aperture segment for the write loop.
+    mov bx, 0xB800
+    mov ds, bx
+
+    ; Recover row/col — DX is the 6th-from-top push (deep). Simpler: peek
+    ; past the 5 font words = 10 bytes, then DX at [sp+10].
+    mov bp, sp
+    mov dx, [bp+10]          ; DL=col, DH=row (saved near top)
+
+    xor cl, cl               ; CL = font row 0..7
+.tty_gfx_row:
+    ; y_abs = row*8 + cl
+    mov al, dh
+    shl al, 1
+    shl al, 1
+    shl al, 1                ; AL = row*8 (0..192)
+    add al, cl               ; AL = y_abs (0..199)
+    ; plane = y_abs & 1; prow = y_abs >> 1
+    mov ah, al
+    and ah, 1                ; AH = plane
+    shr al, 1                ; AL = prow
+    ; DI = prow*80
+    mov bl, 80
+    mul bl                   ; AX = prow*80 (AH:AL destroyed, product in AX)
+    mov di, ax
+    ; add plane*0x2000
+    mov al, dh               ; recompute plane (AH was clobbered by mul)
+    shl al, 1
+    shl al, 1
+    shl al, 1
+    add al, cl
+    and al, 1                ; AL = plane (0 or 1)
+    mov ah, 0
+    cmp al, 0
+    je .gfx_no_plane
+    mov ah, 0x20             ; plane*0x2000 as high byte
+.gfx_no_plane:
+    mov bh, ah
+    mov bl, 0
+    add di, bx               ; DI += plane*0x2000
+    ; add col*2
+    mov bl, dl
+    xor bh, bh
+    shl bx, 1
+    add di, bx               ; DI = final byte offset in aperture
+
+    ; Fetch the font byte for this row from our stack cache.
+    ; Stack layout (from BP=sp): [bp+0]=word(f7 in low), [bp+2]=word(f6:f5)  ← f5 low, f6 high,
+    ; [bp+4]=word(f4:f3), [bp+6]=word(f2:f1), [bp+8]=word(-:f0) wait — push order:
+    ;   push f0 first (top of pushes is last push = f7). So:
+    ;   [bp+0] = f7 (in low byte of word)
+    ;   [bp+2] = f5 low, f6 high
+    ;   [bp+4] = f3 low, f4 high
+    ;   [bp+6] = f1 low, f2 high
+    ;   [bp+8] = f0 (in low byte of word)
+    ; Recompute bp each iteration to accommodate pushes — we don't push inside the loop.
+    mov bp, sp
+    ; Map CL (0..7) to a byte in that layout.
+    cmp cl, 0
+    jne .fr1
+    mov al, [bp+8]
+    jmp short .fr_got
+.fr1:
+    cmp cl, 1
+    jne .fr2
+    mov al, [bp+6]
+    jmp short .fr_got
+.fr2:
+    cmp cl, 2
+    jne .fr3
+    mov al, [bp+7]
+    jmp short .fr_got
+.fr3:
+    cmp cl, 3
+    jne .fr4
+    mov al, [bp+4]
+    jmp short .fr_got
+.fr4:
+    cmp cl, 4
+    jne .fr5
+    mov al, [bp+5]
+    jmp short .fr_got
+.fr5:
+    cmp cl, 5
+    jne .fr6
+    mov al, [bp+2]
+    jmp short .fr_got
+.fr6:
+    cmp cl, 6
+    jne .fr7
+    mov al, [bp+3]
+    jmp short .fr_got
+.fr7:
+    mov al, [bp+0]
+.fr_got:
+    ; Expand AL (8 bits) into 2 bytes at DS:DI (4 leftmost pixels) and DS:DI+1
+    mov ah, 0
+    test al, 0x80
+    jz .gfx_b7
+    or  ah, 0xC0
+.gfx_b7:
+    test al, 0x40
+    jz .gfx_b6
+    or  ah, 0x30
+.gfx_b6:
+    test al, 0x20
+    jz .gfx_b5
+    or  ah, 0x0C
+.gfx_b5:
+    test al, 0x10
+    jz .gfx_b4
+    or  ah, 0x03
+.gfx_b4:
+    mov [di], ah
+    mov ah, 0
+    test al, 0x08
+    jz .gfx_b3
+    or  ah, 0xC0
+.gfx_b3:
+    test al, 0x04
+    jz .gfx_b2
+    or  ah, 0x30
+.gfx_b2:
+    test al, 0x02
+    jz .gfx_b1
+    or  ah, 0x0C
+.gfx_b1:
+    test al, 0x01
+    jz .gfx_b0
+    or  ah, 0x03
+.gfx_b0:
+    mov bx, di
+    inc bx
+    mov [bx], ah             ; write right byte via BX (avoid [di+1] addressing mode quirks)
+
+    inc cl
+    cmp cl, 8
+    jb .tty_gfx_row
+
+    ; Drop the 5 font words we stacked
+    add sp, 10
+
+    pop dx                   ; DL = col, DH = row
+    pop cx
+    pop bx
+    pop di
+    pop si
+    pop ds
+
+    ; Advance cursor (40 cols x 25 rows)
+    inc dl
+    cmp dl, 40
+    jb .tty_save
+    xor dl, dl
+    inc dh
+    cmp dh, 25
+    jb .tty_save
+    dec dh                   ; cap at row 24; no scroll in gfx mode.
     jmp short .tty_save
 
 .tty_cr:
@@ -1232,4 +1458,15 @@ scancode2ascii:
     db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00   ; 48 Up, 4B Left, 4D Right (all ASCII=0)
     db 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00   ; 50 Down
     times 0x80 - ($ - scancode2ascii) db 0x00
+
+; ============================================================
+; CGA 8x8 ROM font for graphics-mode teletype (modes 04/05).
+; 256 glyphs × 8 bytes, MSB = leftmost pixel. Matches IBM VGA BIOS
+; 8×8 font (a superset of the original CGA ROM font, same glyph shapes
+; for codepoints 0x00-0xFF).
+; Referenced by .tty_gfx via `lea bp, [cga_font_8x8]` — BP is relative
+; to BIOS segment (CS=0xF000) at handler entry.
+; ============================================================
+cga_font_8x8:
+    incbin "cga-8x8.bin"
 

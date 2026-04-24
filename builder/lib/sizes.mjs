@@ -30,6 +30,33 @@ export function resolveMemorySize(value, { autofitBytes } = {}) {
   throw new Error(`memory.conventional: unknown value ${JSON.stringify(value)}`);
 }
 
+// DOS autofit constants — shared by build.mjs (for harness-header memory
+// resolution) and stages/kiln.mjs (the canonical consumer). Kept here so
+// the two paths can't drift.
+//
+// DOS layout assumed:
+//   0x00000 - 0x00600   IVT + BDA (1.5 KB, always)
+//   0x00600 - 0x1A000   kernel image + decompressed code (~105 KB)
+//   0x1A000 - ...       TPA: loaded program + stack + DOS heap
+//   top ~104 KB         DOS kernel high area (relocated at boot via INT 12h)
+export const DOS_TPA_BASE     = 0x1A000;   // kernel image + decompressed code
+export const DOS_HIGH_AREA    = 0x1A000;   // kernel high area at the top
+export const DOS_STACK_BUDGET = 0x10000;   // 64 KB stack + heap headroom
+export const DOS_MIN_MEM      = 0x20000;   // 128 KB floor
+export const DOS_MAX_MEM      = 0xA0000;   // 640 KB cap
+export const DOS_MEM_ALIGN    = 0x4000;    // 16 KB granularity
+
+export function autofitDosMem(programSize) {
+  const raw = DOS_TPA_BASE + programSize + DOS_STACK_BUDGET + DOS_HIGH_AREA;
+  const aligned = Math.ceil(raw / DOS_MEM_ALIGN) * DOS_MEM_ALIGN;
+  return Math.min(DOS_MAX_MEM, Math.max(DOS_MIN_MEM, aligned));
+}
+
+// Autofit for hack-preset .COM carts. Fits program + 256 bytes of headroom.
+export function autofitHackMem(programSize) {
+  return Math.max(0x600, 0x100 + programSize + 0x100);
+}
+
 export function resolveFloppySize(value, { autofitBytes } = {}) {
   if (typeof value === 'number') return value;
   if (value === 'autofit') {

@@ -506,12 +506,22 @@ function emitReadMemStreaming(opts, ws) {
   }
   // Rom-disk window: 0xD0000..0xD01FF (512 bytes). Each read is dispatched
   // to --readDiskByte(lba_word, offset). The LBA register is a normal
-  // writable word at linear 0x4F0 (low = --__1m1264, high = --__1m1265),
-  // composed here as low + high*256 — same pattern as other 16-bit reads.
+  // writable word at linear 0x4F0 composed here as low + high*256 — same
+  // pattern as other 16-bit reads. The source changes with PACK_SIZE:
+  //   pack=1: bytes 0x4F0/0x4F1 live in --__1m1264/__1m1265.
+  //   pack=2: both bytes live in cell --__1mc632 (1264/2=632) as low/high
+  //           halves — extract with mod/round-down-div, same shape as the
+  //           read dispatch above.
   if (diskBytes) {
+    const lbaLowExpr = PACK_SIZE === 1
+      ? `var(--__1m1264)`
+      : `mod(var(--__1mc${cellIdxOf(0x4F0)}), 256)`;
+    const lbaHighExpr = PACK_SIZE === 1
+      ? `var(--__1m1265)`
+      : `round(down, var(--__1mc${cellIdxOf(0x4F1)}) / 256)`;
     for (let i = 0; i < 512; i++) {
       const addr = 0xD0000 + i;
-      buf += `    style(--at: ${addr}): --readDiskByte(calc((var(--__1m1264) + var(--__1m1265) * 256) * 512 + ${i}));\n`;
+      buf += `    style(--at: ${addr}): --readDiskByte(calc((${lbaLowExpr} + ${lbaHighExpr} * 256) * 512 + ${i}));\n`;
       if (buf.length > 8192) { ws.write(buf); buf = ''; }
     }
   }

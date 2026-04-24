@@ -1,0 +1,13 @@
+[
+  { "wait": "until-text-contains", "text": "West of House", "maxTicks": 5000000, "maxWallMs": 120000 },
+  { "shoot": "intro" },
+  { "type": "open mailbox\r" },
+  { "wait": "ticks", "ticks": 40000 },
+  { "shoot": "mailbox-opened" },
+  { "type": "take leaflet\r" },
+  { "wait": "ticks", "ticks": 40000 },
+  { "shoot": "leaflet-taken" },
+  { "type": "read leaflet\r" },
+  { "wait": "ticks", "ticks": 40000 },
+  { "shoot": "leaflet-read" }
+]

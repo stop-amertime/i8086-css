@@ -39,7 +39,7 @@ export const NUM_WRITE_SLOTS = 6;
 // wins on same-cell collisions (matching the old top-down byte-level
 // dispatch semantics).
 //
-// Configurable via env var KILN_PACK (1 or 2). Default is 2 now.
+// Configurable via env var KILN_PACK (1 or 2). Default is 2.
 export const PACK_SIZE = (() => {
   const raw = typeof process !== 'undefined' && process.env && process.env.KILN_PACK;
   if (!raw) return 2;

@@ -92,6 +92,18 @@ See [`docs/architecture.md`](docs/architecture.md#vocabulary). In short:
 - **BIOSes** — Gossamer (hack), Muslin (assembly DOS BIOS), Corduroy (default C DOS BIOS).
 - **player** — static HTML shell for running cabinets in Chrome. 
 
+## Testing and debugging infrastructure
+
+When you're about to run tests, diff against a reference emulator, or
+check whether a cart still works: `tests/harness/` is the unified
+entrypoint. Start with `node tests/harness/run.mjs smoke` and read
+[`docs/TESTING.md`](docs/TESTING.md) for the full tool list.
+
+In particular: **do not reach for the old `fulldiff.mjs` / `ref-dos.mjs`
+/ `compare-dos.mjs` scripts** under `tools/` or `../calcite/tools/` —
+they import the deleted `transpiler/` directory and don't work. The
+replacement is `node tests/harness/pipeline.mjs fulldiff <cabinet>.css`.
+
 ## Quick orientation
 
 - **Current architecture:** V4 single-cycle. Every instruction completes

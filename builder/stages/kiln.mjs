@@ -13,7 +13,7 @@
 
 import { emitCSS } from '../../kiln/emit-css.mjs';
 import { comMemoryZones, dosMemoryZones, buildIVTData } from '../../kiln/memory.mjs';
-import { resolveMemorySize } from '../lib/sizes.mjs';
+import { resolveMemorySize, autofitDosMem, DOS_MAX_MEM } from '../lib/sizes.mjs';
 
 const KERNEL_LINEAR = 0x600; // DOS kernel load address
 
@@ -78,30 +78,8 @@ function patchBiosStackSeg(biosBytes, memBytes) {
   biosBytes[found + 1] = (stackSeg >> 8) & 0xFF;
 }
 
-// DOS conventional memory layout assumed by autofit:
-//
-//   0x00000 - 0x00600   IVT + BDA (1.5 KB, always)
-//   0x00600 - 0x1A000   kernel image + decompressed code (~105 KB)
-//   0x1A000 - ...       TPA: loaded program + stack + DOS heap
-//   top ~104 KB         DOS kernel high area (relocated at boot via INT 12h)
-//
-// The caller-visible memBytes is the total conventional-zone size. Corduroy's
-// install_bda writes memBytes/1024 into BDA 0x413 (patched in by
-// patchBiosMemSize below) so INT 12h returns the real top and the kernel
-// relocates into valid RAM rather than into the unmapped gap between the
-// autofit top and 0xA0000.
-const DOS_TPA_BASE     = 0x1A000; // kernel image + decompressed code
-const DOS_HIGH_AREA    = 0x1A000; // kernel high area at the top
-const DOS_STACK_BUDGET = 0x10000; // 64 KB stack + heap headroom
-const DOS_MIN_MEM      = 0x20000; // 128 KB floor
-const DOS_MAX_MEM      = 0xA0000; // 640 KB cap
-const DOS_MEM_ALIGN    = 0x4000;  // 16 KB granularity
-
-function autofitDosMem(programSize) {
-  const raw = DOS_TPA_BASE + programSize + DOS_STACK_BUDGET + DOS_HIGH_AREA;
-  const aligned = Math.ceil(raw / DOS_MEM_ALIGN) * DOS_MEM_ALIGN;
-  return Math.min(DOS_MAX_MEM, Math.max(DOS_MIN_MEM, aligned));
-}
+// Autofit constants live in builder/lib/sizes.mjs so build.mjs can use
+// them to resolve memBytes for the harness header before runKiln runs.
 
 function runKilnDos({ bios, floppy, manifest, kernelBytes, output, header }) {
   if (!kernelBytes) throw new Error('runKilnDos: kernelBytes is required');

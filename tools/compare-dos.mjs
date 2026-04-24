@@ -1,4 +1,14 @@
 #!/usr/bin/env node
+//
+// ====================================================================
+// BROKEN — DO NOT USE. Imports ../transpiler/src/patterns/bios.mjs which
+// was deleted in the builder/Kiln rewrite. Use
+//
+//   node tests/harness/fulldiff.mjs <cabinet.css>
+//
+// for DOS-path divergence detection. See tests/harness/README.md.
+// ====================================================================
+//
 // DOS-path conformance comparison: reference 8086 emulator vs calcite.
 //
 // Uses the calcite debugger's /tick and /state endpoints to step calcite

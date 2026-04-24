@@ -1,0 +1,38 @@
+{
+  "recordedAt": "2026-04-23T17:48:52.310Z",
+  "cabinet": "C:\\Users\\AdmT9N0CX01V65438A\\Documents\\src\\CSS-DOS\\tests\\harness\\cache\\dos-smoke.css",
+  "ticks": [
+    {
+      "tick": 0,
+      "mode": 0,
+      "phash": "0000000000000000",
+      "textHash": "49cb2d2ab1323ea9",
+      "regHash": "f4034c0732b260cc",
+      "shotKind": "text"
+    },
+    {
+      "tick": 10000,
+      "mode": 19,
+      "phash": "0000000000000000",
+      "textHash": null,
+      "regHash": "75c1330818a36ea9",
+      "shotKind": "mode13"
+    },
+    {
+      "tick": 50000,
+      "mode": 19,
+      "phash": "0000000000000000",
+      "textHash": null,
+      "regHash": "7d9f56167ff26422",
+      "shotKind": "mode13"
+    },
+    {
+      "tick": 100000,
+      "mode": 19,
+      "phash": "0000000006000000",
+      "textHash": null,
+      "regHash": "800a727f987fca93",
+      "shotKind": "mode13"
+    }
+  ]
+}

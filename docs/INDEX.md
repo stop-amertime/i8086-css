@@ -33,6 +33,8 @@ Start at the top, go as deep as you need.
 
 | Doc | For |
 |---|---|
+| [`TESTING.md`](TESTING.md) | **The testing harness. Start here for anything scripted.** |
+| `../tests/harness/README.md` | Full harness reference: all subcommands, all workflows. |
 | [`debugging/workflow.md`](debugging/workflow.md) | Standard process: find divergence, diagnose, fix, verify. |
 | [`debugging/calcite-debugger.md`](debugging/calcite-debugger.md) | HTTP API, endpoints, typical sessions. |
 | [`debugging/known-bugs.md`](debugging/known-bugs.md) | Known bugs + patterns to watch for. |

@@ -1,0 +1,6 @@
+# Cabinets we build for smoke testing — regenerated per run.
+cache/
+# Timestamped JSON reports. `latest.json` is also regenerated every run.
+results/
+# Baseline PNGs + JSONs ARE meant to be checked in — that's the point.
+# !baselines/

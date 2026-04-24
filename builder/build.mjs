@@ -15,16 +15,44 @@
 //
 // See docs/cart-format.md for the full cart schema.
 
-import { createWriteStream, statSync, mkdirSync, readFileSync } from 'node:fs';
+import { createWriteStream, statSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
+import { createHash } from 'node:crypto';
+
 import { resolveCart } from './lib/cart.mjs';
 import { resolveManifest } from './lib/config.mjs';
+import {
+  resolveMemorySize,
+  autofitDosMem,
+  autofitHackMem,
+  DOS_MAX_MEM,
+} from './lib/sizes.mjs';
 import { buildBios } from './stages/bios.mjs';
 import { buildFloppy } from './stages/floppy.mjs';
 import { runKiln } from './stages/kiln.mjs';
+import { buildHarnessHeader } from '../tests/harness/lib/cabinet-header.mjs';
+
+function resolveDosMemBytes(manifest, floppy) {
+  let autofitBytes = DOS_MAX_MEM;
+  const autorun = manifest.boot?.autorun;
+  if (autorun && floppy?.layout) {
+    const prog = floppy.layout.find(f => f.name === autorun.toUpperCase());
+    if (prog?.size != null) autofitBytes = autofitDosMem(prog.size);
+  }
+  return resolveMemorySize(manifest.memory?.conventional ?? 'autofit', { autofitBytes });
+}
+
+function resolveHackMemBytes(manifest, programBytes) {
+  const autofitBytes = autofitHackMem(programBytes.length);
+  return resolveMemorySize(manifest.memory?.conventional ?? 'autofit', { autofitBytes });
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(Buffer.from(bytes)).digest('hex');
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..');
@@ -110,8 +138,6 @@ async function main() {
   mkdirSync(dirname(resolve(outputPath)), { recursive: true });
   const outStream = createWriteStream(resolve(outputPath), { encoding: 'utf-8' });
 
-  const header = buildCabinetHeader({ cart, manifest, bios, floppy });
-
   // Load the bytes that Kiln needs. DOS carts need the kernel binary;
   // hack carts need the .COM program. Both are read here so kiln.mjs
   // stays free of any Node fs calls (browser-safe).
@@ -125,12 +151,86 @@ async function main() {
     kernelBytes = [...readFileSync(resolve(repoRoot, 'dos', 'bin', 'kernel.sys'))];
   }
 
+  // Resolve final memBytes using the same path kiln will use, so the
+  // harness header records the exact conventional-memory size the cabinet
+  // was built with. Ref emulators and the screenshot tool use this.
+  const memBytes = manifest.preset === 'hack'
+    ? resolveHackMemBytes(manifest, programBytes)
+    : resolveDosMemBytes(manifest, floppy);
+
+  const harnessMeta = {
+    builtAt: new Date().toISOString(),
+    cartName: cart.name,
+    preset: manifest.preset,
+    bios: {
+      flavor: bios.meta.flavor,
+      version: bios.meta.version ?? null,
+      sizeBytes: bios.meta.sizeBytes,
+      sourceHash: sha256(bios.bytes),
+      entrySegment: bios.entrySegment,
+      entryOffset: bios.entryOffset,
+    },
+    memory: {
+      conventional: manifest.memory?.conventional ?? 'autofit',
+      conventionalBytes: memBytes,
+      gfx: manifest.memory?.gfx ?? null,
+      textVga: manifest.memory?.textVga ?? null,
+      cgaGfx: manifest.memory?.cgaGfx ?? null,
+    },
+    disk: floppy ? {
+      mode: manifest.disk?.mode ?? null,
+      size: manifest.disk?.size ?? null,
+      writable: manifest.disk?.writable ?? null,
+      sizeBytes: floppy.bytes.length,
+      sha256: sha256(floppy.bytes),
+      layout: floppy.layout,
+    } : null,
+    program: programBytes ? {
+      name: manifest.boot?.raw ?? null,
+      sizeBytes: programBytes.length,
+      sha256: sha256(programBytes),
+    } : null,
+    kernel: kernelBytes ? {
+      sizeBytes: kernelBytes.length,
+      sha256: sha256(kernelBytes),
+    } : null,
+  };
+
+  const humanHeader = buildCabinetHeader({ cart, manifest, bios, floppy });
+  const harnessHeader = buildHarnessHeader(harnessMeta);
+  // Machine-readable block sits right after the human comment. Both are
+  // inside the first 64 KB which is what cabinet-header.mjs scans.
+  const header = `${humanHeader}\n${harnessHeader}`;
+
   console.log(`[kiln]   emitting CSS to ${outputPath}...`);
   runKiln({ bios, floppy, manifest, kernelBytes, programBytes, output: outStream, header });
 
   await new Promise(done => outStream.end(done));
   const size = statSync(resolve(outputPath)).size;
   console.log(`[done]   ${outputPath} (${(size / 1024 / 1024).toFixed(1)} MB)`);
+
+  // Sidecar binaries. The cabinet is the authoritative artifact for
+  // Chrome/calcite; the sidecars exist so the reference emulator and
+  // other debug tools can reconstruct the same 1 MB memory image
+  // *without* re-running the builder or re-parsing 150 MB of CSS.
+  //   <cabinet>.bios.bin      — raw BIOS bytes that ended up in the cabinet
+  //                             (after patchBiosMemSize / patchBiosStackSeg
+  //                              for corduroy). This is the BIOS the CSS
+  //                              contains, not the pristine pre-patch one.
+  //   <cabinet>.disk.bin      — floppy image (FAT12), DOS preset only
+  //   <cabinet>.program.bin   — .COM bytes, hack preset only
+  //   <cabinet>.meta.json     — same payload as the harness-header JSON,
+  //                             in case a reader doesn't want to scrape
+  //                             the cabinet.
+  const cabinetBase = resolve(outputPath).replace(/\.css$/, '');
+  // Post-runKiln: corduroy's bios.bytes has been mutated by
+  // patchBiosMemSize / patchBiosStackSeg — those are the bytes that ended
+  // up in the cabinet, so those are what the ref emulator should see.
+  writeFileSync(`${cabinetBase}.bios.bin`, Buffer.from(bios.bytes));
+  if (floppy) writeFileSync(`${cabinetBase}.disk.bin`, Buffer.from(floppy.bytes));
+  if (programBytes) writeFileSync(`${cabinetBase}.program.bin`, Buffer.from(programBytes));
+  if (kernelBytes) writeFileSync(`${cabinetBase}.kernel.bin`, Buffer.from(kernelBytes));
+  writeFileSync(`${cabinetBase}.meta.json`, JSON.stringify(harnessMeta, null, 2));
 }
 
 function buildCabinetHeader({ cart, manifest, bios, floppy }) {

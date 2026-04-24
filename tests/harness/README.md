@@ -214,7 +214,7 @@ hashes and human sanity-checks.
 - `pipeline.mjs` — single-command entrypoint with subcommands
 - `run.mjs` — preset-level runner (`smoke`, `conformance`, `visual`, `full`)
 - `fulldiff.mjs` — streaming calcite-vs-ref divergence finder
-- `lib/debugger-client.mjs` — harness-facing wrapper around the MCP debugger
+- `lib/debugger-client.mjs` — harness-facing wrapper around the MCP debugger. See [Agent-oriented tooling](../../../calcite/docs/debugger.md#agent-oriented-tooling) in the calcite docs for the full tool surface (`inspect_packed_cell`, `compare_paths`, `watchpoint`, async `run_until`, multi-session diffs, `trace_property`, `execution_summary`, etc.).
 - `lib/mcp-client.mjs` — raw MCP over child-stdio or TCP
 - `lib/ref-machine.mjs` — JS reference 8086 set up from cabinet sidecars
 - `lib/cabinet-header.mjs` — builder emits a `/*!HARNESS v1 ...!*/` JSON block; this reads it

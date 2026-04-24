@@ -36,7 +36,7 @@ Start at the top, go as deep as you need.
 | [`TESTING.md`](TESTING.md) | **The testing harness. Start here for anything scripted.** |
 | `../tests/harness/README.md` | Full harness reference: all subcommands, all workflows. |
 | [`debugging/workflow.md`](debugging/workflow.md) | Standard process: find divergence, diagnose, fix, verify. |
-| [`debugging/calcite-debugger.md`](debugging/calcite-debugger.md) | HTTP API, endpoints, typical sessions. |
+| [`debugging/calcite-debugger.md`](debugging/calcite-debugger.md) | HTTP API, endpoints, typical sessions. Points at the [Agent-oriented tooling](../../calcite/docs/debugger.md#agent-oriented-tooling) inventory for the MCP surface agents drive. |
 | [`debugging/known-bugs.md`](debugging/known-bugs.md) | Known bugs + patterns to watch for. |
 | [`reference/kernel-boot-sequence.md`](reference/kernel-boot-sequence.md) | What EDR-DOS does during boot; what BIOS services it needs. |
 | [`reference/tick-benchmarks.md`](reference/tick-benchmarks.md) | Rough tick counts for boot milestones — size debugger runs, spot stalls. |

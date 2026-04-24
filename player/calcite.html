@@ -70,10 +70,9 @@
        upscale sharp for the chunky CGA/VGA aesthetic.
 
        Loading state: before the first frame arrives the <img> has no
-       pixels, so we paint the cell with an animated CSS background
-       the user sees until Calcite's first JPEG lands on top. The
-       moment frames start streaming the JPEG covers the background
-       entirely. No JS needed. */
+       pixels, so the cell's black background shows through with a
+       plain-text loading message underneath. The moment frames start
+       streaming the JPEG covers the text entirely. No JS needed. */
     .screen-cell {
       width: 640px;
       height: 400px;
@@ -82,35 +81,25 @@
       border-right: 1px solid #fff;
       border-bottom: 1px solid #fff;
       background-color: #000;
-      background-image:
-        linear-gradient(90deg,
-          rgba(255,255,255,0) 0%,
-          rgba(255,255,255,0.06) 50%,
-          rgba(255,255,255,0) 100%),
-        repeating-linear-gradient(
-          -45deg,
-          #001030 0 16px,
-          #002050 16px 32px
-        );
-      background-size: 200% 100%, auto auto;
-      animation: loading-sweep 1.6s linear infinite;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #55ffff;
+      color: #c0c0c0;
       font-family: 'DOS', 'Fixedsys', 'Terminal', monospace;
       font-size: 14px;
-      text-shadow: 0 0 2px #000;
       position: relative;
     }
-    @keyframes loading-sweep {
-      0%   { background-position: -100% 0, 0 0; }
-      100% { background-position:  100% 0, 0 0; }
-    }
-    .screen-cell::after {
-      content: 'Compiling cabinet… Calcite is warming up.';
+    .loading-msg {
       position: absolute;
+      inset: 0;
       z-index: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      line-height: 1.5;
+      padding: 0 16px;
     }
     .screen {
       display: block;
@@ -214,6 +203,11 @@
            they cover the background completely. Pure CSS — no JS
            toggling visibility. -->
       <div class="screen-cell">
+        <div class="loading-msg">
+          <div>Parsing 50-100MB of CSS text (a lot)...</div>
+          <div>Your browser may hang/look unresponsive</div>
+          <div>Just wait ~10 seconds and it'll start.</div>
+        </div>
         <img id="calcite-screen"
              class="screen"
              src="/_stream/fb"

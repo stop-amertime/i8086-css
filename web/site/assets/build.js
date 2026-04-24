@@ -220,10 +220,6 @@ $('start').addEventListener('click', async () => {
         $('log').textContent += message + '\n';
       },
     });
-
-    // Save to Cache Storage so /player/calcite.html can load it via the
-    // service worker. Cache Storage is the cross-tab hop from build→play.
-    await saveCabinet(blob);
   } catch (err) {
     const li = document.createElement('li');
     li.textContent = 'Error: ' + err.message;
@@ -245,8 +241,57 @@ $('start').addEventListener('click', async () => {
   const dl = $('download');
   dl.href = window._prevBlobUrl;
 
-  // Wire up paginated source viewer.
+  // Wire up paginated source viewer. Prism highlights page 1 synchronously
+  // on the main thread (~50 KB chunk). We run it BEFORE handing cabinet
+  // bytes to the bridge worker so the user sees the source immediately,
+  // while the parse/compile happens in the background.
   setupSourceViewer(blob);
+
+  // Let the browser paint the result + the highlighted source page before
+  // we kick off the background parse/compile. Prefer requestAnimationFrame
+  // (waits for an actual composited frame), but fall back to a short
+  // setTimeout so a backgrounded tab — where rAF is throttled to ~0 Hz —
+  // still progresses. Whichever fires first unblocks us.
+  await new Promise((resolve) => {
+    let done = false;
+    const once = () => { if (!done) { done = true; resolve(); } };
+    requestAnimationFrame(() => requestAnimationFrame(once));
+    setTimeout(once, 100);
+  });
+
+  // Hand the cabinet blob directly to the bridge worker. Blobs are
+  // structured-cloned by reference (no byte copy), so this costs ~0 on
+  // the main thread. The worker does the `arrayBuffer()` materialisation
+  // itself — off the main thread, where the compile was already going to
+  // run. This replaces the old broadcast→SW-fetch→text() round-trip,
+  // which materialised the whole cabinet as a JS string.
+  //
+  // Two modes:
+  //   - eager  (checkbox on): bridge compiles NOW, in the background, so
+  //       clicking Play is instant. Cost is renderer-process memory/GC
+  //       pressure for the compile window, which can make the build tab
+  //       feel sluggish. Fine when the user intends to play next.
+  //   - lazy   (checkbox off): bridge just holds the blob and compiles
+  //       on viewer-connect. Build tab stays snappy; Play button pays
+  //       the compile wait.
+  const eager = $('eager-compile').checked;
+  try {
+    if (window.__calciteBridge) {
+      window.__calciteBridge.postMessage({
+        type: eager ? 'cabinet-blob' : 'cabinet-blob-lazy',
+        blob,
+      });
+    }
+  } catch (e) {
+    console.warn('[build] failed to post cabinet blob to bridge:', e);
+  }
+
+  // Save to Cache Storage so /player/calcite.html can load it via the
+  // service worker on a cold page load. The bridge already has the
+  // bytes; this is just for the player's later fetch.
+  saveCabinet(blob).catch((e) =>
+    console.warn('[build] saveCabinet failed:', e)
+  );
 
   // Split mode (?split=1): (re)load the calcite player iframe so it
   // picks up the freshly-cached /cabinet.css.
@@ -260,54 +305,128 @@ $('start').addEventListener('click', async () => {
 });
 
 // ── Paginated source viewer ───────────────────────────────────────────────────
-// Slices the Blob into PAGE_SIZE-byte pages and displays one page at a time.
-// blob.slice() is zero-copy; only one page materialises into JS memory at once.
+// Cabinets are 100+ MB. Prism on a single 50KB page can still lock the main
+// thread for seconds because cabinet CSS has pathologically long lines
+// (packed-cell dispatch tables). So we paginate by LINE COUNT, not bytes.
+//
+// To avoid scanning the whole blob upfront (which would itself stall the
+// tab), page offsets are discovered lazily: page 1 starts at byte 0; the
+// start of page N is found by streaming forward from the last known
+// offset, counting newlines, and caching the result. Navigation to page N
+// walks just enough bytes to find page N's start.
+//
+// Total page count starts as an upper bound (blob.size / avg bytes per
+// page, clamped to ≥ pages discovered so far) and narrows as we index
+// further. When EOF is hit during a forward scan, the exact count is
+// locked in.
 
-const PAGE_SIZE = 50 * 1024;
+const LINES_PER_PAGE = 200;
 
-function setupSourceViewer(blob) {
-  const pre = $('source-pre');
+async function setupSourceViewer(blob) {
   const code = $('source-code');
   const pageNumEl = $('page-num');
   const pageTotalEl = $('page-total');
   const pageBytesEl = $('page-bytes');
   const jump = $('page-jump');
-
-  const pageCount = Math.max(1, Math.ceil(blob.size / PAGE_SIZE));
-  let currentPage = 1;
-
-  pageTotalEl.textContent = pageCount;
-  jump.max = pageCount;
-  $('source-viewer').hidden = false;
-
-  async function render(page) {
-    const clamped = Math.max(1, Math.min(pageCount, page));
-    currentPage = clamped;
-    const start = (clamped - 1) * PAGE_SIZE;
-    const end = Math.min(blob.size, start + PAGE_SIZE);
-    const text = await blob.slice(start, end).text();
-    code.textContent = text;
-    // Prism.highlightElement replaces the <code>'s textContent with spans.
-    // Safe to call every page change -- it's fast on 50 KB chunks.
-    if (window.Prism) window.Prism.highlightElement(code);
-    pageNumEl.textContent = clamped;
-    jump.value = clamped;
-    pageBytesEl.textContent = `bytes ${start.toLocaleString()}–${(end - 1).toLocaleString()}`;
-  }
-
-  // Re-wire listeners (remove old ones by cloning the buttons).
   const prevBtn = $('page-prev');
   const nextBtn = $('page-next');
-  const prevClone = prevBtn.cloneNode(true);
-  const nextClone = nextBtn.cloneNode(true);
-  prevBtn.replaceWith(prevClone);
-  nextBtn.replaceWith(nextClone);
-  const jumpClone = jump.cloneNode(true);
-  jump.replaceWith(jumpClone);
 
-  prevClone.addEventListener('click', () => render(currentPage - 1));
-  nextClone.addEventListener('click', () => render(currentPage + 1));
-  jumpClone.addEventListener('change', () => render(parseInt(jumpClone.value, 10) || 1));
+  $('source-viewer').hidden = false;
 
-  render(1);
+  // pageStarts[i] = byte offset of page (i+1)'s first character.
+  // Always at least [0]; extended lazily. If exactPageCount is set,
+  // pageStarts has length = exactPageCount + 1 with a trailing sentinel
+  // equal to blob.size (so page i spans [pageStarts[i], pageStarts[i+1])).
+  const pageStarts = [0];
+  let exactPageCount = null;
+  let currentPage = 1;
+
+  // Rough upper-bound estimate for the total page count until we've
+  // scanned the full file. Assumes ~avg line length of 40 bytes; we
+  // always show at least (pages discovered so far).
+  function estimateTotalPages() {
+    if (exactPageCount != null) return exactPageCount;
+    const est = Math.max(1, Math.ceil(blob.size / (LINES_PER_PAGE * 40)));
+    return Math.max(est, pageStarts.length);
+  }
+
+  // Extend pageStarts until it contains at least (targetPage+1) entries
+  // or we hit EOF. Streams in 256KB chunks from the last known offset.
+  async function ensurePage(targetPage) {
+    if (targetPage < pageStarts.length) return;
+    if (exactPageCount != null) return;
+
+    const CHUNK = 256 * 1024;
+    let offset = pageStarts[pageStarts.length - 1];
+    // We're looking for the START of page (pageStarts.length + 1), i.e.
+    // the byte after the LINES_PER_PAGE-th newline counting from `offset`.
+    let linesSinceLastMark = 0;
+
+    while (pageStarts.length <= targetPage && offset < blob.size) {
+      const end = Math.min(offset + CHUNK, blob.size);
+      const slice = blob.slice(offset, end);
+      const buf = new Uint8Array(await slice.arrayBuffer());
+      for (let i = 0; i < buf.length; i++) {
+        if (buf[i] === 0x0A) {
+          linesSinceLastMark++;
+          if (linesSinceLastMark === LINES_PER_PAGE) {
+            pageStarts.push(offset + i + 1);
+            linesSinceLastMark = 0;
+            if (pageStarts.length > targetPage) break;
+          }
+        }
+      }
+      offset = end;
+    }
+
+    if (offset >= blob.size) {
+      // EOF: lock in the exact page count. The last page may be short.
+      exactPageCount = pageStarts.length;
+      pageStarts.push(blob.size); // trailing sentinel
+    }
+  }
+
+  async function renderPage(n) {
+    await ensurePage(n);
+    if (exactPageCount != null && n > exactPageCount) n = exactPageCount;
+    currentPage = n;
+
+    const startByte = pageStarts[n - 1];
+    // End byte: if we know the next page's start, use it; else slice to
+    // EOF (last page, still indexing).
+    const endByte = pageStarts[n] != null ? pageStarts[n] : blob.size;
+    const slice = blob.slice(startByte, endByte);
+    const text = await slice.text();
+
+    code.textContent = text;
+    if (window.Prism) window.Prism.highlightElement(code);
+    $('source-pre').scrollTop = 0;
+    window.scrollTo({ top: $('source-viewer').offsetTop });
+
+    const total = estimateTotalPages();
+    pageNumEl.textContent = String(n);
+    pageTotalEl.textContent = exactPageCount != null ? String(total) : `~${total}`;
+    jump.value = n;
+    jump.max = total;
+    pageBytesEl.textContent =
+      `${(endByte - startByte).toLocaleString()} bytes · lines ` +
+      `${((n - 1) * LINES_PER_PAGE + 1).toLocaleString()}–` +
+      `${((n - 1) * LINES_PER_PAGE + text.split('\n').length).toLocaleString()}`;
+
+    prevBtn.disabled = n <= 1;
+    nextBtn.disabled = exactPageCount != null && n >= exactPageCount;
+  }
+
+  prevBtn.onclick = () => { if (currentPage > 1) renderPage(currentPage - 1); };
+  nextBtn.onclick = () => {
+    if (exactPageCount == null || currentPage < exactPageCount) {
+      renderPage(currentPage + 1);
+    }
+  };
+  jump.onchange = () => {
+    const v = Math.max(1, parseInt(jump.value, 10) || 1);
+    renderPage(v);
+  };
+
+  await renderPage(1);
 }

@@ -20,13 +20,28 @@
 
 import { pickMode, decodeCga4, decodeCga2, rasteriseText, modeName } from '/calcite/video-modes.mjs';
 
+// Silence the calcite WASM's info/log/debug chatter (it emits a handful of
+// lines per parse/compile + periodic informational logs). We keep warn/error
+// so genuine problems still surface. Done at module top so it applies before
+// the WASM init below can fire any of its startup messages.
+{
+  const noop = () => {};
+  console.log = noop;
+  console.info = noop;
+  console.debug = noop;
+}
+
 let initCalcite, CalciteEngine;
 
 let engine = null;
 let fontAtlas = null;
 let swPort = null;
-let cachedCss = null;     // the cabinet CSS, read once at boot
 let running = false;      // tick loop gate — true only while a viewer is watching
+
+// Lazy-mode holding pen: when the build tab posts a 'cabinet-blob-lazy'
+// we stash the Blob here and defer parse/compile until the first viewer
+// connects. Cleared after it's consumed. In eager mode this stays null.
+let pendingLazyBlob = null;
 
 
 // Batch pacing — start small (200 cycles) and let the EMA grow
@@ -46,7 +61,7 @@ let batchMsEma = TARGET_MS;
 // Canary — bump this when you change this file so you can confirm the
 // browser is actually serving the new version. Shows up in every status
 // line so it's impossible to miss in the console.
-const BRIDGE_VERSION = 'v26-modelog';
+const BRIDGE_VERSION = 'v28-lazy-toggle';
 
 async function boot() {
   postStatus(`bridge boot ${BRIDGE_VERSION}`);
@@ -65,85 +80,34 @@ async function boot() {
       if (buf.length === 4096) fontAtlas = buf;
     }
   } catch {}
-  // 3. Listen for cabinet-ready broadcasts from the builder. Fires
-  //    whenever storage.saveCabinet() lands a new cabinet in cache.
-  //    On fire we fetch the bytes and compile. This keeps the bridge
-  //    passive until there's actually something to run.
-  try {
-    const bc = new BroadcastChannel('cssdos-cabinet');
-    bc.onmessage = (ev) => {
-      if (ev.data && ev.data.type === 'cabinet-ready') {
-        compileCabinet().catch((e) => postStatus('compile error: ' + (e.message || e)));
-      }
-    };
-  } catch {}
-  // 4. If a cabinet is ALREADY in cache (page reload, second visit),
-  //    compile it now without waiting for a fresh build.
-  try {
-    const r = await fetch('/cabinet.css');
-    if (r.ok) {
-      const css = await r.text();
-      if (css && css.trim().length > 0 && !css.startsWith('/* CSS-DOS: no cabinet')) {
-        cachedCss = css;
-        await compileCabinet();
-        return;
-      }
-    }
-  } catch {}
   postStatus('waiting for a cabinet to be built...');
 }
 
-// Parse + compile cached CSS into a CalciteEngine. Idempotent on
-// cabinet content — if the bytes match what we've already compiled
-// (same cachedCss string), no-op. Called from boot() on initial load
-// and from the cabinet-ready broadcast listener.
-async function compileCabinet() {
-  // Re-read the cache so we always compile the freshest bytes.
-  const r = await fetch('/cabinet.css');
-  if (!r.ok) { postStatus('cabinet fetch failed: ' + r.status); return; }
-  const css = await r.text();
-  if (!css || css.trim().length === 0 || css.startsWith('/* CSS-DOS: no cabinet')) {
-    postStatus('cabinet fetch returned empty placeholder');
-    return;
-  }
-  if (engine && css === cachedCss) {
-    // Already compiled this exact cabinet.
-    return;
-  }
-  cachedCss = css;
+// Parse + compile raw cabinet bytes into a CalciteEngine. The ArrayBuffer
+// comes from awaiting `blob.arrayBuffer()` on the Blob that build.js posts
+// to us — all off the main thread, no SW round-trip, no JS-string
+// intermediate.
+async function compileCabinetBytes(arrayBuffer) {
   if (engine && typeof engine.free === 'function') {
     try { engine.free(); } catch {}
   }
   engine = null;
-  postStatus('compiling cabinet (' + (css.length / 1024 / 1024).toFixed(1) + ' MB)...');
+  const bytes = new Uint8Array(arrayBuffer);
+  postStatus('compiling cabinet (' + (bytes.length / 1024 / 1024).toFixed(1) + ' MB)...');
   const t0 = performance.now();
-  engine = new CalciteEngine(css);
+  engine = CalciteEngine.new_from_bytes(bytes);
   const compileMs = performance.now() - t0;
   postStatus(`cabinet compiled in ${(compileMs / 1000).toFixed(1)}s (ready)`);
 }
 
 
 // Reset the machine to its power-on state. Called on every viewer
-// connection — the engine is already compiled (in boot() or a
-// previous viewer-connect), so this only resets runtime state via
-// engine.reset(). Cheap. The CPU restarts at the reset vector;
-// BIOS splash plays; boot proceeds.
+// connection — the engine is already compiled, so this only resets
+// runtime state via engine.reset(). Cheap. The CPU restarts at the
+// reset vector; BIOS splash plays; boot proceeds.
 function resetMachine() {
-  if (!engine) {
-    // No engine yet — the cabinet either hasn't been fetched, or a
-    // newer cabinet has since been built. (Re)compile now.
-    if (!cachedCss) return;
-    engine = new CalciteEngine(cachedCss);
-  } else if (typeof engine.reset === 'function') {
-    // Fast path — state-only reset, no recompile.
-    engine.reset();
-  } else {
-    // Old WASM without reset(). Fall back to rebuild.
-    if (typeof engine.free === 'function') {
-      try { engine.free(); } catch {}
-    }
-    engine = new CalciteEngine(cachedCss);
-  }
+  if (!engine) return;
+  engine.reset();
   // Reset pacing so the adapter relearns for the new run.
   batchCount = MIN_BATCH;
   batchMsEma = TARGET_MS;
@@ -425,6 +389,30 @@ function startStatsInterval() {
 self.onmessage = (ev) => {
   const d = ev.data;
   if (!d || !d.type) return;
+  if (d.type === 'cabinet-blob' && d.blob) {
+    // Eager: compile NOW, in the background, off the main thread.
+    pendingLazyBlob = null;
+    (async () => {
+      try {
+        const buf = await d.blob.arrayBuffer();
+        await compileCabinetBytes(buf);
+      } catch (e) {
+        postStatus('compile error: ' + (e.message || e));
+      }
+    })();
+    return;
+  }
+  if (d.type === 'cabinet-blob-lazy' && d.blob) {
+    // Lazy: hold the blob; compile on first viewer-connect. Drop any
+    // previously-compiled engine so the next viewer sees the new cabinet.
+    pendingLazyBlob = d.blob;
+    if (engine && typeof engine.free === 'function') {
+      try { engine.free(); } catch {}
+    }
+    engine = null;
+    postStatus('cabinet received (lazy); will compile when player opens');
+    return;
+  }
   if (d.type === 'sw-port' && ev.ports && ev.ports[0]) {
     swPort = ev.ports[0];
     swPort.onmessage = (m) => {
@@ -433,16 +421,24 @@ self.onmessage = (ev) => {
       if (mm.type === 'kbd' && engine) {
         engine.set_keyboard(mm.key | 0);
       } else if (mm.type === 'viewer-connected') {
-        // New viewer opened the stream. The engine is (usually) already
-        // compiled — compileCabinet() ran on boot if a cabinet was
-        // cached, or ran via the cabinet-ready broadcast if one got
-        // built since. Fast path here: engine.reset(), start running.
-        // If no engine yet the user is watching before a cabinet's
-        // been built; we can't show anything.
+        // New viewer opened the stream. Two entry paths:
+        //  - Eager-mode build: the engine is already compiled. We just
+        //    reset runtime state and start ticking — Play is instant.
+        //  - Lazy-mode build: we're still holding the blob. Compile it
+        //    now (the player tab shows "compiling..." until we're done).
+        //  - No cabinet at all: nothing to show.
         (async () => {
-          // Defensive re-fetch: if a newer cabinet landed between the
-          // broadcast and this message, recompile. Usually no-op.
-          await compileCabinet().catch(() => {});
+          if (!engine && pendingLazyBlob) {
+            try {
+              const blob = pendingLazyBlob;
+              pendingLazyBlob = null;
+              const buf = await blob.arrayBuffer();
+              await compileCabinetBytes(buf);
+            } catch (e) {
+              postStatus('compile error: ' + (e.message || e));
+              return;
+            }
+          }
           resetMachine();
           if (engine) {
             running = true;

@@ -160,10 +160,12 @@
       await saveCabinet(blob);
       log(`  saved to Cache Storage in ${(performance.now()-t0).toFixed(0)}ms`);
 
-      // Spawn the bridge (once per page). It'll see the cabinet-ready
-      // broadcast from saveCabinet() and compile. If already spawned from
-      // a previous run, it'll recompile on the broadcast too.
-      await spawnBridgeOnce();
+      // Spawn the bridge (once per page), then hand it the cabinet bytes
+      // directly. The old path relied on a BroadcastChannel from
+      // saveCabinet() + a SW-fetch inside the bridge; we now post the
+      // Blob so the bridge can arrayBuffer() it off the main thread.
+      const bridge = await spawnBridgeOnce();
+      bridge.postMessage({ type: 'cabinet-blob', blob });
 
       // Point the iframe at the runner with bench mode on. The iframe's
       // <img> fetch triggers 'viewer-connected' → the bridge resets + ticks.

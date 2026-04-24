@@ -74,6 +74,9 @@
             <label><input type="checkbox" id="mem-cgaGfx"> CGA 0x04 (0xB8000, 16 KB)</label>
           </div>
           <div class="row">
+            <label title="When on, the cabinet starts parsing/compiling in the background as soon as it's built. When off (default), compile is deferred until you open the player — the build tab stays snappy, but clicking Play will pause ~10s while the cabinet compiles."><input type="checkbox" id="eager-compile"> Compile in background after build</label>
+          </div>
+          <div class="row">
             <button id="start" class="btn" disabled>Build cabinet</button>
           </div>
         </div>

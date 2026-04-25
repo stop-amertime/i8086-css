@@ -1,0 +1,8 @@
+{
+  "schema": "cart@1",
+  "name": "Tiny shell test",
+  "description": "Tests SHELL= path: a 18-byte COM that prints SHELL OK then hangs",
+  "preset": "dos-corduroy",
+  "disk": { "size": "1440K" },
+  "boot": { "autorun": "MYSHELL.COM" }
+}

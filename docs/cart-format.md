@@ -255,10 +255,13 @@ Explicit disk contents. Each entry is `{ name, source }`:
 If omitted, the builder auto-discovers: every file in the cart folder
 except `program.json` is added, uppercased.
 
-`KERNEL.SYS` and `CONFIG.SYS` are always added by the builder (sourced
-from `dos/bin/` and synthesized from `boot.autorun`, respectively).
-`COMMAND.COM` is added when `boot.autorun` is `null`. You don't list
-these yourself.
+`KERNEL.SYS`, `ANSI.SYS`, `COMMAND.COM`, and `CONFIG.SYS` are always
+added by the builder (the first three sourced from `dos/bin/`,
+`CONFIG.SYS` synthesized from `boot.autorun`/`boot.args`). You don't
+list these yourself. COMMAND.COM is included even when `boot.autorun`
+points at a real program, so the autorun can shell out / EXIT back to
+a prompt and so users can override with `boot.autorun: "COMMAND.COM"`
+to drop straight to DOS.
 
 ### `boot.autorun` · implemented
 

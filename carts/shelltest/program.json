@@ -1,0 +1,8 @@
+{
+  "schema": "cart@1",
+  "name": "Shell test",
+  "description": "Minimal cart that drops to COMMAND.COM",
+  "preset": "dos-corduroy",
+  "disk": { "size": "1440K" },
+  "boot": { "autorun": "COMMAND.COM" }
+}

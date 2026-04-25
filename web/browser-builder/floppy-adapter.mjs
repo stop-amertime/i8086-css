@@ -20,8 +20,11 @@ import { resolveFloppySize } from '../../builder/lib/sizes.mjs';
  * @param {Array}      [opts.programFiles]   Extra {name, bytes, source} entries
  *                                           from manifest.disk.files (not yet
  *                                           supported in browser v1 — ignored).
- * @param {string|null} [opts.autorun]       If non-null, use this as SHELL= target
- *                                           (and omit COMMAND.COM from disk).
+ * @param {string|null} [opts.autorun]       SHELL= target. null → COMMAND.COM
+ *                                           (drop to DOS prompt). COMMAND.COM
+ *                                           is always added to the disk image
+ *                                           regardless, so autorun programs can
+ *                                           shell out / EXIT back to a prompt.
  * @param {string}     [opts.args]           Optional args appended to SHELL= line.
  * @param {string|number} [opts.sizeRequest] Manifest disk.size — 'autofit',
  *                                           a preset string like '720K', or a
@@ -80,14 +83,11 @@ export function buildFloppyInBrowser({
     });
   }
 
-  // Include COMMAND.COM if nothing else will run, OR if the user explicitly
-  // asked to SHELL to it. Skip only when a real program is the autorun target
-  // AND the cart doesn't already supply its own COMMAND.COM.
-  const wantsCommandCom =
-    autorun == null ||
-    autorun.toUpperCase() === 'COMMAND.COM';
+  // COMMAND.COM is always included so autorun programs can shell out / EXIT
+  // back to a prompt, and so users can set SHELL=\COMMAND.COM explicitly.
+  // Skip only if the cart already supplied its own COMMAND.COM (above).
   const alreadyHasCommandCom = layout.some(f => f.name === 'COMMAND.COM');
-  if (wantsCommandCom && !alreadyHasCommandCom) {
+  if (!alreadyHasCommandCom) {
     layout.push({ name: 'COMMAND.COM', bytes: commandBytes, source: 'dos/bin/command.com' });
   }
 

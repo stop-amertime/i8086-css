@@ -4,5 +4,5 @@
   "description": "Infocom Zork I (DOS, Infocom z-machine interpreter)",
   "preset": "dos-corduroy",
   "memory": { "conventional": "640K", "gfx": true, "cgaGfx": false, "textVga": true },
-  "boot": { "autorun": "ZORK1.BAT" }
+  "boot": { "autorun": "_ZORK1.COM" }
 }

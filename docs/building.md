@@ -65,8 +65,10 @@ Returns `{ bytes, entrySegment, entryOffset, meta }`.
 DOS carts only (skipped for hack).
 
 - Synthesizes `CONFIG.SYS` from `boot.autorun` + `boot.args`.
-- Collects `KERNEL.SYS`, the synthesized `CONFIG.SYS`, each cart
-  file, and optionally `COMMAND.COM` (if `autorun` is `null`).
+- Collects `KERNEL.SYS`, `ANSI.SYS`, `COMMAND.COM`, the synthesized
+  `CONFIG.SYS`, and each cart file. COMMAND.COM is always included so
+  autorun programs can shell out / EXIT back to a prompt and so
+  `boot.autorun: "COMMAND.COM"` works as a way to drop to DOS.
 - Shells out to `tools/mkfat12.mjs` to lay out the FAT12 image.
 - Returns `{ bytes, layout }`.
 

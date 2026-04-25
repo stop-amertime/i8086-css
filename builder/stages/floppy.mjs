@@ -44,14 +44,22 @@ export function buildFloppy({ cart, manifest, cacheDir }) {
   const configPath = join(cacheDir, 'CONFIG.SYS');
   writeFileSync(configPath, configContent);
 
-  // Assemble the file list: KERNEL.SYS + ANSI.SYS + CONFIG.SYS + cart files +
-  // (COMMAND.COM?). ANSI.SYS must be on the disk before CONFIG.SYS loads it,
-  // but file order within the FAT image doesn't matter — the driver is located
+  // Assemble the file list: KERNEL.SYS + ANSI.SYS + CONFIG.SYS + COMMAND.COM
+  // + cart files. ANSI.SYS must be on the disk before CONFIG.SYS loads it,
+  // but file order within the FAT image doesn't matter — files are located
   // by name, not position.
+  //
+  // COMMAND.COM is always included (even when autorun is set), so:
+  //   - users can set SHELL=\COMMAND.COM explicitly via boot.autorun
+  //     (e.g. to drop to a prompt and run a program with custom flags)
+  //   - autorun batch files / programs can shell out or EXIT back to DOS
+  //   - Ctrl-C from a hung autorun program lands somewhere sane
+  // It's ~30 KB on a disk that's typically 1-3 MB; not worth the asymmetry.
   const layout = [
-    { name: 'KERNEL.SYS', source: 'dos/bin/kernel.sys',   path: KERNEL_SYS },
-    { name: 'ANSI.SYS',   source: 'dos/bin/ansi.sys',    path: ANSI_SYS },
-    { name: 'CONFIG.SYS', source: `synthesized: ${configContent.trimEnd()}`, path: configPath },
+    { name: 'KERNEL.SYS',  source: 'dos/bin/kernel.sys',   path: KERNEL_SYS },
+    { name: 'ANSI.SYS',    source: 'dos/bin/ansi.sys',     path: ANSI_SYS },
+    { name: 'COMMAND.COM', source: 'dos/bin/command.com',  path: COMMAND_COM },
+    { name: 'CONFIG.SYS',  source: `synthesized: ${configContent.trimEnd()}`, path: configPath },
   ];
 
   for (const f of manifest.disk.files ?? []) {
@@ -60,10 +68,6 @@ export function buildFloppy({ cart, manifest, cacheDir }) {
       source: f.source,
       path: resolve(cart.root, f.source),
     });
-  }
-
-  if (autorun == null) {
-    layout.push({ name: 'COMMAND.COM', source: 'dos/bin/command.com', path: COMMAND_COM });
   }
 
   // Build the FAT12 image in-process (no execSync shell-out). Resolve

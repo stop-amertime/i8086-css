@@ -93,7 +93,31 @@ video-modes work.
   pinpoint the SP-wrap bug between ticks 838,520-838,525 and confirm
   the fix. Build with `cargo build --release -p calcite-cli --bin
   walk_doom`. Useful flags: `--chunk N`, `--fine-after T --fine-chunk M`
-  for two-stage zoom-in, `--dump-code`, `--screenshot`.
+  for two-stage zoom-in, `--dump-code`, `--screenshot`,
+  `--find-string DPPISTOL`, `--find-word 0x3D7`, `--dump-at 0x41C20
+  --dump-len 256`.
+- **Doom8088: DPPISTOL not-found follow-up.** After SP-wrap fix, doom
+  reaches its own startup, prints
+  `Z_Init`/`W_Init`/`Not enough XMS available`, then hits
+  `W_GetNumForName: DPPISTOL not found` and `I_Error`s. Diagnosis so
+  far: the lump directory (`fileinfo`, allocated by `Z_MallocStatic`)
+  IS loaded correctly at linear ~0x41DB0, with DPPISTOL at lump 96
+  exactly where it should be (`fileinfo[96].offset = 0x95BD9, size =
+  0x38, name = "DPPISTOL"`). Doom8088's global `numlumps` (next to
+  fileinfo at ~0x41C3E) holds 0x03D7 = 983, the correct count. So the
+  loop bound and the data are both fine — yet `W_GetNumForName` walks
+  the array and fails to match. Hypotheses still open: (a) the
+  far-pointer Doom uses for `fileinfo` is wrong (segment computed via
+  16-bit truncation of a >0xFFFFF linear address — but 0x41DB0 / 16 =
+  0x41DB, well below the truncation threshold, so unlikely); (b) the
+  Watcom `_fmemcmp` intrinsic is hitting a calcite bug for some
+  specific pattern; (c) Doom8088 actually wants a `D8_DOOM1.WAD` or
+  preprocessed shareware WAD with different lump names (the
+  hardcoded query strings live in DOOM.EXE near linear 0x39603 —
+  "DPPISTOL\\0TITLEPIC\\0HELP2\\0FLOOR4_8\\0WIMAP0\\0..." — and the
+  shareware WAD on the cart does contain DPPISTOL, so this is also
+  unlikely). Not yet investigated; the SP-wrap fix is the stable
+  improvement.
 
 ## Boot sequence (dos-corduroy)
 

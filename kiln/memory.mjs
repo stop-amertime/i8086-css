@@ -29,8 +29,13 @@ export const DAC_BYTES  = 768;
 //   --memAddrN     byte address of the slot's first byte (or -1 if idle)
 //   --memValN      byte (width=1) or 16-bit word (width=2, lo at addr,
 //                  hi at addr+1)
-//   --_slotNWidth  1 or 2
 //   --_slotNLive   1 if the slot fires this tick, 0 otherwise
+// Plus a single global per-tick gate (not per-slot):
+//   --_writeWidth  1 = all live slots are byte writes,
+//                  2 = all live slots are 16-bit word writes
+// In current x86 emitters every opcode that fires multiple slots in one
+// tick uses a single width across all of them (INT pushes 3 words; STOSB
+// writes 1 byte; etc.), so a global width fits.
 export const NUM_WRITE_SLOTS = 3;
 
 // Packed memory cells — pack PACK_SIZE bytes into a single @property.
@@ -349,9 +354,9 @@ export function emitMemoryWriteRules(opts) {
     const slotLines = [];
     for (let i = 0; i < NUM_WRITE_SLOTS; i++) {
       // Slot's lo half lands at addr — value is byte (width=1) or low byte of word (width=2).
-      slotLines.push(`    style(--memAddr${i}: ${addr}): if(style(--_slot${i}Width: 2): --lowerBytes(var(--memVal${i}), 8); else: var(--memVal${i}));`);
+      slotLines.push(`    style(--memAddr${i}: ${addr}): if(style(--_writeWidth: 2): --lowerBytes(var(--memVal${i}), 8); else: var(--memVal${i}));`);
       // Slot's hi half lands at addr when memAddrN: addr-1 AND width=2.
-      slotLines.push(`    style(--memAddr${i}: ${addr - 1}) and style(--_slot${i}Width: 2): --rightShift(var(--memVal${i}), 8);`);
+      slotLines.push(`    style(--memAddr${i}: ${addr - 1}) and style(--_writeWidth: 2): --rightShift(var(--memVal${i}), 8);`);
     }
     lines.push(`  --m${addr}: if(\n${slotLines.join('\n')}\n  else: var(--__1m${addr}));`);
   }
@@ -401,8 +406,9 @@ export function emitMemoryExecuteKeyframe(opts) {
 /**
  * Emit @property declarations for memory write slots.
  * Three properties per slot: address, value, width (1 or 2).
- * --_slotNLive and --_slotNWidth share semantics with --memAddrN/--memValN
- * — set together by emitMemoryWriteSlots / emitSlotLiveGates / emitSlotWidthGates.
+ * --_slotNLive shares semantics with --memAddrN/--memValN — set together by
+ * emitMemoryWriteSlots / emitSlotLiveGates. The global --_writeWidth is
+ * emitted by emitWriteWidthGate (one per tick, not per slot).
  */
 export function emitWriteSlotProperties() {
   const lines = [];

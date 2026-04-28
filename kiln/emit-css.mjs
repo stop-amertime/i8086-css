@@ -166,7 +166,8 @@ class DispatchTable {
 
   /**
    * Emit the 3 memory write slot properties (--memAddr0/Val0 through
-   * --memAddr2/Val2) and their width gates (--_slotNWidth = 1 or 2).
+   * --memAddr2/Val2). Width is supplied globally by --_writeWidth (see
+   * emitWriteWidthGate), not per-slot.
    *
    * Each slot fuses an addr/addr+1 byte-write pair (lo + hi) into a single
    * 16-bit word slot when possible. The detection looks for the canonical
@@ -308,25 +309,71 @@ class DispatchTable {
    * opcodes that produced a fused pair set width to 2 for that slot.
    * TF trap and IRQ delivery use 3 word-aligned writes (width=2 on all slots).
    */
-  emitSlotWidthGates() {
+  /**
+   * Emit a single global --_writeWidth gate.
+   *
+   * In practice no opcode the kiln currently emits *mixes* byte and word
+   * writes within one tick — every opcode is either purely byte (STOSB,
+   * single-byte MOV/XCHG, OUT to DAC, etc.) or purely word (PUSH, CALL,
+   * INT, IRQ frame, word MOV/XCHG/POP). One per-tick width fits all
+   * existing instructions, and saves N-1 width dispatches and N-1 slot
+   * reads per tick compared to per-slot widths.
+   *
+   * If a future opcode wants to mix widths in a single tick, it must
+   * either split across two ticks or this design needs to grow back to
+   * per-slot widths. The kiln will throw if multi-width opcodes appear
+   * (see check below).
+   *
+   * Width = 2 fires when ANY slot for the active opcode (or TF/IRQ) is
+   * width=2. The splice path treats every active slot uniformly under
+   * that width.
+   */
+  emitWriteWidthGate() {
     if (!this._slotMeta) {
-      throw new Error('emitMemoryWriteSlots must be called before emitSlotWidthGates');
+      throw new Error('emitMemoryWriteSlots must be called before emitWriteWidthGate');
     }
-    const lines = ['  /* Slot-width gates — 1=byte, 2=word (addr+1 carries hi byte) */'];
+    // Collect every opcode that has any width=2 slot. Cross-check that
+    // it doesn't ALSO have a width=1 slot — that would mean the opcode
+    // mixes widths in one tick, which the global-width design can't
+    // express. (No kiln opcode does this today; the check is to fail
+    // fast if a future emitter accidentally introduces one.)
+    const widthByOpcode = new Map(); // opcode → Set<width>
     for (let slot = 0; slot < NUM_WRITE_SLOTS; slot++) {
-      const meta = this._slotMeta[slot];
-      const branches = [];
-      branches.push(`    style(--_tf: 1): 2;`);
-      branches.push(`    style(--_irqActive: 1): 2;`);
-      for (const { opcode, width } of meta) {
-        if (width === 2) {
-          branches.push(`    style(--opcode: ${opcode}): 2;`);
-        }
+      for (const { opcode, width } of this._slotMeta[slot]) {
+        if (!widthByOpcode.has(opcode)) widthByOpcode.set(opcode, new Set());
+        widthByOpcode.get(opcode).add(width);
       }
-      lines.push(`  --_slot${slot}Width: if(`);
-      lines.push(branches.join('\n'));
-      lines.push(`  else: 1);`);
     }
+    const wordOpcodes = [];
+    for (const [opcode, widths] of widthByOpcode) {
+      if (widths.has(1) && widths.has(2)) {
+        // Diagnostic: dump per-slot widths for the offending opcode.
+        const perSlot = [];
+        for (let slot = 0; slot < NUM_WRITE_SLOTS; slot++) {
+          for (const e of this._slotMeta[slot]) {
+            if (e.opcode === opcode) perSlot.push(`slot${slot}=w${e.width}`);
+          }
+        }
+        throw new Error(
+          `Opcode 0x${opcode.toString(16)} mixes byte and word writes in one tick — ` +
+          `${perSlot.join(', ')}. The global --_writeWidth design can't express this. ` +
+          `Either split the opcode across ticks or restore per-slot widths.`
+        );
+      }
+      if (widths.has(2)) wordOpcodes.push(opcode);
+    }
+    wordOpcodes.sort((a, b) => a - b);
+
+    const lines = ['  /* Global write-width gate — 1=byte, 2=word (addr+1 carries hi byte). Shared across slots. */'];
+    const branches = [];
+    branches.push(`    style(--_tf: 1): 2;`);
+    branches.push(`    style(--_irqActive: 1): 2;`);
+    for (const op of wordOpcodes) {
+      branches.push(`    style(--opcode: ${op}): 2;`);
+    }
+    lines.push(`  --_writeWidth: if(`);
+    lines.push(branches.join('\n'));
+    lines.push(`  else: 1);`);
     return lines.join('\n');
   }
 }
@@ -524,11 +571,13 @@ function isAddrPlusOne(loAddr, hiAddr) {
  * isAddrPlusOne for non-dispatch atomic address expressions.
  */
 function isAddrPlusOneAtomic(loAddr, hiAddr) {
-  if (loAddr === hiAddr) return false;
-  // -1 sentinel: dispatch fallthrough, never paired (both branches must be -1
-  // for the slot to be inactive on that branch — which is fine, doesn't fuse).
+  // -1 sentinel: dispatch-conditional inactive branch. When both lo and hi
+  // resolve to -1 on the same dispatch key, neither byte writes — pairing
+  // the branches as a (suppressed) word write is correct. Must come BEFORE
+  // the equality short-circuit below: ('-1', '-1') is equal but still pairs.
   if (loAddr === '-1' && hiAddr === '-1') return true;
   if (loAddr === '-1' || hiAddr === '-1') return false;
+  if (loAddr === hiAddr) return false;
 
   // Stack: sa(K) returns
   //   calc(var(--__1SS) * 16 + --lowerBytes(calc(var(--__1SP) - K + 65536), 16))
@@ -575,6 +624,13 @@ function isAddrPlusOneAtomic(loAddr, hiAddr) {
     const loBase = loAddr.slice(0, -1);
     if (hiAddr === `${loBase} + 1)`) return true;
   }
+  // Wrap-in-calc +1 form (Group FF mod!=3 INC/DEC/PUSH r/m16):
+  //   lo: 'var(--ea)'
+  //   hi: 'calc(var(--ea) + 1)'
+  // Pair files write the hi address as `calc(${lo} + 1)` even when lo is
+  // a bare var(...) reference, leaving lo un-wrapped. Match by checking
+  // hi against that exact wrap.
+  if (hiAddr === `calc(${loAddr} + 1)`) return true;
   return false;
 }
 
@@ -703,7 +759,7 @@ export function emitCSS(opts, writeStream) {
   writeStream.write('  /* ===== MEMORY WRITE SLOTS ===== */\n');
   writeStream.write(dispatch.emitMemoryWriteSlots() + '\n\n');
   writeStream.write(dispatch.emitSlotLiveGates() + '\n\n');
-  writeStream.write(dispatch.emitSlotWidthGates() + '\n\n');
+  writeStream.write(dispatch.emitWriteWidthGate() + '\n\n');
 
   // 6. Debug display
   w('}');
@@ -907,9 +963,10 @@ function emitMemoryWriteRulesStreaming(opts, ws) {
   // Each byte's write rule checks NUM_WRITE_SLOTS slots to see if the
   // current tick is writing to this address. Every slot is gated by
   // --_slotNLive (1 only when some opcode uses slot N or TF/IRQ is
-  // pushing), and carries --_slotNWidth (1 = byte at memAddrN, 2 = word
-  // with lo at memAddrN, hi at memAddrN+1). Non-writing instructions set
-  // all gates to 0 so every branch rejects without touching --memAddrN.
+  // pushing). The global --_writeWidth gate (1 = byte at memAddrN,
+  // 2 = word with lo at memAddrN, hi at memAddrN+1) applies to every
+  // active slot uniformly. Non-writing instructions set all gates to 0
+  // so every branch rejects without touching --memAddrN.
   //
   // CSS `style(A) and style(B)` short-circuits on the first false operand,
   // so idle ticks pay one style-query per slot per byte. Calcite's
@@ -930,9 +987,9 @@ function emitMemoryWriteRulesStreaming(opts, ws) {
       const branches = [];
       for (let i = 0; i < NUM_WRITE_SLOTS; i++) {
         // (1) lo/byte half at addr.
-        branches.push(`    style(--_slot${i}Live: 1) and style(--memAddr${i}: ${addr}): if(style(--_slot${i}Width: 2): --lowerBytes(var(--memVal${i}), 8); else: var(--memVal${i}));`);
+        branches.push(`    style(--_slot${i}Live: 1) and style(--memAddr${i}: ${addr}): if(style(--_writeWidth: 2): --lowerBytes(var(--memVal${i}), 8); else: var(--memVal${i}));`);
         // (2) hi half at addr (slot's pair is at addr-1..addr).
-        branches.push(`    style(--_slot${i}Live: 1) and style(--memAddr${i}: ${addr - 1}) and style(--_slot${i}Width: 2): --rightShift(var(--memVal${i}), 8);`);
+        branches.push(`    style(--_slot${i}Live: 1) and style(--memAddr${i}: ${addr - 1}) and style(--_writeWidth: 2): --rightShift(var(--memVal${i}), 8);`);
       }
       buf += `  --m${addr}: if(\n${branches.join('\n')}\n    else: ${hold});\n`;
       if (++count % CHUNK === 0) { ws.write(buf); buf = ''; }
@@ -953,7 +1010,7 @@ function emitMemoryWriteRulesStreaming(opts, ws) {
   //   loOff      : memAddrN - cellBase            (slot's lo/byte half offset within this cell)
   //   hiOff      : memAddrN + 1 - cellBase        (slot's hi half offset within this cell, only meaningful when width=2)
   //   val        : memValN — byte (width=1) or 16-bit word (width=2, lo at memAddrN, hi at memAddrN+1)
-  //   width      : --_slotNWidth (1 or 2)
+  //   width      : --_writeWidth (1 or 2; shared across all slots this tick)
   // applySlot handles aligned word writes (loOff=0, hiOff=1, width=2), the
   // straddle cases (loOff=1 → lo half lands here at off 1; hiOff=0 → hi half
   // lands here at off 0, both gated on width=2), and width=1 byte writes.
@@ -968,7 +1025,7 @@ function emitMemoryWriteRulesStreaming(opts, ws) {
     // an Addr hole (not a Free hole) and can template the whole run.
     let expr = `var(--__1mc${idx})`;
     for (let slot = NUM_WRITE_SLOTS - 1; slot >= 0; slot--) {
-      expr = `--applySlot(${expr}, var(--_slot${slot}Live), calc(var(--memAddr${slot}) - ${idx} * ${PACK_SIZE}), calc(var(--memAddr${slot}) + 1 - ${idx} * ${PACK_SIZE}), var(--memVal${slot}), var(--_slot${slot}Width))`;
+      expr = `--applySlot(${expr}, var(--_slot${slot}Live), calc(var(--memAddr${slot}) - ${idx} * ${PACK_SIZE}), calc(var(--memAddr${slot}) + 1 - ${idx} * ${PACK_SIZE}), var(--memVal${slot}), var(--_writeWidth))`;
     }
     buf += `  --mc${idx}: ${expr};\n`;
     if (++count % CHUNK === 0) { ws.write(buf); buf = ''; }

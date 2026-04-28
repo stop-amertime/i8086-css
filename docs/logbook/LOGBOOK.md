@@ -233,6 +233,69 @@ calcite-cli. Prince of Persia reaches the title screen.
 The smoke suite at `tests/harness/run.mjs smoke` (7 carts) is the
 regression gate.
 
+## 2026-04-28 — 3 word-slot scheme (worktree-3slot)
+
+The kiln moves from **6 byte-slots → 3 word-slots** for memory writes.
+Each slot now carries `--_slotKWidth` (1 or 2): width=2 packs an
+addr/addr+1 byte-write pair into one slot whose `--memValK` holds the
+un-split 16-bit word. INT/IRQ frames (FLAGS+CS+IP = 3 words) fit the
+new 3-slot worst case exactly. `--applySlot` becomes 6-arg
+(loOff, hiOff, val, width) and handles aligned-word, byte, and odd-
+addressed straddle splices.
+
+Calcite recogniser (`packed_broadcast_write.rs` + parser fast-path)
+updated to recognise the new 6-arg shape; `CompiledPackedBroadcastWrite`
+gains `width_slot` and the splice paths in `compile.rs`/`eval.rs` apply
+1- or 2-byte writes per port per tick.
+
+Cabinet size and headline measurements (calcite-cli native, post-merge
+on top of `23c01df`):
+
+| Cart    | 6-slot   | 3-slot   | Δ      |
+|---------|---------:|---------:|-------:|
+| dos-smoke (test) | 152.6 MB | 139.9 MB | −8.3% |
+| zork1   | 299.6 MB | 274.7 MB | −8.3% |
+| doom8088 | 341.7 MB | 316.9 MB | −7.3% |
+
+Doom8088 stage bench (`bench-doom-stages-cli.mjs`):
+
+| Stage         | 6-slot     | 3-slot     | Δ     |
+|---------------|-----------:|-----------:|------:|
+| text_drdos    |  1 110 ms  |  1 083 ms  | −2.4% |
+| text_doom     |  3 751 ms  |  3 635 ms  | −3.1% |
+| title         |  9 524 ms  |  9 284 ms  | −2.5% |
+| menu          | 10 304 ms  | 10 024 ms  | −2.7% |
+| loading       | 13 655 ms  | 13 319 ms  | −2.5% |
+| **ingame**    | **90 995 ms** | **85 323 ms** | **−6.2%** |
+| **runMsToInGame** | **91.0 s** | **85.3 s** | **−6.2% (5.7 s saved)** |
+| ticksToInGame | 35 000 000 | 35 000 000 | identical |
+| cyclesToInGame| 397 458 534 | 397 458 534 | identical |
+
+**Same cycle count, same tick count to in-game** — the CPU is doing
+identical work; the saving is per-tick CSS evaluation cost. The
+level-load window (loading→ingame, 29.5 M ticks) drops 77.3 s → 72.0 s
+= −6.9%.
+
+Zork1 5 M-tick run also shows ~3% per-tick speedup with no per-cycle
+regression, plus 20% faster compile.
+
+The change is feature-complete in the worktrees. Open follow-ups:
+- Calcite-wasm rebuild + web bench cross-check (web has a different
+  per-tick fixed cost; the bridge measurement should still see ~6%).
+- Snapshot files from 2026-04-28 are invalidated by this change
+  (slot count + applySlot arity changed). Recapture if you need to
+  iterate on level-load.
+
+Worktrees:
+- CSS-DOS: `.claude/worktrees/3slot/`, branch `worktree-3slot` (kiln + docs)
+- calcite: `.claude/worktrees/3slot/`, branch `worktree-3slot` (recogniser + splice)
+
+To run a worktree against the matching calcite, set `CALCITE_REPO`:
+```
+export CALCITE_REPO=/c/Users/.../calcite/.claude/worktrees/3slot
+```
+See CLAUDE.md "Working in a git worktree".
+
 ## Active focus — Doom8088 level-load is too slow
 
 Re-measured 2026-04-28 (current cabinet, current calcite). Both numbers

@@ -83,7 +83,8 @@ const BUDGET_MULT = parseFloat(args['budget-mult'] ?? '2.0');
 // so subsequent bench iterations can `--restore-from=PATH` and skip the
 // upstream stages entirely.
 const SNAPSHOT_DIR = args['capture-snapshots'] ?? null;
-const URL = `http://localhost:5173/player/bench.html?cart=${encodeURIComponent(CART)}&n=1`;
+const PORT = args.port ?? '5173';
+const URL = `http://localhost:${PORT}/player/bench.html?cart=${encodeURIComponent(CART)}&n=1`;
 
 // Stage-specific wall budgets in ms (current observed numbers x BUDGET_MULT).
 // These are "if we exceed this, something's broken". Update if calcite
@@ -228,10 +229,16 @@ try {
       if (d.type === 'compile-done') {
         S.compileMs = d.compileMs;
         S.cabinetBytes = d.cabinetBytes;
+        S.packedBroadcastPortCount = d.packedBroadcastPortCount ?? null;
+        S.compiledOpCount = d.compiledOpCount ?? null;
+        S.compiledSlotCount = d.compiledSlotCount ?? null;
         S.bootBuildMs = (performance.now() - S.pageStart) - d.compileMs;
         const wallMs = performance.now() - S.pageStart;
-        S.log.push({ wallMs, msg: `[stages] compile-done compileMs=${Math.round(d.compileMs)} cabBytes=${d.cabinetBytes}` });
-        console.log(`[stages] compile-done compileMs=${Math.round(d.compileMs)} cabBytes=${d.cabinetBytes}`);
+        const diag = (d.packedBroadcastPortCount != null)
+          ? ` ports=${d.packedBroadcastPortCount} ops=${d.compiledOpCount} slots=${d.compiledSlotCount}`
+          : '';
+        S.log.push({ wallMs, msg: `[stages] compile-done compileMs=${Math.round(d.compileMs)} cabBytes=${d.cabinetBytes}${diag}` });
+        console.log(`[stages] compile-done compileMs=${Math.round(d.compileMs)} cabBytes=${d.cabinetBytes}${diag}`);
         return;
       }
       if (d.type === 'bridge-stats') {
@@ -596,6 +603,9 @@ try {
         compileMs: S.compileMs,
         bootBuildMs: S.bootBuildMs,
         cabinetBytes: S.cabinetBytes,
+        packedBroadcastPortCount: S.packedBroadcastPortCount ?? null,
+        compiledOpCount: S.compiledOpCount ?? null,
+        compiledSlotCount: S.compiledSlotCount ?? null,
         latest: S.latest,
         log: S.log,
         snapshots: pending,
@@ -704,6 +714,9 @@ try {
     cabinetBytes: result.cabinetBytes,
     bootBuildMs:  result.bootBuildMs != null ? +result.bootBuildMs.toFixed(0) : null,
     compileMs:    result.compileMs   != null ? +result.compileMs.toFixed(0)   : null,
+    packedBroadcastPortCount: result.packedBroadcastPortCount,
+    compiledOpCount:           result.compiledOpCount,
+    compiledSlotCount:         result.compiledSlotCount,
     finalState: { gs: result.lastGs, menuactive: result.lastMe,
                   gameaction: result.lastGa, usergame: result.lastUg,
                   mode: result.lastMode },

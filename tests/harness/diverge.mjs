@@ -43,7 +43,10 @@ const samples = [];
 for (let t = Math.max(from, step); t <= to; t += step) samples.push(t);
 
 // Run calcite first (slow path: spawn child with --dump-ticks).
-const calciteCli = resolve(process.cwd(), '..', 'calcite', 'target', 'release', 'calcite-cli.exe');
+const calciteRepo = process.env.CALCITE_REPO
+  ? resolve(process.env.CALCITE_REPO)
+  : resolve(process.cwd(), '..', 'calcite');
+const calciteCli = resolve(calciteRepo, 'target', 'release', 'calcite-cli.exe');
 const dumpTicksArg = samples.join(',');
 process.stderr.write(`[diverge] spawning calcite-cli for ${samples.length} samples (${samples[0]}..${samples[samples.length-1]})\n`);
 const calcStart = performance.now();

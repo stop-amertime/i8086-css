@@ -117,16 +117,37 @@ ${emitBitwiseNot()}
   else: var(--cell));
 }
 
-/* Conditionally splice a slot's write into a cell. --off is the slot's byte
-   offset within this cell (--memAddrN - cellBase). If --live=0 or --off is
-   outside 0..1 the cell passes through unchanged. Chained 6 times per cell
-   (slot 5 innermost, slot 0 outermost) so slot 0 wins on same-cell collisions
-   — matching the current byte-level top-down dispatch semantics. */
-@function --applySlot(--cell <integer>, --live <integer>, --off <integer>, --val <integer>) returns <integer> {
+/* Conditionally splice a slot's write into a cell.
+   --loOff = memAddrN - cellBase            (slot's first byte offset in this cell)
+   --hiOff = memAddrN + 1 - cellBase        (slot's second byte offset in this cell; width=2 only)
+   --val   = byte (width=1) or 16-bit word (width=2; lo at memAddrN, hi at memAddrN+1)
+   --width = 1 or 2
+
+   Cases:
+     1. live=0 OR slot doesn't touch this cell → passthrough
+     2. width=2 aligned (loOff=0 AND hiOff=1)   → whole cell = --lowerBytes(val, 16)
+     3. width=2 straddle, lo lands here at off 1 (loOff=1)
+                                                 → cell.b1 = val & 0xff
+     4. width=2 straddle, hi lands here at off 0 (hiOff=0)
+                                                 → cell.b0 = val >> 8
+     5. width=1 byte at off 0                    (loOff=0)
+                                                 → cell.b0 = val
+     6. width=1 byte at off 1                    (loOff=1)
+                                                 → cell.b1 = val
+   Cases 5/6 only fire on width=1 ticks — the width=2 guards filter the
+   width=2 paths above first.
+
+   Chained NUM_WRITE_SLOTS times per cell (slot N-1 innermost, slot 0
+   outermost) so slot 0 wins on same-cell collisions — matching the
+   legacy byte-level top-down dispatch semantics. */
+@function --applySlot(--cell <integer>, --live <integer>, --loOff <integer>, --hiOff <integer>, --val <integer>, --width <integer>) returns <integer> {
   result: if(
     style(--live: 0): var(--cell);
-    style(--off: 0): calc(round(down, var(--cell) / 256) * 256 + var(--val));
-    style(--off: 1): calc(var(--val) * 256 + mod(var(--cell), 256));
+    style(--width: 2) and style(--loOff: 0) and style(--hiOff: 1): --lowerBytes(var(--val), 16);
+    style(--width: 2) and style(--loOff: 1): calc(--lowerBytes(var(--val), 8) * 256 + mod(var(--cell), 256));
+    style(--width: 2) and style(--hiOff: 0): calc(round(down, var(--cell) / 256) * 256 + --rightShift(var(--val), 8));
+    style(--loOff: 0): calc(round(down, var(--cell) / 256) * 256 + var(--val));
+    style(--loOff: 1): calc(var(--val) * 256 + mod(var(--cell), 256));
   else: var(--cell));
 }
 

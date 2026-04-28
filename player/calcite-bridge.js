@@ -105,6 +105,21 @@ async function compileCabinetBytes(arrayBuffer) {
   const t0 = performance.now();
   engine = CalciteEngine.new_from_bytes(bytes);
   const compileMs = performance.now() - t0;
+  // Diagnostic readouts the harness can verify post-compile. Older calcite-wasm
+  // builds don't expose these getters; guard with `?.()` so the bridge stays
+  // backwards-compatible.
+  const portCount = engine.packed_broadcast_port_count
+    ? engine.packed_broadcast_port_count() | 0
+    : -1;
+  const opCount = engine.compiled_op_count
+    ? engine.compiled_op_count() | 0
+    : -1;
+  const slotCount = engine.compiled_slot_count
+    ? engine.compiled_slot_count() | 0
+    : -1;
+  // Surface to the page via console.warn (console.info is silenced above).
+  // The harness scrapes these for cabinet-shape verification.
+  console.warn(`[bridge] compiled: ports=${portCount} ops=${opCount} slots=${slotCount} compileMs=${Math.round(compileMs)}`);
   postStatus(`cabinet compiled in ${(compileMs / 1000).toFixed(1)}s (ready)`);
   // Publish the compile time on the bench-stats channel so harnesses can
   // record it without parsing the status text.
@@ -114,6 +129,9 @@ async function compileCabinetBytes(arrayBuffer) {
         type: 'compile-done',
         compileMs,
         cabinetBytes: bytes.length,
+        packedBroadcastPortCount: portCount,
+        compiledOpCount: opCount,
+        compiledSlotCount: slotCount,
       });
     }
   } catch {}

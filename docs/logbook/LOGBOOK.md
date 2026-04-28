@@ -2,6 +2,33 @@
 
 Last updated: 2026-04-28
 
+## 2026-04-28 — calcite Phase 3 prototype: closure backend over the DAG
+
+Option (c) per the mission doc — each block lowers to a Vec<Box<dyn Fn>>
+plus a pre-resolved TerminatorPlan; the walker runs closures in order then
+consults the terminator. No match on Op on the hot path. Specialised
+closures for ~10 common ops; everything else falls through to exec_ops
+on a one-op slice (same semantics, one closure-call's worth of indirection).
+
+162 tests green, including backend_equivalence under all three backends
+(bytecode/dag/closure, 200 ticks bit-identical) and primitive_conformance
+under all three. wasm32 build clean. Smoke timings on web/demo.css:
+bytecode 261k t/s, dag 210k, closure 220k. Closure is 1.19x slower than
+bytecode — exactly what the spec predicts at the prototype stage (option
+(c) ceiling is 3–5x with full op specialisation, this prototype only
+specialises 10 of ~50 ops).
+
+Two bugs shaken out by writing the closure backend:
+- Op::AndLit val is the literal mask bits, not a bit-width. Phase 2's
+  BitFieldMatch and LitMerge::And had the wrong semantics; fixed.
+- ShrLit / ShlLit use signed i32 shifts, not unsigned. Closure was
+  masking input as u32; fixed.
+
+Phase 3 main (option (a) hand-emitted wasm) deferred — several weeks
+of work and the prototype validates the lowering shape codegen would
+build on. Revisit once a Doom cabinet is in the worktree so the 5x
+speedup gate is measurable.
+
 ## 2026-04-28 — calcite Phase 2 — recogniser substrate landed
 
 Idiom catalogue (14 CSS-structural shapes derived from

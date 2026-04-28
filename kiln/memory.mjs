@@ -17,12 +17,21 @@ export const DAC_LINEAR = 0x100000;
 export const DAC_BYTES  = 768;
 
 // Number of parallel memory write slots.
-// 6 is the maximum an instruction actually uses (INT / TF trap / hardware
-// IRQ push FLAGS/CS/IP = 3 words = 6 bytes). Every slot is gated at the
-// per-byte write rule by `--_slotNLive`, so a smaller slot count reduces
-// both the emitted CSS volume and the per-tick gate-evaluation cost
-// without giving up any expressible instruction.
-export const NUM_WRITE_SLOTS = 6;
+// Each slot carries a width flag (1 or 2 bytes): width=2 packs an
+// addr/addr+1 byte pair into one slot. The worst-case writer is INT
+// (and HW IRQ entry / TF trap), which pushes FLAGS/CS/IP = 3 words =
+// 3 width-2 slots. Every other writer fits in fewer slots. Halving the
+// slot count from the legacy 6 byte-slots cuts the per-tick
+// gate-evaluation cost in the packed-cell cascade and halves the
+// @property bookkeeping.
+//
+// Slot shape per tick:
+//   --memAddrN     byte address of the slot's first byte (or -1 if idle)
+//   --memValN      byte (width=1) or 16-bit word (width=2, lo at addr,
+//                  hi at addr+1)
+//   --_slotNWidth  1 or 2
+//   --_slotNLive   1 if the slot fires this tick, 0 otherwise
+export const NUM_WRITE_SLOTS = 3;
 
 // Packed memory cells — pack PACK_SIZE bytes into a single @property.
 // 1 = unpacked (one byte per property, the legacy shape).
@@ -321,8 +330,17 @@ export function emitMemoryProperties(opts) {
 }
 
 /**
- * Emit the per-byte write rules for writable memory (inside .cpu).
- * Each byte checks all NUM_WRITE_SLOTS memory write slots.
+ * Emit the per-byte write rules for writable memory (inside .cpu) — the
+ * unpacked (PACK_SIZE=1) path. Each byte tests all NUM_WRITE_SLOTS slots
+ * twice: once as the slot's lo/byte half (matched at --memAddrN: addr),
+ * once as the slot's hi half when the slot is width=2 (matched at
+ * --memAddrN: addr-1). Width=2 means the slot writes 2 consecutive bytes
+ * starting at --memAddrN; the slot's value is a 16-bit word with lo at
+ * --memAddrN and hi at --memAddrN+1.
+ *
+ * Width=1 byte value: --memValN.
+ * Width=2 lo half:    --lowerBytes(--memValN, 8).
+ * Width=2 hi half:    --rightShift(--memValN, 8).
  */
 export function emitMemoryWriteRules(opts) {
   const { addresses } = opts;
@@ -330,7 +348,10 @@ export function emitMemoryWriteRules(opts) {
   for (const addr of addresses) {
     const slotLines = [];
     for (let i = 0; i < NUM_WRITE_SLOTS; i++) {
-      slotLines.push(`    style(--memAddr${i}: ${addr}): var(--memVal${i});`);
+      // Slot's lo half lands at addr — value is byte (width=1) or low byte of word (width=2).
+      slotLines.push(`    style(--memAddr${i}: ${addr}): if(style(--_slot${i}Width: 2): --lowerBytes(var(--memVal${i}), 8); else: var(--memVal${i}));`);
+      // Slot's hi half lands at addr when memAddrN: addr-1 AND width=2.
+      slotLines.push(`    style(--memAddr${i}: ${addr - 1}) and style(--_slot${i}Width: 2): --rightShift(var(--memVal${i}), 8);`);
     }
     lines.push(`  --m${addr}: if(\n${slotLines.join('\n')}\n  else: var(--__1m${addr}));`);
   }
@@ -379,6 +400,9 @@ export function emitMemoryExecuteKeyframe(opts) {
 
 /**
  * Emit @property declarations for memory write slots.
+ * Three properties per slot: address, value, width (1 or 2).
+ * --_slotNLive and --_slotNWidth share semantics with --memAddrN/--memValN
+ * — set together by emitMemoryWriteSlots / emitSlotLiveGates / emitSlotWidthGates.
  */
 export function emitWriteSlotProperties() {
   const lines = [];

@@ -2,6 +2,51 @@
 
 Last updated: 2026-04-28
 
+## 2026-04-28 — Load-time fusion: byte-period detector + fusion-sim landed
+
+Built the bottom two layers of the load-time fusion pipeline as a
+fresh lead after the replicated-body recogniser came up empty.
+
+**Layer 1: byte_period detector** (calcite, generic). Walks rom-disk
+bytes, finds periodic regions (period P, K reps). On doom8088: scan
+runs in 610 ms over the 1.83 MB image, finds 4065 periodic regions.
+Headline match: 21-byte × 16-rep region at offset 86306 — the
+column-drawer kernel. A 21×14 sibling at offset 86661 (different
+column-drawer variant). 30 total occurrences of the 21-byte body
+across the cart. Driver: `probe-byte-periods` calcite-cli binary.
+
+**Layer 2: fusion_sim symbolic interpreter** (calcite, generic).
+Walks compiled Op trees, threads slot reads as `SymExpr::Slot` free
+variables, composes arithmetic/bitwise ops symbolically. Distinguishes
+calcite's `And`/`AndLit` (lowerBytes truncation) from `BitAnd16`
+(true bitwise). Bails on branches, memory side-effects, and currently-
+unsupported variants. Driver: `probe-fusion-sim` calcite-cli binary.
+
+**Concrete win** in table 21 (232-entry per-register dispatch with
+`result_slot=386862` = `--ip`): simulator successfully composes the
+IP-advance expression for **12 of 15** doom column-drawer body bytes:
+
+  - `0x88` → `Add(Const(2), Slot(37))` — 2-byte instr base + offset
+  - `0x81` → `Add(Add(Const(2), Slot(37)), Const(2))` — 4-byte instr
+  - `0xea` → `Add(Slot(27), Mul(Slot(28), Const(256)))` — far jump
+
+The remaining 3 bail: `0xe8` (Div), `0xab` STOSW (`Branch` on
+`--df`), `0xcb` (nested `LoadMem`). Handling `0xab` requires the
+simulator to evaluate branches under known-flag assumptions (CLD has
+fired before the unrolled body, so `--df=0`).
+
+**What's not done yet.** Composing across 21 dispatch entries (the
+body) and 16 reps is the next layer. Wiring `--fusedKey` into the CSS
+to fire fused entries instead of per-byte ones is the layer after.
+Both pending.
+
+Files (calcite repo): `crates/calcite-core/src/pattern/byte_period.rs`,
+`crates/calcite-core/src/pattern/fusion_sim.rs`,
+`crates/calcite-cli/src/bin/probe_byte_periods.rs`,
+`crates/calcite-cli/src/bin/probe_fusion_sim.rs`. 19 unit tests pass
+(10 byte_period + 9 fusion_sim). Smoke gate not re-run; this is
+diagnostic infrastructure that doesn't touch any execution path.
+
 ## 2026-04-28 — Replicated-body recogniser: built, dead lead
 
 Built a generic recogniser in calcite-core that detects unrolled

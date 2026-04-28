@@ -2,6 +2,93 @@
 
 Last updated: 2026-04-28
 
+## 2026-04-28 — Calcite Phase 1: DAG extraction (CFG + walker)
+
+Per `calcite/docs/compiler-mission.md` § Phase 1 and the design in
+`calcite/docs/phase1-dag-ir.md`. Foundation phase — no perf gain
+expected, no perf gain measured. The deliverable is a sound dataflow
+substrate Phase 2 can rewrite.
+
+**What landed.**
+
+- `crates/calcite-core/src/dag/` — three sub-modules:
+  - `types.rs`: `BasicBlock`, `BlockId`, `BranchKind`, `Terminator`,
+    `Dag`. Phase 1 node vocabulary mirrors `compile::Op` 1:1; the
+    contribution is the explicit CFG.
+  - `build.rs`: textbook leader-collection / block-construction.
+    Decodes `Vec<Op>`'s implicit branches (`BranchIfZero`,
+    `BranchIfNotEqLit`, `LoadStateAndBranchIfNotEqLit`, `Jump`,
+    `DispatchChain`, `MemoryFill`/`MemoryCopy` exit_target) into
+    explicit successor edges. `Op::Dispatch`/`DispatchFlatArray`/`Call`
+    correctly classified as fall-through super-ops, not terminators.
+  - `walker.rs`: `dag_execute(program, dag, state, slots)`. Runs each
+    block's body via `exec_ops` (now `pub(crate)`), then re-evaluates
+    the branch condition / chain lookup against the post-body slot
+    state to pick the next block. Same observable behaviour as
+    `compile::execute`.
+- Refactor: `compile::execute` now delegates its post-main-ops phase
+  (writeback, broadcast writes, packed broadcasts, REP fast-forward)
+  to a new `execute_post_main_phases` helper that the DAG walker
+  reuses bit-for-bit. No semantic change to the bytecode path.
+- `Evaluator` gains a `Backend` enum (`Bytecode | Dag`), defaulted to
+  `Bytecode`. Selectable at construction via `CALCITE_BACKEND=dag`
+  env var, or at runtime via `Evaluator::set_backend`. The DAG is
+  built lazily on first switch-to-DAG.
+
+**Acceptance gates fired.**
+
+1. `cargo test -p calcite-core` green under both backends. 96 lib
+   tests + 2 conformance tests + 6 REP tests + 1 backend-equivalence
+   test pass under `CALCITE_BACKEND=bytecode` (default) and
+   `CALCITE_BACKEND=dag`.
+2. Phase 0.5 primitive conformance suite produces identical
+   PASS/SKIP/XFAIL counts under both backends:
+   **41 PASS / 5 SKIP / 3 XFAIL**, 49 fixtures total. Same XFAILs as
+   v1: `var_undefined_no_fallback`, `calc_div_zero`,
+   `ignored_selector`. The DAG walker doesn't fix any v1 bug — it
+   reproduces v1 exactly, which is what Phase 1 is supposed to do.
+   `tests/primitive_conformance.rs` now runs as two `#[test]`s
+   (`primitive_conformance_bytecode`, `primitive_conformance_dag`)
+   so a single `cargo test` invocation covers both.
+3. New `tests/backend_equivalence.rs::backends_agree_on_demo_cabinet`
+   runs 200 ticks of `web/demo.css` (~730 KB cabinet) under each
+   backend and asserts bit-identical state at the end —
+   state_vars, memory bytes, extended-map entries, string properties,
+   frame counter. Green.
+4. wasm32 build of `calcite-wasm` succeeds; DAG module respects the
+   wasm-safety rules (no `std::time`, no threads, no fs/net).
+
+**Cardinal-rule check.** The Phase 1 DAG is "an alternative way to
+drive the same op stream" — the node vocabulary mirrors `Op`, which
+mirrors CSS expression structure. No x86 knowledge enters the new
+module. The genericity probe (would the same code work on a 6502
+cabinet, a brainfuck cabinet, a non-emulator cabinet sharing the
+shape?) passes — the walker is a pure CFG interpreter that doesn't
+know what any of the ops compute.
+
+**Cost.** ~1 day of focused work, well under the 1–2 week Phase 1
+budget. Most of the budget would have gone to repeated correctness
+chasing if I'd built the DAG from `Expr` and re-derived pattern
+lowerings; building from `Vec<Op>` (post-pattern-recognition) made
+the dispatch/broadcast/packed/MemoryFill super-ops fall out for free.
+
+**What this enables.** Phase 2 starts here. The DAG nodes and edges
+are the substrate the Phase 2 rewrites will operate on — pattern
+matchers consume DAG fragments, normalisers replace cascade-of-
+branches with select trees, etc. The CFG stays as a fallback for
+patterns we haven't normalised; over Phase 2 / 3 the goal is to
+collapse it down so most of a typical block evaluates as a flat DAG
+with no per-op dispatch.
+
+**Branches + commits on calcite-v2:**
+- `0937114` — Phase 1: DAG extraction (CFG + walker).
+
+**No perf measurement here.** Per the spec — Phase 1 explicitly does
+not promise a speed-up, and adding a tick-rate datapoint with the
+DAG walker (which is currently a longer-cold-code-path than the
+bytecode interpreter, by design) would be misleading. Phase 2 is
+where rewrites land that should start moving tick-rate.
+
 ## 2026-04-28 — Calcite Phase 0.5: CSS-primitive conformance suite
 
 49 fixtures under `calcite/.claude/worktrees/calcite-v2/tests/conformance/

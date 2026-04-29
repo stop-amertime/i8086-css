@@ -114,14 +114,42 @@ smoke gate, the wall-budget needs to be raised (e.g. 30s) or the
 runner needs to use calcite-cli (~3.8s compile) rather than
 calcite-debugger.
 
-**Bottom line.** The fusion-sim layer is complete enough to lower
-real Doom column-drawer body composition into a 94%-smaller op
-sequence. The runtime-integration layer is *not* done. This is the
-right checkpoint to stop and decide whether to keep pushing into the
-runtime layer (which is where the actual perf win lives) or pause
-and tackle a different lead. Code is correct, tested, and committed
-to main — fusion_sim's diagnostic infrastructure is now genuinely
-useful for any future fusion work, not just this lead.
+**Runtime fast-forward landed** (followup, same session). End-of-tick
+hook in `compile.rs` (parallel to `rep_fast_forward`) detects the
+column-drawer body in ROM at current CS:IP and bulk-applies its net
+effect. Detection is structural ROM-byte match (cabinet-agnostic per
+the cardinal rule). Net per-iteration semantics derived from x86
+opcode definitions of the body: two memory reads (palette + colormap),
+AX broadcast, two stosw, DI advance + 0xEC, DX advance + BP. Detects
+up to 16 stacked unrolled body iterations and applies them in one shot.
+Gated by `CALCITE_FUSION_FASTFWD` env var; on by default.
+
+**Measurement** on `bench-doom-stages-cli.mjs`, level-load window
+(stage_loading → stage_ingame, 29.5M ticks):
+```
+fusion OFF: 135.837s / 29.5M ticks / 323,102,046 cycles
+fusion ON:  133.948s / 29.5M ticks / 323,246,537 cycles
+Δ: 1.4% wall-clock faster, +144,491 cycles (0.04%)
+ticksToInGame identical (35M).
+```
+
+1.4% modest because the column drawer fires lightly during the
+load window — the win is concentrated in gameplay rendering frames
+(R_DrawColumn), which the current bench doesn't measure. Cycle
+delta of 144,491 = ~2,890 fusion fires over the 29.5M-tick window.
+The cycle-charging may be slightly off (50/iter is a rough estimate);
+worth tightening if fusion is extended.
+
+**Items 1-5 of the plan: done.** Simulator (88.6% body compose),
+SymExpr→Op lowerer (94% op shrink), runtime CS:IP detector + memory-
+write replay landed and measured. Open follow-ups:
+- Gameplay-frame bench (the column-drawer-heavy window) to measure
+  the real win.
+- Fusion site catalogue (right now it's hardcoded one body; could
+  be a recogniser pass that auto-detects from byte_period results).
+- Cycle accounting refinement (per-iter charge tuned to actual
+  CSS opcode cycles).
+- Regression bisection if any cabinet shows divergence.
 
 ## 2026-04-29 — calcite-v2-rewrite stream: Phase 1 lands
 

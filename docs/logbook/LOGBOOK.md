@@ -62,11 +62,34 @@ Tests: 13 fusion_sim tests pass under release. (4 pre-existing failures
 in `compile::tests` are unrelated — confirmed via stash diff against
 main.) wasm32 build clean (no changes to wasm-relevant code).
 
-**Not yet done.** SymExpr → Op translation, runtime CS:IP fusion-site
-detector, CSS wiring, smoke gate. The simulator now produces a
-production-quality intermediate representation; turning that into an
-actual `Op::FusedBody` that fires at the right CS:IP and replays
-memory writes correctly is the next layer.
+**SymExpr → Op lowering landed** (followup, same session). Added
+`SymExpr::lower_to_ops` that emits a flat `Vec<Op>` computing the
+expression. Lit-folded fast paths (`AddLit`/`SubLit`/`MulLit`/`ShlLit`/
+`ShrLit`/`AndLit`/`ModLit`) when one operand is `Const`. Three round-
+trip unit tests confirm `simulate(ops) → expr → lower(expr) → simulate`
+yields the same concrete value (16/16 fusion_sim tests green).
+
+**End-to-end probe result on the doom column-drawer body** (39 FULL
+tables, lowered into fused op sequences):
+```
+total original ops: 2174
+total fused ops:    131
+shrink:             94.0%
+```
+
+Many flag tables collapse to a single `Const` op — at the end of the
+21-byte body, the flag value is determined by the last writer in the
+sequence, which after pinning often resolves to a literal. Per-table
+shrink ranges from 99.8% (420 → 1 op) for flag tables down to -50%
+for some pixel-write expressions where the naive lowering doesn't
+reuse common subexpressions. Smarter lowering with CSE could push
+the negative-shrink cases positive; not done this session.
+
+**Not yet done.** Runtime CS:IP fusion-site detector, memory-write
+side-effect replay (STOSW × 2 inside the body), CSS wiring,
+correctness verification against per-byte execution, smoke gate. The
+simulator + lowerer produce a fused op sequence; emitting it as an
+`Op::FusedBody` that fires at the right CS:IP is the next layer.
 
 ## 2026-04-29 — calcite-v2-rewrite stream: Phase 1 lands
 

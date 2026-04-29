@@ -51,19 +51,33 @@ let pendingLazyBlob = null;
 // steady state is a few thousand cycles per batch; for sparse ones it
 // walks up to MAX. Hardcoding a large MIN starves the adapter and forces
 // hundreds of milliseconds per batch on any cabinet calcite finds expensive.
-const TARGET_MS = 50;
+// Fixed-cadence batch sizing.
+// We sample the framebuffer at 30Hz (matches doom8088's native gametic
+// rate; faster sampling sees the same partial-frame state). Batches
+// target the same 33ms wall budget so each batch produces ~one sample's
+// worth of work and input latency stays bounded.
+//
+// No adaptive feedback: the cabinet's wall-fps is governed by how
+// expensive its rendering is, not by anything we can tune in the
+// bridge. Adaptive sizing added mechanism without a win.
+const TARGET_MS = 33;            // ≈ 30Hz; ~33ms input latency ceiling
 const EMA_ALPHA = 0.3;
 const MIN_BATCH = 50;
-const MAX_BATCH = 200000;
+const MAX_BATCH = 200_000;
 let batchCount = 200;
 let batchMsEma = TARGET_MS;
+// Hash of the last framebuffer the bridge emitted. The 30Hz sampler
+// hashes a sparse subsample and short-circuits the BMP emit when the
+// hash is unchanged — kills duplicate paints when the cabinet hasn't
+// produced a new frame this poll.
+let lastFrameHash = 0;
 
 // ---------- Bootstrap ----------
 
 // Canary — bump this when you change this file so you can confirm the
 // browser is actually serving the new version. Shows up in every status
 // line so it's impossible to miss in the console.
-const BRIDGE_VERSION = 'v38-revert-timing';
+const BRIDGE_VERSION = 'v41-fixed-30hz-fix';
 
 async function boot() {
   postStatus(`bridge boot ${BRIDGE_VERSION}`);
@@ -150,6 +164,7 @@ function startRunning() {
   if (engine) {
     running = true;
     tickLoop();
+    startFrameSampler();
   }
 }
 
@@ -164,6 +179,7 @@ function resetMachine() {
   // Reset pacing so the adapter relearns for the new run.
   batchCount = MIN_BATCH;
   batchMsEma = TARGET_MS;
+  lastFrameHash = 0;
   // Tear down the existing stats interval so no stale stats sample
   // (with the previous run's cycleCount) leaks through to a viewer
   // that reconnects on top of an existing bridge. startStatsInterval
@@ -175,6 +191,7 @@ function resetMachine() {
     frameCount = 0;
     lastReportFrames = 0;
   }
+  stopFrameSampler();
   postStatus('machine reset; running');
   startStatsInterval();
 }
@@ -207,10 +224,11 @@ function tickLoop() {
   }
   const batchDt = performance.now() - batchStart;
   batchMsEma = batchMsEma * (1 - EMA_ALPHA) + batchDt * EMA_ALPHA;
+  // Walk batchCount toward the count that lands TARGET_MS per batch.
+  // Clamped 0.5×/2× per loop so it converges over a few batches without
+  // overshooting on a one-off slow batch.
   const ratio = Math.max(0.5, Math.min(2.0, TARGET_MS / batchMsEma));
   batchCount = Math.max(MIN_BATCH, Math.min(MAX_BATCH, Math.round(batchCount * ratio)));
-
-  maybeEmitFrame();
 
   // Yield back to the event loop so SW-port messages (kbd input) get
   // drained promptly. We use MessageChannel here rather than
@@ -225,6 +243,31 @@ function tickLoop() {
 
 const tickChannel = new MessageChannel();
 tickChannel.port2.onmessage = () => tickLoop();
+
+// 60Hz framebuffer sampler — independent of the tick loop. Reads the
+// current framebuffer, hashes a sparse subsample, and emits a BMP only
+// when the hash changes. Decouples paint cadence from batch cadence
+// (the engine is free to use big batches when nothing visible is
+// happening; the sampler still catches frames at up to 60Hz when they
+// appear).
+//
+// Why setInterval not setTimeout chain: Chrome throttles setInterval to
+// ~1Hz in background tabs, but the bridge worker lives in build.html
+// (background). MessageChannel-pumped tick loop bypasses that for tick
+// work. The sampler is paint-only and CAN run slow when backgrounded
+// — that's actually fine (no point painting an invisible tab at 60Hz).
+const FRAME_SAMPLER_HZ = 30;
+let frameSamplerId = null;
+function startFrameSampler() {
+  if (frameSamplerId) return;
+  frameSamplerId = setInterval(() => {
+    if (!running || !engine) return;
+    try { maybeEmitFrame(); } catch {}
+  }, Math.round(1000 / FRAME_SAMPLER_HZ));
+}
+function stopFrameSampler() {
+  if (frameSamplerId) { clearInterval(frameSamplerId); frameSamplerId = null; }
+}
 
 // ---------- Framebuffer extraction + BMP emit ----------
 //
@@ -396,6 +439,24 @@ function maybeEmitFrame() {
     dbgFrame(`frame: mode=0x${modeByte.toString(16)} kind=${mode.kind} — unhandled, skipping`);
     return;
   }
+
+  // Hash the rgba to detect whether the cabinet produced a NEW frame
+  // since last sample. FNV-1a over a sparse subsample (every 256th byte
+  // of the rgba — ~1KB total for mode 13h) is cheap (~0.05ms) and
+  // catches changes anywhere in the framebuffer with high probability.
+  // If unchanged, skip the BMP allocation/post entirely — saves ~256KB
+  // alloc + transfer per duplicate frame at 60Hz sampling.
+  let h32 = 0x811c9dc5 | 0;
+  const stride = Math.max(1, Math.floor(rgba.length / 1024));
+  for (let i = 0; i < rgba.length; i += stride) {
+    h32 ^= rgba[i];
+    h32 = (h32 + ((h32 << 1) + (h32 << 4) + (h32 << 7) + (h32 << 8) + (h32 << 24))) | 0;
+  }
+  const hashed = h32 >>> 0;
+  if (hashed === lastFrameHash) {
+    return; // no new frame — don't bother posting
+  }
+  lastFrameHash = hashed;
 
   // Assemble BMP: header + RGBA pixels in one buffer. For text mode we
   // own `rgba` (just allocated); for gfx mode it's a wasm-memory view

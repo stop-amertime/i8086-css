@@ -1,6 +1,127 @@
 # CSS-DOS Logbook
 
-Last updated: 2026-04-28
+Last updated: 2026-04-29
+
+## 2026-04-29 — fusion-sim: 88.6% body compose on doom column-drawer
+
+Resumed the segment-0x55 fusion lead. Pushed the body-composition
+probe from 52% → 88.6% FULL compose by extending fusion_sim with
+real dispatch-table support and doing per-byte decoder pinning.
+
+**Probe extensions (`crates/calcite-cli/src/bin/probe_fusion_compose.rs`):**
+- Per-body-byte decoder pin table — for each opcode-byte in the
+  21-byte column-drawer body, asserts the values of `--prefixLen`,
+  `--opcode`, `--mod`, `--reg`, `--rm`, `--q0`/`--q1` at fire time.
+- Body-invariant slot pins applied each fire — `--hasREP=0`,
+  `--_repActive=0`, `--_repContinue=0`, `--_repZF=0`, all segment-
+  override-active flags = 0. Eliminates STOSW REP-path branch bails.
+- Skip non-fire bytes (modrm + immediates). Real execution only fires
+  dispatch on opcode bytes; iterating modrm/imm bytes triggered phantom
+  dispatches that the simulator was bailing on.
+- Bail-reason histogram + targeted diagnostic (`CALCITE_DUMP_BAIL_OPS`).
+
+**fusion_sim extensions (`crates/calcite-core/src/pattern/fusion_sim.rs`):**
+- `Op::DispatchChain` Const-keyed resolution. Walk `chain_tables[chain_id]`
+  with the keying slot's Const value, jump to body PC or `miss_target`.
+  Eliminated 8 `dispatch*` bails on bytes 2 (0xd0) and 15 (0x81).
+- `Op::Dispatch` Const-keyed resolution. Recursively simulate the
+  HashMap entry's ops on the same env, then write `result_slot` into
+  `dst`. Threads `dispatch_tables` through `simulate_ops_full_ext`.
+- `Op::DispatchFlatArray` non-Const fallthrough → new `SymExpr::FlatArrayLookup`
+  symbolic node. Lets the simulator carry runtime array lookups through
+  the rest of the entry instead of bailing.
+
+**Probe results on the 21-byte column-drawer body (44 fire tables):**
+```
+                  FULL   partial   bail
+baseline (start)   23     16        5      52.3%
++ pin per-byte     27     17        0      61.4%
++ skip non-fire    30     14        0      68.2%
++ DispatchChain    36      8        0      81.8%
++ Dispatch         38      6        0      86.4%
++ flag invariants  39      5        0      88.6%
++ FlatArrayLookup  39      5        0      88.6% (no change)
+```
+
+Last 5 partials: deep flag-side bails — the first FlatArrayLookup result
+flows into a `BranchIfNotEqLit` that needs Const but gets a symbolic
+expression. Resolving that requires representing branch outcomes
+symbolically (essentially partial compilation through if-trees), which
+is a much larger lift than this session's scope. 88.6% is comfortably
+above the threshold for fusion-emit to be useful.
+
+**Sample composed expressions** at FULL tables (these are end-of-21-byte
+post-body register/flag states expressed against entry-state slots):
+```
+table 40: LowerBytes(BitOr16(Slot(--rmVal16), Add(Slot(--immByte), Mul(BitExtract(Slot(--immByte), Const(7)), Const(...))))
+table 42: LowerBytes(Add(Floor(Div(Slot(--rmVal16), Const(2))), Mul(BitExtract(Slot(--rmVal16), Const(0)), Const(...))))
+table 50: Shr(LowerBytes(Add(Floor(Div(Slot(--rmVal16), Max([Const(1), Slot(--_pow2CL)]))), ...
+```
+
+Tests: 13 fusion_sim tests pass under release. (4 pre-existing failures
+in `compile::tests` are unrelated — confirmed via stash diff against
+main.) wasm32 build clean (no changes to wasm-relevant code).
+
+**Not yet done.** SymExpr → Op translation, runtime CS:IP fusion-site
+detector, CSS wiring, smoke gate. The simulator now produces a
+production-quality intermediate representation; turning that into an
+actual `Op::FusedBody` that fires at the right CS:IP and replays
+memory writes correctly is the next layer.
+
+## 2026-04-29 — calcite-v2-rewrite stream: Phase 1 lands
+
+Parallel stream to the additive `calcite-v2` worktree, branch
+`calcite-v2-rewrite`. Clean rewrite from `ParsedProgram` (parser
+output) instead of `Vec<Op>` (v1 bytecode), so the DAG and its later
+rewriters aren't downstream of v1's pattern decisions.
+
+Phase 1 deliverable: a v2 DAG walker that produces results matching
+Chrome on the primitive conformance suite. Backend enum
+(`Bytecode | DagV2`) on `Evaluator`; default stays Bytecode, opt-in
+via `set_backend(Backend::DagV2)`.
+
+**Phase 0.5 conformance against Chrome**: v2 41 PASS / 5 SKIP / 3
+XFAIL — identical to v1's result. Same 3 documented gaps (div-by-
+zero serialisation, ignored-selector handling, var-undefined-no-
+fallback invalidity propagation) carry through.
+
+**Walker shape**: terminals topologically sorted at DAG-build time by
+`LoadVar Current` dependency edges. Walker runs sorted terminals
+against a per-tick value cache (state-var slots: `Vec<Option<i32>>`;
+memory: sparse `HashMap`). `LoadVar Current` reads cache then
+committed state; `LoadVar Prev` reads committed state directly. CSS
+spec: cascade resolves with substitution, this is the textbook
+implementation. Buffer-copy assignments (`--__0/__1/__2` prefixed)
+are skipped since the prefix-stripped slot model already exposes the
+prior tick's value as `LoadVar Prev`.
+
+**FuncCall**: Phase 1 stub delegates to v1's `eval_function_call` by
+rebuilding `Expr::Literal` arguments from DAG-evaluated values.
+Phase 2 inlines bodies natively. **IndirectStore** (broadcast
+write): Phase 1 stub. Conformance suite doesn't exercise broadcasts;
+real cabinet exercise is Phase 2.
+
+**Two v1 fixes ported in along the way**, both real CSS-spec
+compliance:
+- `compile.rs`: gate `rep_fast_forward` on a new
+  `CompiledProgram::has_rep_machinery` flag (true iff the program
+  declares `--opcode`). Toy CSS programs and non-emulator cabinets
+  skip the hook entirely. Side benefit: fixes pre-existing
+  main-branch breakage where every cabinet without `--opcode`
+  panicked at tick.
+- `CalcOp::Mod` fixed in three places (compile const-fold,
+  exec_ops Op::Mod, exec_ops Op::ModLit, eval.rs interpreter) to
+  match CSS-spec floor-mod (`mod(-7, 3) == 2`), not Rust's
+  sign-of-dividend `%`. Caught by the `calc_mod_negative` fixture.
+
+`cargo test -p calcite-core`: 196 pass, 5 pre-existing rep-fast-
+forward fails unrelated. `wasm-pack build`: clean.
+
+Decision-gate read: paid off as foundation. The next decision gate is
+Phase 2's "≥30% DAG node count reduction on the Doom cabinet" —
+which requires a Doom cabinet in the worktree and the broadcast/
+dispatch recognisers to consume `prebuilt_broadcast_writes` properly.
+Phase 1 wraps; not merging to main — owner reconciles streams.
 
 ## 2026-04-28 — calcite Phase 3 prototype: closure backend over the DAG
 

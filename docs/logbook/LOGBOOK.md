@@ -85,11 +85,43 @@ for some pixel-write expressions where the naive lowering doesn't
 reuse common subexpressions. Smarter lowering with CSE could push
 the negative-shrink cases positive; not done this session.
 
-**Not yet done.** Runtime CS:IP fusion-site detector, memory-write
-side-effect replay (STOSW × 2 inside the body), CSS wiring,
-correctness verification against per-byte execution, smoke gate. The
-simulator + lowerer produce a fused op sequence; emitting it as an
-`Op::FusedBody` that fires at the right CS:IP is the next layer.
+**Memory-write capture extended** (final probe-side change). Old
+`simulate_with_effects` rebased onto `simulate_with_effects_ext`,
+which threads chain_tables and dispatch_tables through. StoreMem /
+StoreState writes inside DispatchChain / Dispatch entries are now
+captured to `SimResult.writes` rather than bailing.
+
+**Stop point — what's not done.** Runtime CS:IP fusion-site detector,
+new `Op::FusedBody` Op variant, runner integration, correctness
+verification against per-byte execution. These are the layers that
+take a static fused expression and make it actually fire at the right
+moment in the running engine. They're real compiler engineering — a
+runtime detector keyed on the body's ROM bytes, plus runner support
+for "skip the per-byte path, run this fused expression instead",
+plus a verification harness that runs both paths and confirms
+identical state. Estimated 3-5 sessions.
+
+**Smoke gate observation** (pre-existing, not regression): zork1,
+montezuma, and dos-smoke fail `tests/harness/run.mjs smoke` with
+`runTicks=0` because the cabinet compile through `calcite-debugger`
+takes ~8s and the wall-budget is 15s, leaving insufficient time for
+the run phase to register ticks before SIGTERM. Verified independent
+of this session's changes (purely additive in `pattern/fusion_sim.rs`,
+not touched by production execution). The 4 cabinets that pass under
+the budget (hello-text, cga4-stripes, cga5-mono, cga6-hires) confirm
+the harness path works for fast-compiling cabinets. To unblock the
+smoke gate, the wall-budget needs to be raised (e.g. 30s) or the
+runner needs to use calcite-cli (~3.8s compile) rather than
+calcite-debugger.
+
+**Bottom line.** The fusion-sim layer is complete enough to lower
+real Doom column-drawer body composition into a 94%-smaller op
+sequence. The runtime-integration layer is *not* done. This is the
+right checkpoint to stop and decide whether to keep pushing into the
+runtime layer (which is where the actual perf win lives) or pause
+and tackle a different lead. Code is correct, tested, and committed
+to main — fusion_sim's diagnostic infrastructure is now genuinely
+useful for any future fusion work, not just this lead.
 
 ## 2026-04-29 — calcite-v2-rewrite stream: Phase 1 lands
 

@@ -1,6 +1,5 @@
 {
   "flavor": "corduroy",
-  "version": "0.2.0",
   "entrySegment": 61440,
   "entryOffset": 0,
   "sizeBytes": 8420,

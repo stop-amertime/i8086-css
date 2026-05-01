@@ -15,6 +15,7 @@ Start at the top, go as deep as you need.
 | Doc | For |
 |---|---|
 | [`building.md`](building.md) | End-to-end walkthrough: cart → cabinet. Covers the five stages and the toolchain. |
+| [`rebuild-when.md`](rebuild-when.md) | When does what need rebuilding. The artifact graph, the `ensureFresh` primitive, and the dev server's `/_reset`/`/_clear` cache-clearing endpoints. |
 | [`hack-path.md`](hack-path.md) | The raw `.COM` path (no DOS). Conformance testing, tiny demos. |
 
 ## The machine
@@ -29,18 +30,18 @@ Start at the top, go as deep as you need.
 | `../kiln/README.md` | Kiln's layout + emit entry point. |
 | `../kiln/AGENT-GUIDE.md` | How to add a new instruction. |
 
-## Debugging
+## Debugging and benchmarking
 
 | Doc | For |
 |---|---|
 | [`TESTING.md`](TESTING.md) | **The testing harness. Start here for anything scripted.** |
-| `../tests/harness/README.md` | Full harness reference: all subcommands, all workflows. |
+| `../tests/harness/README.md` | Conformance + ref-machine + harness pipeline reference. |
+| `../tests/bench/README.md` | Bench harness (Chunk E of cleanup-2026-05-01) — profiles, page, driver, ensureFresh artifact registry. |
 | [`debugging/workflow.md`](debugging/workflow.md) | Standard process: find divergence, diagnose, fix, verify. |
 | [`debugging/calcite-debugger.md`](debugging/calcite-debugger.md) | HTTP API, endpoints, typical sessions. Points at the [Agent-oriented tooling](../../calcite/docs/debugger.md#agent-oriented-tooling) inventory for the MCP surface agents drive. |
 | [`debugging/known-bugs.md`](debugging/known-bugs.md) | Known bugs + patterns to watch for. |
 | [`reference/kernel-boot-sequence.md`](reference/kernel-boot-sequence.md) | What EDR-DOS does during boot; what BIOS services it needs. |
 | [`reference/tick-benchmarks.md`](reference/tick-benchmarks.md) | Rough tick counts for boot milestones — size debugger runs, spot stalls. |
-| [`TESTING.md#web-side-benchmarking`](TESTING.md#web-side-benchmarking--testsharnessbench-webmjs) | `tests/harness/bench-web.mjs` — drive `/player/bench.html` headlessly to measure the wasm bridge end-to-end (Zork1 boot to `>` prompt by default). |
 | [`reference/debugging-dos-kernel.md`](reference/debugging-dos-kernel.md) | EDR-DOS internals, map file, Ralf Brown's, edrdos source. |
 | `../conformance/README.md` | Reference emulators for diff testing. |
 
@@ -58,7 +59,7 @@ Start at the top, go as deep as you need.
 |---|---|
 | `plans/` | Per-workstream task lists. |
 | `archive/` | Completed specs, old plans, historical session notes. |
-| `superpowers/` | Brainstorming and planning artifacts from agent sessions. |
+| `superpowers/` | Brainstorming and planning artifacts from agent sessions. **Gitignored**; not part of the repo. |
 
 ## Calcite (sibling repo)
 

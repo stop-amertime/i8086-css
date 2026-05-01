@@ -2,6 +2,83 @@
 
 Last updated: 2026-05-01
 
+## 2026-05-01 — Repo cleanup: Chunk A baseline + inventory
+
+Bigbang cleanup branch `cleanup-2026-05-01` opened in both repos
+(`f8df6ef` calcite WIP committed first, `0f7ae2d` CSS-DOS WIP committed
+first; both pushed to origin). Driven by `docs/cleanup-agent-prompt.md`
+and `docs/audit-summary-and-plan.md`.
+
+**Decisions locked in:**
+- web/ becomes the unified front-end root; player/ folds in as web/player/
+- player shim consolidates under web/shim/
+- Bench harness lives at `tests/bench/`, with `tests/bench/cache/` for
+  cabinets (ephemeral, gitignored)
+- Build staleness handled by an `ensureFresh(artifact)` helper that
+  consumers (bench, smoke, dev server) call before reading. mtime check
+  vs declared inputs; rebuild if stale; `--no-rebuild` bypass. Same
+  primitive for cabinets, prebake bins, calcite-wasm. Documented in
+  `docs/rebuild-when.md` (Chunk F).
+- `--cond` DSL on calcite-cli replaced cleanly by Chunk D's primitives;
+  no back-compat alias.
+
+**CLI baseline** (`tmp/baseline-cli-doom.json`, fresh-rebuilt
+doom8088.css, calcite-cli at f8df6ef):
+
+```
+totalWallMs        137 182
+text_drdos         1 597 ms / 450K ticks
+text_doom          5 090 ms / 1.55M ticks
+title             12 678 ms / 3.85M ticks
+menu              13 795 ms / 4.15M ticks
+loading           18 529 ms / 5.5M ticks
+ingame           119 012 ms / 35M ticks (cycles 397 459 342)
+```
+
+Note: this is slower than 2026-04-28's "73s loading→ingame" / 91 s ingame
+figures because calcite f8df6ef merges the FxHash WIP from main but the
+release binary in `target/release/` was built before that change. Chunk
+E's bench-rebuild verification uses this baseline as-is (apples-to-apples
+against the same calcite-cli the rest of the cleanup will see).
+
+**Web baseline:** running in background.
+
+**Inventory verdicts** (audit §6/§9 zombie-status questions):
+- `out/` — doesn't exist locally. Builder default; vestigial. Builder's
+  default-output convention can be revisited in Chunk E.
+- `tools/compare-dos.mjs`, `calcite/tools/{fulldiff,ref-dos}.mjs` — all
+  three confirmed BROKEN (header self-declares; imports deleted
+  `transpiler/`). Delete in B.
+- `calcite/tools/{diagnose,codebug,boot-trace,calc-mem,ref-emu,
+  compare,serve-js8086,serve-web,test-daemon-smoke}.mjs` — imports
+  resolve, headers don't say BROKEN. But several reference
+  `../CSS-DOS/builder/build.mjs` shell-out (cardinal-rule violation,
+  audit §11 Severity 1). Per plan: move to `calcite/tools/archive/`
+  rather than delete outright (reversible).
+- `calcite/programs/`, `calcite/output/`, `calcite/site/`, `calcite/
+  serve.mjs`, `calcite/serve.py` — confirmed CSS-DOS-shaped. Per plan
+  Chunk B: delete (Severity 1 from audit §11). The "WORKS" status
+  reported by deeper inspection is irrelevant — they belong in CSS-DOS
+  or nowhere, and CSS-DOS already has its own dev server (`web/scripts/
+  dev.mjs`).
+- `bench/` (CSS-DOS) — 4 prebuilt cabinets + 3 carts + run.mjs +
+  results.md (last entry 2026-04-20). Audit user-confirmed deletable.
+  Removed in Chunk E once the new harness is in place.
+- `docs/superpowers/` — tracked despite being in .gitignore (committed
+  before the gitignore entry). Untrack in Chunk F.
+- `player/calcite.html` — still has the `?bench=1` `<script>` block at
+  line ~295. Plan says user is removing it; they haven't. Will handle
+  in Chunk C.
+- `--cond` flag — only consumer outside calcite-cli's parser is
+  `tests/harness/bench-doom-stages-cli.mjs`. Clean replacement is safe.
+- 20 `probe_*.rs` source files; 8 corresponding `.exe`s in
+  `target/release/`. Source stays (rebuildable diagnostic tools); .exes
+  swept in Chunk F.
+
+Doom8088 cabinet rebuilt fresh from `carts/doom8088` (`builder/build.mjs
+carts/doom8088 -o doom8088.css`, ~13s, 316.9 MB). Replaces the stale
+2-day-old root cabinet; matches what the new bench harness will see.
+
 ## 2026-05-01 — keyboard latch: port 0x60 holds break code until ISR services it
 
 Three coupled bugs in the keyboard input path, all surfacing on doom8088

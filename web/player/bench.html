@@ -176,7 +176,7 @@
     async function spawnBridgeOnce() {
       if (bridgeWorker) return bridgeWorker;
       const reg = await waitForSW();
-      const bridge = new Worker('/player/calcite-bridge.js', { type: 'module' });
+      const bridge = new Worker('/shim/calcite-bridge.js', { type: 'module' });
       bridge.addEventListener('message', (ev) => {
         const d = ev.data;
         if (d && d.type === 'status') log('[bridge] ' + d.message);

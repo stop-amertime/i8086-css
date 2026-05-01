@@ -292,14 +292,5 @@
     <span class="skey"><b>Esc</b>=Cancel</span>
     <span class="skey" style="margin-left:auto">CALCITE</span>
   </div>
-  <!-- Bench mode: ?bench=1 loads a tiny HUD + measurement script. No JS
-       is loaded otherwise; the default pure-HTML runner stays pure. -->
-  <script>
-    if (new URLSearchParams(location.search).get('bench') === '1') {
-      const s = document.createElement('script');
-      s.src = '/player/assets/calcite-bench.js';
-      document.body.appendChild(s);
-    }
-  </script>
 </body>
 </html>

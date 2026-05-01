@@ -1,4 +1,4 @@
-// web/site/assets/calcite-bridge-boot.js
+// web/shim/calcite-bridge-boot.js
 // Loaded by build.html (and split.html). Spawns the calcite-bridge
 // worker, which hosts the calcite WASM engine + a JPEG encoder, and
 // hands a MessagePort to the service worker so the worker's frames
@@ -16,7 +16,7 @@
     const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     await navigator.serviceWorker.ready;
 
-    const bridge = new Worker('/player/calcite-bridge.js', { type: 'module' });
+    const bridge = new Worker('/shim/calcite-bridge.js', { type: 'module' });
     bridge.addEventListener('message', (ev) => {
       const d = ev.data;
       if (d && d.type === 'status') {

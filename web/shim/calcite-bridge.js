@@ -1,4 +1,4 @@
-// player/calcite-bridge.js
+// web/shim/calcite-bridge.js
 // The calcite bridge: a dedicated module worker spawned by build.html
 // (and split.html) on page load. Hosts the calcite WASM engine against
 // the cached cabinet, assembles each frame as a BMP, and ships the
@@ -6,19 +6,17 @@
 // into any active /_stream/fb multipart responses.
 //
 // This is the "output device" side of /player/calcite.html: when that
-// page opens its <img> fetches /_stream/fb 
+// page opens its <img> fetches /_stream/fb
 //
 // Lifetime: tied to the page that spawned the bridge. Close that tab
 // and this worker dies; the runner freezes on its last frame.
 //
-// The video-mode decoder/rasteriser module `video-modes.mjs` lives in
-// the sibling calcite repo (next to calcite-worker.js, which imports it
-// via `./video-modes.mjs`). CSS-DOS reaches it via the dev-server alias
-// `/calcite/` → `../calcite/web/` declared in web/scripts/dev.mjs. If
-// that alias is absent the import fails at boot with 404 — not a silent
-// breakage. The wasm module is reached the same way at `/calcite/pkg/`.
+// `video-modes.mjs` is sibling shim code (CSS-DOS adapter that maps
+// raw VRAM bytes + BDA mode byte to pixels). The wasm module is reached
+// via `/calcite/pkg/` from the dev-server alias `/calcite/` →
+// `../calcite/web/`.
 
-import { pickMode, decodeCga4, decodeCga2, rasteriseText, modeName } from '/calcite/video-modes.mjs';
+import { pickMode, decodeCga4, decodeCga2, rasteriseText, modeName } from '/shim/video-modes.mjs';
 
 // Silence the calcite WASM's info/log/debug chatter (it emits a handful of
 // lines per parse/compile + periodic informational logs). We keep warn/error

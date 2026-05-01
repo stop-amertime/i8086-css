@@ -20,7 +20,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const out = resolve(__dirname, '..', '..', 'player', 'raw.html');
+const out = resolve(__dirname, '..', 'player', 'raw.html');
 
 const PIXEL_W = 320;
 const PIXEL_H = 200;

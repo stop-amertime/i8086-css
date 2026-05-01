@@ -47,7 +47,9 @@ const ALIASES = [
   ['/builder/',         resolve(repoRoot, 'builder')],
   ['/tools/',           resolve(repoRoot, 'tools')],
   ['/assets/dos/',      resolve(repoRoot, 'dos', 'bin')],
-  ['/player/',          resolve(repoRoot, 'player')],
+  // /player/ and /shim/ resolve under web/ — see Chunk C of cleanup-2026-05-01.
+  ['/player/',          resolve(__dirname, '..', 'player')],
+  ['/shim/',            resolve(__dirname, '..', 'shim')],
   ['/presets/',         resolve(repoRoot, 'builder', 'presets')],
   ['/calcite/',         resolve(calciteRoot, 'web')],
   ['/tests/',           resolve(__dirname, '..', 'tests')],

@@ -79,8 +79,18 @@ const outPath = args.out ?? null;
 console.error(`[driver] profile=${profileName} target=${target} port=${port}`);
 
 // ---- Ensure the profile's required artifacts are fresh ----
-const requiredArtifacts = profile.manifest.requires ?? [];
+// Profile-declared `requires`, plus the target-specific calcite binary
+// (wasm pkg for web, native exe for cli). Without this the CLI bench
+// can run against a stale calcite-cli that doesn't know about flags
+// added since the binary was last built.
+const requiredArtifacts = [
+  ...(profile.manifest.requires ?? []),
+  target === 'cli' ? 'cli:calcite' : 'wasm:calcite',
+];
+const seen = new Set();
 for (const name of requiredArtifacts) {
+  if (seen.has(name)) continue;
+  seen.add(name);
   console.error(`[driver] ensuring ${name}`);
   const path = await ensureArtifact(name, { noRebuild, verbose: true });
   console.error(`[driver]   ready: ${path}`);
@@ -148,14 +158,75 @@ async function runWeb(profileName, port, headed) {
 }
 
 // ---- CLI transport ----
-// Once Chunk D lands, this composes the profile's primitives into
-// `calcite-cli --watch ...` invocations. For now, stub.
+//
+// Composes the profile's `cliWatches` (an array of --watch spec
+// strings) into a calcite-cli invocation. The CLI runs the cabinet,
+// emits MeasurementEvents to --measure-out=PATH (one JSONL per event),
+// and exits when a halt action fires.
 async function runCli(profileName, manifest) {
+  if (!Array.isArray(manifest.cliWatches) || manifest.cliWatches.length === 0) {
+    return {
+      ok: false,
+      error: `profile ${profileName} has no cliWatches[] for CLI transport`,
+    };
+  }
+
+  // Resolve calcite-cli binary via CALCITE_CLI_BIN or relative path.
+  const cliBin = process.env.CALCITE_CLI_BIN
+    ?? resolve(REPO_ROOT, '..', 'calcite', 'target', 'release',
+               process.platform === 'win32' ? 'calcite-cli.exe' : 'calcite-cli');
+  if (!existsSync(cliBin)) {
+    return { ok: false, error: `calcite-cli not found at ${cliBin}` };
+  }
+
+  // Resolve the cabinet path. The profile names a `cabinet:NAME` artifact;
+  // we already ensureFresh'd it earlier — so just look up the spec.
+  const { getArtifact } = await import('../lib/ensure-fresh.mjs');
+  const cabSpec = getArtifact(manifest.cabinet);
+  const cabPath = resolve(REPO_ROOT, cabSpec.output);
+  if (!existsSync(cabPath)) {
+    return { ok: false, error: `cabinet not found: ${cabPath}` };
+  }
+
+  const measureOut = resolve(REPO_ROOT, 'tmp', `${profileName}-${Date.now()}.jsonl`);
+
+  const args = [
+    '-i', cabPath,
+    '--measure-out=' + measureOut,
+  ];
+  for (const w of manifest.cliWatches) {
+    args.push('--watch', w);
+  }
+  const maxTicks = manifest.cliMaxTicks ?? 80_000_000;
+  args.push('--ticks=' + maxTicks);
+
+  console.error(`[driver-cli] ${cliBin} ${args.join(' ')}`);
+  const t0 = Date.now();
+  const proc = spawn(cliBin, args, { stdio: ['ignore', 'pipe', 'inherit'] });
+  let stdoutBuf = '';
+  proc.stdout.on('data', d => stdoutBuf += d.toString());
+  const exitCode = await new Promise(res => proc.on('close', res));
+  const totalMs = Date.now() - t0;
+
+  // Parse the measurement events.
+  let events = [];
+  if (existsSync(measureOut)) {
+    const { readFileSync } = await import('node:fs');
+    const txt = readFileSync(measureOut, 'utf8');
+    events = txt.split('\n').filter(Boolean).map(line => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).filter(Boolean);
+  }
+
   return {
-    ok: false,
-    error: 'CLI target not yet wired (waiting for Chunk D primitives)',
+    ok: exitCode === 0,
     profileName,
-    manifest,
+    target: 'cli',
+    totalWallMs: totalMs,
+    exitCode,
+    measureOut,
+    events,
+    cliStdoutSample: stdoutBuf.slice(-500),
   };
 }
 

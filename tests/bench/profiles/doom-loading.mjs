@@ -24,11 +24,35 @@ const ADDR_BDA_MODE   = 0x449;
 const ADDR_TEXT_VRAM  = 0xb8000;
 const TEXT_VRAM_BYTES = 4000;
 
+// Watch specs reused by both transports. Web composes via the bridge
+// (see run() below); CLI passes them as --watch flags via the driver.
+//
+// Each predicate combines multiple memory tests; the boot path naturally
+// progresses through them in order. The `ingame` predicate also requires
+// `_g_usergame=1` so it doesn't false-fire on engine-zero memory at
+// tick 0 (GS_LEVEL=0 matches a zero byte; usergame distinguishes
+// "engine just started" from "level loaded").
+const WATCH_SPECS = [
+  'poll:stride:every=50000',
+  // text_drdos / text_doom — text VRAM (char,attr) needles; stride=2.
+  `text_drdos:cond:${ADDR_BDA_MODE}=0x03,pattern@${ADDR_TEXT_VRAM}:2:${TEXT_VRAM_BYTES}=DR-DOS:gate=poll:then=emit`,
+  `text_doom:cond:${ADDR_BDA_MODE}=0x03,pattern@${ADDR_TEXT_VRAM}:2:${TEXT_VRAM_BYTES}=DOOM8088:gate=poll:then=emit`,
+  // Mode-13h stages. BDA mode 0x13 distinguishes from text-mode boot.
+  `title:cond:${ADDR_MENUACTIVE}=0,${ADDR_GAMESTATE}=3,${ADDR_BDA_MODE}=0x13:gate=poll:then=emit`,
+  `menu:cond:${ADDR_MENUACTIVE}=1:gate=poll:then=emit`,
+  `loading:cond:${ADDR_USERGAME}=1,${ADDR_GAMESTATE}=3:gate=poll:then=emit`,
+  // ingame: usergame=1 (level-load fired) AND gamestate=0 (GS_LEVEL).
+  // Without usergame, this would trip on tick 0's all-zero memory.
+  `ingame:cond:${ADDR_USERGAME}=1,${ADDR_GAMESTATE}=0:gate=poll:then=emit+halt`,
+];
+
 export const manifest = {
   target: 'web',
   cabinet: 'cabinet:doom8088',
   requires: ['cabinet:doom8088', 'wasm:calcite', 'prebake:corduroy'],
   wallCapMs: 600_000,
+  cliWatches: WATCH_SPECS,
+  cliMaxTicks: 80_000_000,
   reportShape: {
     runMsToInGame:    'number',
     ticksToInGame:    'number',
@@ -67,26 +91,8 @@ export async function run(host) {
   }
   const bridge = window.__bridgeWorker;
 
-  // Watch composition. `poll:stride:every=50000` is the cheap gate;
-  // each stage detector is a `cond` gated on poll.
-  const watchSpecs = [
-    'poll:stride:every=50000',
-
-    // Text-mode stage detectors. The pattern@addr:stride:window=needle
-    // primitive scans `window` bytes starting at `base`, taking every
-    // `stride`-th byte (stride=2 because text VRAM is char,attr pairs).
-    `text_drdos:cond:${ADDR_BDA_MODE}=0x03,pattern@${ADDR_TEXT_VRAM}:2:${TEXT_VRAM_BYTES}=DR-DOS:gate=poll:then=emit`,
-    `text_doom:cond:${ADDR_BDA_MODE}=0x03,pattern@${ADDR_TEXT_VRAM}:2:${TEXT_VRAM_BYTES}=DOOM8088:gate=poll:then=emit`,
-
-    // Mode-13h stage detectors.
-    `title:cond:${ADDR_MENUACTIVE}=0,${ADDR_GAMESTATE}=3,${ADDR_BDA_MODE}=0x13:gate=poll:then=emit`,
-    `menu:cond:${ADDR_MENUACTIVE}=1:gate=poll:then=emit`,
-    `loading:cond:${ADDR_USERGAME}=1,${ADDR_GAMESTATE}=3:gate=poll:then=emit`,
-    `ingame:cond:${ADDR_GAMESTATE}=0:gate=poll:then=emit+halt`,
-  ];
-
-  host.log(`registering ${watchSpecs.length} watches`);
-  for (const spec of watchSpecs) {
+  host.log(`registering ${WATCH_SPECS.length} watches`);
+  for (const spec of WATCH_SPECS) {
     await bridgeRequest(bridge, { type: 'register-watch', spec });
   }
   // Set chunk-ticks so the bridge's tickLoop polls the watch registry.

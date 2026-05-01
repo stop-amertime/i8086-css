@@ -31,6 +31,12 @@ registerArtifact({
 });
 
 // --- Calcite native CLI (used by the CLI bench path) ---
+//
+// Build runs in the calcite directory directly (cd "$REPO/../calcite"
+// && cargo build) — invoking cargo with --manifest-path from outside
+// triggers a different build context that on Windows-bash produced
+// link.exe argument-mangling errors. Running cargo from inside the
+// calcite repo avoids it.
 registerArtifact({
   name:    'cli:calcite',
   output:  '../calcite/target/release/calcite-cli.exe',
@@ -41,7 +47,7 @@ registerArtifact({
     '../calcite/crates/calcite-cli/Cargo.toml',
     '../calcite/Cargo.toml',
   ],
-  rebuild: 'cargo build --release -p calcite-cli --manifest-path ../calcite/Cargo.toml',
+  rebuild: 'cd ../calcite && cargo build --release -p calcite-cli',
 });
 
 // --- BIOS prebake binaries (browser-side build path reads these) ---

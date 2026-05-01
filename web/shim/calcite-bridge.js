@@ -693,9 +693,12 @@ self.onmessage = (ev) => {
   }
   if (d.type === 'bench-run' && engine) {
     // Bench-mode entry: skip the viewer-connected dance (no /_stream/fb
-    // is being fetched by the bench page). Just start the tick loop.
-    // Caller typically registers watches first; the watch-driven loop
-    // runs until a halt action fires.
+    // is being fetched by the bench page). Reset the engine to its
+    // initial state (matching what viewer-connected would do via
+    // startRunning's first call) and start the tick loop. Caller
+    // typically registers watches first; the watch-driven loop runs
+    // until a halt action fires.
+    try { engine.reset(); } catch {}
     startRunning();
     return;
   }

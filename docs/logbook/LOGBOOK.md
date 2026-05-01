@@ -2,6 +2,92 @@
 
 Last updated: 2026-05-01
 
+## 2026-05-01 — Repo cleanup: Chunks D + E + F + G
+
+**Chunk D (calcite engine — script-primitive layer):** logged in
+`../calcite/docs/log.md` 2026-05-01. Generic measurement primitives
+(stride/burst/at/edge/cond/halt + actions emit/halt/setvar/dump/
+snapshot) in calcite-core, exposed identically on calcite-cli
+(`--watch` flag) and calcite-wasm (`engine.register_watch`). Old
+`--cond`/`--poll-stride`/`--script-event` removed cleanly. Three new
+modules in calcite-core (`script.rs`, `script_eval.rs`,
+`script_spec.rs`), ~280 LOC removed from calcite-cli/main.rs, ~120 LOC
+added to calcite-wasm/lib.rs. 14 unit tests + 7 integration tests, all
+green. Cardinal-rule check: zero upstream knowledge.
+
+**Chunk E (CSS-DOS bench harness — partial):** new harness at
+`tests/bench/`:
+
+- `lib/ensure-fresh.mjs` (200 LoC) — staleness primitive. Mtime check
+  artifact vs declared inputs (file globs + transitive artifact deps);
+  rebuild if stale; `--no-rebuild` bypass. 15/15 unit tests green.
+- `lib/artifacts.mjs` — declarative manifest of every built artifact:
+  `wasm:calcite`, `cli:calcite`, `prebake:{corduroy,gossamer,muslin}`,
+  `cabinet:{doom8088,zork1,montezuma,hello-text}`. Adding a new
+  artifact is one entry.
+- `driver/run.mjs` — Node CLI. Two transports (web via Playwright, cli
+  via calcite-cli). Calls `ensureArtifact` for every required artifact
+  before running.
+- `page/index.html` — page-side bench runner. Spawns the
+  calcite-bridge worker, posts cabinet-blob, listens for compile-done
+  on `cssdos-bridge-stats`.
+- `profiles/compile-only.mjs` — sanity profile. PASSES end-to-end.
+- `profiles/doom-loading.mjs` — replacement for bench-doom-load /
+  bench-doom-stages. CLI target reaches text_drdos / text_doom /
+  title; title→menu progression NOT working (the new
+  `setvar=keyboard,KEY` action doesn't generate make/break cycles the
+  way the deleted `--cond ... :then=spam:KEY:every=N` did).
+
+**Honest status of E**: foundation + structure done. The old
+`bench-doom-stages.mjs` / `bench-doom-stages-cli.mjs` /
+`bench-doom-load.mjs` / `bench-doom-gameplay.mjs` / `bench-web.mjs`
+scripts are unchanged on this branch and remain the production
+benches until the new harness reaches parity. Three follow-ups to
+close E:
+
+1. Add a `kbdpress=KEY` (or `kbdtap=KEY,duration=N`) action to
+   calcite-core that emits make+break over consecutive emits. Touches
+   `script.rs::Action`, `script_eval::poll`, parser. Small.
+2. Once kbdtap lands, wire title/menu spam in `doom-loading.mjs` and
+   verify the CLI bench reaches `ingame` within ~150 s (matching the
+   pre-cleanup baseline).
+3. Web-target debugging: page→bridge→engine completes compile-done
+   but the bridge's tick loop doesn't progress when `bench-run`
+   triggers. Likely an interaction with the SW + viewer-port plumbing
+   the bench page bypasses. Probably fixable by either opening a
+   dummy `/_stream/fb` fetch on the bench page or wiring keyboard via
+   the bridge's existing `kbd` MessagePort handler instead of the
+   SW's `/_kbd` URL.
+
+Once those are in, retire the 6 old bench scripts in one commit.
+
+**Chunk F (docs):** `docs/rebuild-when.md` (artifact graph +
+ensureFresh + /_reset/_clear endpoints), `tools/README.md` rewritten,
+`docs/INDEX.md` updated to point at `tests/bench/README.md`.
+mcp-shim autostart claim reconciled with `start-debugger-daemon.bat`.
+Logbook discipline rule added to both `CLAUDE.md` files.
+Calcite-perf entries (10 days of work, 2026-04-28 to 2026-05-01)
+migrated from this LOGBOOK to `../calcite/docs/log.md` — stubs
+remain here cross-linking. Per audit §7.
+
+**Chunk G (debris sweep):** old `bench/` directory removed. 43
+fast-shot PNGs deleted from `tests/harness/results/` and gitignored
+along with conformance JSON snapshots. `tmp/` wiped. 8 calcite probe
+`.exe` binaries deleted from `target/release/` (source files stay).
+`docs/superpowers/` untracked.
+
+**Validation against Chunk A baseline:**
+- Web bench (post-merge, mid-cleanup): 143 s runMsToInGame / 34.3 M
+  ticks / 398.7 M cycles. Baseline pre-cleanup: 134.6 s / 34.5 M
+  ticks / 407 M cycles. +6.5% wall, ticks/cycles essentially
+  identical. Within ±10% budget.
+- CLI bench (new harness): cabinet build + parse + compile working;
+  7 watches register; 3 stages detect (text_drdos / text_doom /
+  title) before the keyboard-input gap.
+- Calcite cargo test: 161 PASS / 4 pre-existing rep_fast_forward
+  failures (unchanged from chunk A).
+- wasm-pack: clean.
+
 ## 2026-05-01 — Logbook migration: calcite-engine entries moved to calcite/docs/log.md
 
 Per audit §7: ~10 days of calcite-perf entries (2026-04-28 to

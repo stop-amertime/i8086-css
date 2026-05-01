@@ -13,8 +13,10 @@ output/
 # Bench harness cabinet cache (ephemeral; ensureFresh manages it).
 tests/bench/cache/
 
-# Old benchmark harness artifacts — bench/ is being deleted.
-bench/build/
+# tests/harness/results/ accumulates per-run fast-shot PNGs and
+# conformance JSONs. Latest is useful; the per-session backlog isn't.
+tests/harness/results/*.png
+tests/harness/results/conformance-*.json
 
 # Scratch builds used during testing — any top-level file starting with tmp-.
 tmp-*

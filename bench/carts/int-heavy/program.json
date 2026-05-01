@@ -1,7 +1,0 @@
-{
-  "name": "int-heavy",
-  "description": "Tight loop of INT 1Ah AH=1 — stresses the 6-byte INT push path. Should see the biggest speedup if the slot-gating optimization works.",
-  "preset": "hack",
-  "autorun": "int-heavy.com",
-  "memory": { "conventional": "4K" }
-}

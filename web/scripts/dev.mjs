@@ -193,7 +193,7 @@ const p = (s, ok) => { log.textContent += (ok === false ? '[FAIL] ' : '[ok]   ')
     localStorage.clear(); p('localStorage.clear()');
     sessionStorage.clear(); p('sessionStorage.clear()');
     p('done. reloading in 1.5s…');
-    setTimeout(() => location.href = '/', 1500);
+    setTimeout(() => location.href = '/build.html', 1500);
   } catch (e) {
     p('fatal: ' + e.message, false);
   }
@@ -364,7 +364,23 @@ async function runReset() {
       console.log(step.stderrTail.split('\n').map(l => '         ' + l).join('\n'));
     }
   }
-  console.log('[reset] done. browser: open http://localhost:' + port + '/_clear to purge browser caches + reload.');
+  const clearUrl = `http://localhost:${port}/_clear`;
+  // Auto-open the clear page so the browser purges caches + reloads to
+  // /build.html without the user having to remember the URL. Best-effort:
+  // if `start` (Windows) / `open` (macOS) / `xdg-open` (Linux) isn't
+  // available, fall back to printing the URL.
+  const openCmd = process.platform === 'win32' ? 'start'
+    : process.platform === 'darwin' ? 'open'
+    : 'xdg-open';
+  const opened = spawnSync(openCmd, [clearUrl], {
+    shell: process.platform === 'win32',  // `start` is a cmd builtin
+    stdio: 'ignore',
+  });
+  if (opened.error || opened.status !== 0) {
+    console.log(`[reset] done. browser: open ${clearUrl} to purge browser caches + reload.`);
+  } else {
+    console.log(`[reset] done. opened ${clearUrl} in default browser.`);
+  }
 }
 
 // Regenerate the autogen HTML pages:

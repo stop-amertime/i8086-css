@@ -1,6 +1,233 @@
 # CSS-DOS Logbook
 
-Last updated: 2026-04-29
+Last updated: 2026-05-01
+
+## 2026-05-01 — keyboard latch: port 0x60 holds break code until ISR services it
+
+Three coupled bugs in the keyboard input path, all surfacing on doom8088
+because it's the only cart that hooks INT 09h directly (replacing
+corduroy's stub). All fixed.
+
+**Bug 1: zork "G" → "gg" (double-press).** `calcite-wasm::set_keyboard`
+was calling both `state.bda_push_key(key)` AND `set_var("keyboard", k)`.
+Once corduroy installed an INT 09h handler that also pushes to the BDA
+ring, every press doubled. Fix: drop the wasm-side bda_push_key. The
+cabinet's ISR is the single source of ring writes.
+(`calcite-wasm/src/lib.rs::set_keyboard`.)
+
+**Bug 2: doom "left arrow held forever".** Bridge's release path was
+`setTimeout(() => set_keyboard(0), 100)`. The bridge worker lives in
+build.html (background tab); Chrome throttles setTimeout in
+background-tab workers to ~1Hz, so releases fired seconds late or
+piled up. Fix: drive the release off the tickLoop counter (which uses
+MessageChannel, immune to throttling). 3 batches ≈ 100ms wall but
+bound to engine progress, not wall clock.
+(`player/calcite-bridge.js` v43-tick-driven-release.)
+
+**Bug 3: Enter doesn't open the menu in demo loop.** This was the real
+sink. `--_kbdPort60` returned the break code only on the *single tick*
+the release edge fired:
+```css
+--_kbdPort60: if(
+  style(--_kbdRelease: 1): --or(prevScancode, 128);
+  else: scancode_or_zero
+);
+```
+`_kbdRelease=1` for one tick (the transition); the IRQ pends in
+`--picPending` but DOOM's ISR may not run until N ticks later (IF gates,
+nested PIT IRQ, etc.). By then, port 0x60 returns 0, ISR sees scancode
+0, DOOM's "left held" flag never clears.
+
+Fix: new state-var `--kbdScancodeLatch` holds the most recent scancode
+(make on press, break on release) until the next edge. Port 0x60 reads
+the latch on non-edge ticks. Required three coupled changes in Kiln:
+1. `STATE_VARS` entry → `@property` decl + double-buffer rotation +
+   `--__1kbdScancodeLatch` snapshot (otherwise the var never registers
+   with calcite, get_state_var returns 0, and the latch is invisible).
+2. `regOrder` entry + custom default expression mirroring port 0x60's
+   edge logic.
+3. Updated `_kbdPort60` to fall through to `__1kbdScancodeLatch`.
+
+**Verified via Playwright diagnostic** (`tmp/diag-enter*.mjs`):
+- Pre-fix: Enter at demo loop, 267 presses, BDA tail stuck at 34, never
+  reach `_g_usergame=1`.
+- Post-fix: 109 presses, ISR fires (`inService=1`), latch correctly
+  shows make code 0x1c then break 0x9c, **`_g_usergame` flips to 1 at
+  t=55.9s** — DOOM accepted "New Game" from menu.
+
+Files: `kiln/template.mjs`, `kiln/emit-css.mjs`, `kiln/patterns/misc.mjs`,
+`player/calcite-bridge.js`, `calcite-wasm/src/lib.rs`. Cabinet rebuild
+required. Snapshots from before this date are invalidated (state-var
+ordering changed: new `kbdScancodeLatch` slot inserted).
+
+Cardinal-rule check: the latch is generic CSS-side keyboard-controller
+modelling. Any cabinet whose CSS sets `--keyboard` and reads
+`_kbdPort60` benefits — the rule is "scancode is level-readable until
+the next edge", which is what real PC kbd hardware does. No upstream
+knowledge encoded.
+
+## 2026-05-01 — LoadPackedByte: euclid → bitwise byte extract
+
+3 exec arms (production, profiled, traced) of `Op::LoadPackedByte`
+replaced `cell.rem_euclid(256) / cell.div_euclid(256).rem_euclid(256)`
+with the documented form `(cell >> (off * 8)) & 0xFF`. Equivalent for
+all i32 cells (verified against negative two's-complement); skips a
+branch in libcore's signed-euclid path. Doc on Op::LoadPackedByte
+already specified this form; the executor was the outlier.
+
+Web bench (vs FxHashMap baseline, same cabinet, headed):
+
+|                          | fxhash only | + bitwise | Δ      |
+|--------------------------|------------:|----------:|-------:|
+| loading→ingame           |  66,524 ms  | 62,740 ms |  −5.7% |
+| runMsToInGame            |  78,506 ms  | 74,307 ms |  −5.4% |
+| gameplay ticks/sec       |     426,299 |   430,106 |  +0.9% |
+| gameplay simulatedFps    |        43.5 |      43.8 |  +0.7% |
+| gameplay vramFps         |        2.39 |      2.38 |   noise|
+| gameplay cycles/sec      |   5,930,982 | 5,968,883 |  +0.6% |
+
+Asymmetric — LoadPackedByte fires hard during level-load (window-byte
+reads from disk into RAM), but is only ~3% of dispatched ops in
+steady-state gameplay (per 2026-04-29 op-profile). So we shave the
+load curve and barely move gameplay. Real but small.
+
+Cardinal rule check: just bitwise byte extraction following the op's
+existing documented semantics. Generic across any pack value.
+
+## 2026-04-30 — FxHashMap swap: +25% ingame fps, −24% web level-load
+
+Followup to today's flamegraph. Replaced `std::HashMap` (SipHash) with
+`rustc_hash::FxHashMap` in the runtime hot-path tables only:
+
+- `state.extended` — `HashMap<i32, i32>` for the >0xF0000 fallback in
+  `read_mem` (9% in flamegraph).
+- `DispatchChainTable.entries` — `HashMap<i32, u32>` for `Op::DispatchChain`.
+- `CompiledDispatchTable.entries` — `HashMap<i64, (Vec<Op>, Slot)>` for
+  `Op::Dispatch` (the 4% `hash_one` frame's call site).
+- `CompiledBroadcastWrite.address_map` — `HashMap<i64, i32>` for
+  per-tick broadcast write fan-out.
+- `CompiledSpillover.entries` — `HashMap<i64, (Vec<Op>, Slot)>`.
+
+Compile-time string-keyed maps in `CompilerCtx` and `dispatch_tables`
+left as std::HashMap — touched once at load, swap would ripple across
+crates for no benefit.
+
+**Same cabinet, same cycles, same ticks; pure per-tick eval speedup.**
+
+| Bench                              | baseline   | fxhash     | Δ        |
+|------------------------------------|-----------:|-----------:|---------:|
+| CLI loading→ingame (29.5M ticks)   |  72,000 ms |  61,562 ms |  −14.5%  |
+| Web loading→ingame (29.8M ticks)   |  88,200 ms |  66,524 ms |  −24.5%  |
+| Web runMsToInGame                  | ~125,000 ms|  78,506 ms |  −37%    |
+| Gameplay ticks/sec (60s LEFT)      |    333,000 |    426,299 |   +28%   |
+| Gameplay simulatedFps              |       34.7 |       43.5 |   +25%   |
+| Gameplay vramFps                   |        1.6 |        2.4 |   +50%   |
+| Gameplay cycles/sec                |  4,970,000 |  5,930,982 |   +19%   |
+
+ticksToInGame: 35,000,000 → 34,650,589 (−1%, stage-detect race; not
+real). cyclesToInGame: 397M (CLI) — identical, confirms zero work
+elision.
+
+**Why this works.** The flamegraph showed SipHash + hash_one + extended
+HashMap calls totalling 17% of worker CPU. SipHash is constant-time
+hardened and runs ~30 cycles per i32 key; FxHash is ~3 cycles
+(multiply + xor). On runtime maps that get hit per-tick (`Op::Dispatch`
+inner loop, `read_mem` BIOS-region fallback, broadcast-write
+address_map fan-out), the difference is the dominant cost in those
+samples.
+
+Why bigger win on web than CLI: native Chrome's V8 wasm interpreter
+makes hash function calls relatively more expensive vs the loop body
+than native code's loop-unrolled hot path. Same delta in absolute
+seconds, larger as a percentage of the slower web baseline.
+
+Smoke gate: 4 PASS / 3 pre-existing FAIL — same set as before
+(dos-smoke, zork1, montezuma fail with `ticks=0` due to harness
+build-budget issue documented 2026-04-29, unrelated to this change).
+calcite-core unit tests: 148 PASS / 4 pre-existing FAIL (rep_fast_forward
+no-opcode panics).
+
+Calcite commit: includes `rustc-hash = "2"` dep + 6 type swaps in
+`compile.rs` + 1 in `state.rs`. ~12-line diff, 0 algorithmic change.
+
+The cliff is breakable. Top of next flamegraph will be a different
+shape — re-profile if/when chasing the next 10%.
+
+## 2026-04-30 — Web flamegraph: exec_ops dominates, hashing is 17%
+
+New tool: `tests/harness/flamegraph-doom.mjs` drives Playwright + raw CDP
+to capture V8 cpuprofile (worker + main thread) and chrome trace JSON for
+two phases: LOAD (snapshot-restore from `stage_loading`, run to GS_LEVEL)
+and INGAME (snapshot-restore from `stage_ingame`, hold LEFT 60s).
+`resolve-cpuprofile.mjs` parses the wasm `name` section and rewrites the
+profile in place so DevTools shows real Rust names.
+
+To get names, calcite must be built without wasm-opt's name-section
+strip: `wasm-pack build crates/calcite-wasm --target web --profiling
+--no-opt`. Profiling build is ~5% slower but the % breakdown matches
+release.
+
+**Worker self-time (LOAD 173s / INGAME 60s, near-identical shapes):**
+
+```
+                                             LOAD   INGAME
+calcite_core::compile::exec_ops             76.07%  75.40%
+calcite_core::state::State::read_mem         9.10%   9.35%
+core::hash::sip::Hasher::write               4.07%   4.11%
+core::hash::BuildHasher::hash_one            3.85%   3.88%
+calcite_core::compile::execute               2.94%   3.11%
+(idle)                                       1.62%   1.69%
+calcite_core::compile::rep_fast_forward      0.49%   0.57%
+... everything else < 0.5% individually
+```
+
+**Main thread:** 99% idle. Bridge is not the problem; render is not the
+problem; it's all wasm.
+
+**Headlines:**
+- LOAD: 173s wall, 33M ticks, 200K t/s steady state
+- INGAME: 60s wall, 10M ticks, 171K t/s
+  (matches LOGBOOK 2026-04-29 gameplay bench at 333K ÷ ~2 for the slower
+  profiling build — % shape unchanged.)
+
+**Reading.** `exec_ops` is the per-op dispatch loop. It's 76% — that's
+the headline. But the other 17% (`read_mem` + SipHash + hash_one) is
+almost entirely **HashMap lookup overhead**: `read_mem` hits a
+`HashMap<linear_addr, byte>` for sparse/MMIO writes, and `hash_one` is
+called from `Dispatch` Op evaluation (the per-register dispatch table is
+a HashMap). SipHash is the default `std::collections::HashMap` hasher.
+
+That's the answer the user asked for. Two real leads, both generic
+(no upstream-layer knowledge needed):
+
+1. **Replace HashMap with FxHash or AHash** in the hot lookups.
+   SipHash is ~5x slower than FxHash and 17% of total CPU is
+   hash-related. Even a 3x speedup here = ~10% wall.
+2. **`read_mem`'s HashMap is sparse-overlay over the dense ROM/RAM**.
+   At 9% of CPU there's likely a path that takes the slow `HashMap.get`
+   even when the address is in the dense regions. Worth a flame-graph
+   zoom on what's calling it.
+
+The 76% in `exec_ops` is the main interpreter. To break that down further
+would need finer sub-function profiling (LLVM-level), or a
+function-pointer-table dispatch backend (calcite Phase 3 closure backend
+prototype, 2026-04-28 logbook entry, was 1.19× slower with only 10/50
+ops specialised — the work isn't proven dead, just paused).
+
+Artifacts:
+- `tmp/flamegraph/load/{worker,main}.cpuprofile` — load in DevTools
+  → Performance for the actual flame chart.
+- `tmp/flamegraph/load/trace.json` — perfetto/about:tracing.
+- Same under `tmp/flamegraph/ingame/`.
+- `tmp/flamegraph/{load,ingame}/summary.json` — top-N tables.
+
+Stop chasing peepholes. Real next swing: kill the SipHash overhead.
+
+## 2026-04-30 — read_mem borrow-overhead fix: dead lead, reverted
+
+Gated `read_mem`'s three `RefCell::try_borrow_mut` probes behind a
+`Cell<bool>`. Theoretical save ≤0.25%; web doom8088 level-load 133–134s
+both runs, no signal. Reverted.
 
 ## 2026-04-30 — BIfNEL2 fusion: dead lead, off by default
 

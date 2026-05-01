@@ -48,6 +48,14 @@ export const STATE_VARS = [
   // snapshot lets us compare this tick's value against last tick's.
   { name: 'prevKeyboard', init: 0, debug: false },
 
+  // Keyboard scancode latch. Holds the most recent scancode (make code on
+  // press, break code on release) until the next edge. Backs port 0x60
+  // reads on non-edge ticks so the cabinet's IRQ-09h ISR can still read
+  // a meaningful scancode N ticks after the edge fired (otherwise port
+  // 0x60 returns 0 outside the single edge tick and DOOM's key-held
+  // tracking never sees release events).
+  { name: 'kbdScancodeLatch', init: 0, debug: false },
+
   // VGA DAC state — see patterns/misc.mjs emitIO().
   // dacWriteIndex: which of the 256 DAC registers is currently being written
   //   (set by OUT 0x3C8; auto-increments after every 3 writes to 0x3C9).

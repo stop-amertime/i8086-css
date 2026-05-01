@@ -735,6 +735,14 @@ export function emitCSS(opts, writeStream) {
                     'pitMode', 'pitReload', 'pitCounter', 'pitWriteState',
                     // Keyboard-edge detection: snapshot current --keyboard.
                     'prevKeyboard',
+                    // Port 0x60 latch: holds the most recent scancode (make
+                    // or break) until the next edge. Without it, the break
+                    // code is only readable on the single tick that
+                    // _kbdRelease fires; if the IRQ-09h ISR runs even one
+                    // tick later (typical when CLI flag was clear during
+                    // the release tick), it reads scancode 0 and never
+                    // sees the release. DOOM's key-held state then sticks.
+                    'kbdScancodeLatch',
                     // VGA DAC state machines — write side updated by OUT
                     // 0x3C8 / 0x3C9, read side updated by OUT 0x3C7 / IN 0x3C9.
                     // See kiln/patterns/misc.mjs emitIO() for protocol.
@@ -748,6 +756,15 @@ export function emitCSS(opts, writeStream) {
     pitCounter: pitCounterDefaultExpr(),
     picPending: picPendingDefaultExpr(),
     prevKeyboard: 'var(--keyboard)',
+    // On a press tick: latch the new scancode. On a release tick: latch the
+    // break code (prev scancode | 0x80). Otherwise: hold. The expression
+    // here mirrors --_kbdPort60 (see emitIRQCompute) so port 0x60 reads
+    // can use the latch as a level-readable backing store.
+    kbdScancodeLatch: `if(
+      style(--_kbdPress: 1): --rightShift(var(--keyboard), 8);
+      style(--_kbdRelease: 1): --or(--rightShift(var(--__1prevKeyboard), 8), 128);
+      else: var(--__1kbdScancodeLatch)
+    )`,
   };
   for (const reg of regOrder) {
     const defaultExpr = customDefaults[reg] ?? `var(--__1${reg})`;

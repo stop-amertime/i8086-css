@@ -575,13 +575,18 @@ export function emitIRQCompute() {
     style(--keyboard: 0): 1;
     else: 0
   )`;
-  // On a release tick --keyboard is 0, so port 0x60 would normally return 0.
-  // Substitute prevKeyboard_scancode | 0x80 instead. On a non-release tick
-  // return the current scancode. Guard against a release with prevKeyboard=0
-  // (can't happen by construction of --_kbdRelease, but keep it defensive).
+  // Port 0x60 returns the most recent scancode (make or break) until the
+  // next edge. On the edge tick itself, we compute the new value directly;
+  // off-edge ticks fall through to --__1kbdScancodeLatch, which the
+  // register-dispatch default updates with the same edge logic so the
+  // latch and the live port read agree. Without the latch the break code
+  // is only readable on the single _kbdRelease tick — if the ISR runs
+  // even one tick later (CLI clear gap, nested IRQ pending, etc.) it
+  // reads scancode 0 and DOOM's key-held state never clears.
   const kbdPort60 = `if(
+    style(--_kbdPress: 1): --rightShift(var(--keyboard), 8);
     style(--_kbdRelease: 1): --or(--rightShift(var(--__1prevKeyboard), 8), 128);
-    else: --rightShift(var(--keyboard), 8)
+    else: var(--__1kbdScancodeLatch)
   )`;
   const picEffective = `if(
     style(--__1picInService: 0): --and(var(--__1picPending), --not(var(--__1picMask)));

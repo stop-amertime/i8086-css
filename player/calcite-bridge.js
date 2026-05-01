@@ -71,13 +71,26 @@ let batchMsEma = TARGET_MS;
 // hash is unchanged — kills duplicate paints when the cabinet hasn't
 // produced a new frame this poll.
 let lastFrameHash = 0;
+// Pending key-release: when the SW posts a `kbd` press we want to send
+// the release ~100 ms wall-time later, but build.html is a background
+// tab and Chrome throttles setTimeout in background-tab-owned workers
+// to ~1 Hz. Releases would arrive seconds late or pile up behind fresh
+// presses, leaving DOOM in "key held forever" state. Drive releases
+// off the tickLoop instead — it already runs at full speed via
+// MessageChannel. Counts down on each tickLoop iteration; when it hits
+// zero we issue set_keyboard(0). KEY_HOLD_BATCHES is calibrated so that
+// at typical batch wall-time (~33ms) the release lands ~100ms after
+// press, but the unit is batches not ms, so a batch slowdown can't
+// stretch the hold indefinitely.
+let pendingReleaseBatches = 0;
+const KEY_HOLD_BATCHES = 3;
 
 // ---------- Bootstrap ----------
 
 // Canary — bump this when you change this file so you can confirm the
 // browser is actually serving the new version. Shows up in every status
 // line so it's impossible to miss in the console.
-const BRIDGE_VERSION = 'v41-fixed-30hz-fix';
+const BRIDGE_VERSION = 'v43-tick-driven-release';
 
 async function boot() {
   postStatus(`bridge boot ${BRIDGE_VERSION}`);
@@ -206,6 +219,14 @@ function postStatus(msg) {
 
 function tickLoop() {
   if (!running || !engine) return;
+  // Drive any pending key-release off the tick loop, not setTimeout —
+  // see pendingReleaseBatches comment.
+  if (pendingReleaseBatches > 0) {
+    pendingReleaseBatches--;
+    if (pendingReleaseBatches === 0) {
+      try { engine.set_keyboard(0); } catch {}
+    }
+  }
   const batchStart = performance.now();
   try {
     // run_batch_silent skips the per-batch state-var diff + JSON
@@ -621,11 +642,7 @@ self.onmessage = (ev) => {
         // at least one game tick (~28 ms at 36 fps) before release.
         const v = mm.key | 0;
         engine.set_keyboard(v);
-        setTimeout(() => {
-          if (engine) {
-            try { engine.set_keyboard(0); } catch {}
-          }
-        }, 100);
+        pendingReleaseBatches = KEY_HOLD_BATCHES;
       } else if (mm.type === 'viewer-connected') {
         // New viewer opened the stream. Three entry paths:
         //  - Eager-mode build, engine ready: reset + tick — Play is instant.

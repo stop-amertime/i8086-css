@@ -46,9 +46,9 @@ cycle counts are calcite-side timestamps** (`cycleCount` is real 8086
 clock cycles; `tick` is one calcite evaluation). Numbers below are
 point-in-time observations from 2026-04-28 against `doom8088.css`
 (mode-13h low-detail, dos-corduroy preset, `program.json` autorun
-`DOOM -noxms -noems -nosound`) measured by `bench-doom-stages.mjs` on a
-single headed Chrome run. They will drift — do not hard-code them in
-code or asserts. Use the **sentinels**.
+`DOOM -noxms -noems -nosound`) from a single headed Chrome run.
+They will drift — do not hard-code them in code or asserts. Use the
+**sentinels**.
 
 | # | Stage              | Sentinel                                                     | Tick    | Cycles    | What user sees                |
 |---|--------------------|--------------------------------------------------------------|---------|-----------|-------------------------------|
@@ -102,51 +102,43 @@ Other phases worth attention but lower-leverage today:
 
 ## How to measure
 
-**Use the bench, not interactive runs.** The lessons of 2026-04-27 are
-written down in
-[`feedback_doom_dont_run_blindly`](../../../../.claude/projects/C--Users-AdmT9N0CX01V65438A/memory/feedback_doom_dont_run_blindly.md)
-(your memory) and the [LOGBOOK 2026-04-27](../logbook/LOGBOOK.md) entry.
-Summary:
+**Use the bench, not interactive runs.**
 
 - **Don't** spam Enter into a real run "to see if it advances".
 - **Don't** wait minutes to confirm a change reached the menu.
-- **Do** drive the bench harness — it watches sentinels and reports
-  per-stage wall-clock automatically.
+- **Do** drive the bench harness — it watches sentinels via calcite-core
+  script primitives and reports per-stage wall-clock automatically.
 
-### Two benches — pick whichever fits
+### The bench
 
-There are two benches with matching shapes. Use either; **prefer the
-web bench when you want to see what's happening** (visual sanity
-check, watching a regression manifest), prefer the CLI bench when
-you want headless / batch / no-browser-startup measurement.
+`tests/bench/profiles/doom-loading.mjs` drives both targets through
+the same set of stage-detector watch-specs (see
+[`docs/script-primitives.md`](../script-primitives.md) for the grammar).
 
 ```sh
-# Web bench — Playwright + bench.html. Pass --headed to watch.
-node tests/harness/bench-doom-stages.mjs
-node tests/harness/bench-doom-stages.mjs --headed
-node tests/harness/bench-doom-stages.mjs --json=tmp/bench-out.json
-node tests/harness/bench-doom-stages.mjs --capture-snapshots=tmp/doom-snapshots
-node tests/harness/bench-doom-stages.mjs --budget-mult=3
+# Web target — Playwright drives tests/bench/page/index.html.
+node tests/bench/driver/run.mjs doom-loading
 
-# CLI bench — calcite-cli with --poll-stride / --cond polling.
-node tests/harness/bench-doom-stages-cli.mjs
-node tests/harness/bench-doom-stages-cli.mjs --json=tmp/cli-out.json
-node tests/harness/bench-doom-stages-cli.mjs --poll-stride=50000
+# CLI target — calcite-cli with the profile's --watch flags.
+node tests/bench/driver/run.mjs doom-loading --target=cli
+
+# Pin the JSON output for diffing.
+node tests/bench/driver/run.mjs doom-loading --target=cli --out=tmp/cli-out.json
+node tests/bench/driver/run.mjs doom-loading              --out=tmp/web-out.json
+
+# Skip ensureFresh rebuilds when iterating against an unchanged cabinet.
+node tests/bench/driver/run.mjs doom-loading --target=cli --no-rebuild
 ```
 
-The web bench drives `/player/bench.html` headless, peeks doom8088
-globals every 250 ms via the bridge worker's `peek-mem` MessageChannel,
-and stamps stage transitions on the program-semantic sentinels. The
-CLI bench does the same thing using `calcite-cli`'s native
-`--poll-stride` (chunked execution) and `--cond` (memory-condition
-stage gates), with `then=spam:0x1c0d:every=N` driving the menu chain.
+The profile composes `cond:` watches with memory-pattern predicates
+(`pattern@0xb8000:2:4000=DR-DOS`, `0x3a3c4=0`, etc.) for the six
+stage detectors, and uses `setvar_pulse=keyboard,0x1C0D,N` to drive
+the title→menu→loading transitions with make/break Enter taps.
 
-Both emit the same JSON shape on stdout. Stage entries match: same
-stage names, same fields (`wallMs`, `ticks`, `cycles`,
-`*Delta` against the previous stage). Headline fields:
-`runMsToInGame`, `ticksToInGame`, `cyclesToInGame`. Web also has
-`pageMsToInGame` (page-load to first frame), which the CLI bench
-can't have (no page).
+Both targets emit the same JSON shape — stage names, `wallMs`,
+`ticks`, `cycles` per stage. Headline fields: `runMsToInGame`,
+`ticksToInGame`, `cyclesToInGame`. Web additionally reports
+`pageMsToInGame` (page-load to first frame) which CLI can't.
 
 When the two disagree by more than ~10% on a non-throughput metric,
 investigate — either a regression in one target or a bench bug.
@@ -193,11 +185,11 @@ zone-walk hot path (~70 % of level-load CPU). See
 
 ### Sentinel definitions (deterministic, program-semantic memory reads)
 
-The bench-doom-stages harness uses memory peeks at hard-coded linear
-addresses for stage detection, not framebuffer hashing. The addresses
-are doom8088 globals, derived by dumping memory at known stages and
-finding the unique byte position whose value sequence matches the
-expected program state.
+The bench detects stages via cond-watch predicates on hard-coded
+linear addresses, not framebuffer hashing. The addresses are doom8088
+globals, derived by dumping memory at known stages and finding the
+unique byte position whose value sequence matches the expected
+program state.
 
 | Sentinel name        | Test                                                                              |
 |----------------------|-----------------------------------------------------------------------------------|
@@ -251,8 +243,9 @@ program-state pattern:
 | `_g_usergame`   | 0, 0, 0, 1, 1, 1                                               |
 | `_g_gameaction` | 0, 0, 0, 0, 0, 0   (transient — won't show in dumps; needs the post-press dump trick) |
 
-For `_g_gameaction` specifically: dump immediately after a tap
-(`--script-event=N+1:dump:...` right after `--script-event=N:tap:...`)
+For `_g_gameaction` specifically: dump immediately after a tap.
+Compose a watch that taps at tick N (`at:tick=N:then=setvar_pulse=keyboard,…`)
+and another that dumps at tick N+1 (`at:tick=N+1:then=dump=ADDR,LEN,PATH`)
 to catch ga_newgame=2 before G_DoNewGame consumes it.
 
 #### Menu chain (shareware DOOM, default skill cursor on Hurt me plenty)
@@ -381,7 +374,7 @@ calls:
   shipping a perf change. Zork, Montezuma, sokoban, hello-text,
   dos-smoke, cga4-stripes, cga5-mono, cga6-hires must still pass.
 - **Quote the bench numbers.** When you write a logbook entry for a
-  perf change, include `bench-doom-stages.mjs` JSON before and after.
+  perf change, include `tests/bench/driver/run.mjs doom-loading` JSON before and after.
   "Felt faster" is not evidence; nor is one-shot measurement (variance
   is real — median of 3 minimum).
 - **Don't fire-and-forget.** Every run has a wall-clock budget — the
@@ -464,8 +457,8 @@ Priority order:
 `calcite-cli --snapshot-out PATH` writes the engine's runtime state
 (state vars + memory + extended + string properties + frame counter)
 **after** the run; `--restore PATH` loads it **before** the next run.
-Pairs naturally with `--script-event …:halt` to freeze at a specific
-moment.
+Pairs naturally with a `cond:…:then=emit+halt` watch to freeze at a
+specific moment.
 
 **Use this when iterating on calcite (Rust) and the cabinet is
 unchanged.** Boot + menu + level-load takes tens of seconds even on
@@ -498,10 +491,10 @@ was taken on.
 1. Pick a target — one of the four leads above, or one your profile
    identifies. Write down WHICH stage's metric you expect to move and
    BY HOW MUCH.
-2. Measure baseline: `bench-doom-stages.mjs` once, save the JSON.
+2. Measure baseline: `tests/bench/driver/run.mjs doom-loading` once, save the JSON.
 3. Make the change.
 4. Run the smoke suite (cheap; ~30 s). Bail if it fails.
-5. Measure post-change: `bench-doom-stages.mjs` once, compare.
+5. Measure post-change: `tests/bench/driver/run.mjs doom-loading` once, compare.
 6. If the move is real, write a logbook entry. Include the JSON
    diff. If the move is < 5 % and your prediction was 20 %+, your
    model of what was slow is wrong — back out and re-profile.
@@ -515,7 +508,7 @@ measurement, each verified independently.
 ## Ideas not yet tried
 
 Candidates that look plausible but aren't measured yet. Don't ship any
-of these without baseline + post-change `bench-doom-stages.mjs` JSON.
+of these without baseline + post-change `tests/bench/driver/run.mjs doom-loading` JSON.
 
 ### Collapse 6 byte write-slots → 3 word write-slots
 

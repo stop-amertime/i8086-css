@@ -1,9 +1,13 @@
-# tests/harness — agentic testing infrastructure for CSS-DOS + Calcite
+# tests/harness — correctness testing for CSS-DOS + Calcite
 
-If you're an agent trying to "run the tests" or "figure out why the game
-doesn't work" — you're in the right place. **Start with `node tests/harness/run.mjs smoke`**
-for a quick sanity check, then read below for the specific tool that matches
-your question.
+If you're an agent trying to "run the tests" or "figure out why the
+game doesn't work" — you're in the right place. **Start with
+`node tests/harness/run.mjs smoke`** for a quick sanity check, then
+read below for the specific tool that matches your question.
+
+For **performance** measurement (timed boot/load profiles, web vs
+native throughput) the peer entrypoint is `tests/bench/`. The split:
+correctness here, perf there. See [`docs/TESTING.md`](../../docs/TESTING.md).
 
 ## The one sentence
 

@@ -6,16 +6,17 @@ Start at the top, go as deep as you need.
 
 | Doc | For |
 |---|---|
-| [`logbook/LOGBOOK.md`](logbook/LOGBOOK.md) | **Always, before any work.** Current status, active blocker, priorities. |
-| [`architecture.md`](architecture.md) | The tight overview: glossary, pipeline, cardinal rule, memory sketch. |
+| [`logbook/STATUS.md`](logbook/STATUS.md) | **Always, before any work.** Current state, working carts, sentinel addresses, model gotchas, open work. |
+| [`logbook/LOGBOOK.md`](logbook/LOGBOOK.md) | Chronological work entries. Read when you want history; STATUS is what you actually need. |
+| [`architecture.md`](architecture.md) | Tight overview: glossary, pipeline, cardinal rule, memory sketch. |
 | [`cart-format.md`](cart-format.md) | The cart schema. Canonical reference for `program.json`. |
 
 ## Building and running
 
 | Doc | For |
 |---|---|
-| [`building.md`](building.md) | End-to-end walkthrough: cart → cabinet. Covers the five stages and the toolchain. |
-| [`rebuild-when.md`](rebuild-when.md) | When does what need rebuilding. The artifact graph, the `ensureFresh` primitive, and the dev server's `/_reset`/`/_clear` cache-clearing endpoints. |
+| [`building.md`](building.md) | End-to-end walkthrough: cart → cabinet. Stages and toolchain. |
+| [`rebuild-when.md`](rebuild-when.md) | Artifact graph, the `ensureFresh` primitive, and the dev server's `/_reset` / `/_clear` cache-clearing endpoints. |
 | [`hack-path.md`](hack-path.md) | The raw `.COM` path (no DOS). Conformance testing, tiny demos. |
 
 ## The machine
@@ -30,15 +31,18 @@ Start at the top, go as deep as you need.
 | `../kiln/README.md` | Kiln's layout + emit entry point. |
 | `../kiln/AGENT-GUIDE.md` | How to add a new instruction. |
 
-## Debugging and benchmarking
+## Testing, benchmarking, debugging
 
 | Doc | For |
 |---|---|
-| [`TESTING.md`](TESTING.md) | **The testing harness. Start here for anything scripted.** |
-| `../tests/harness/README.md` | Conformance + ref-machine + harness pipeline reference. |
-| `../tests/bench/README.md` | Bench harness (Chunk E of cleanup-2026-05-01) — profiles, page, driver, ensureFresh artifact registry. |
-| [`debugging/workflow.md`](debugging/workflow.md) | Standard process: find divergence, diagnose, fix, verify. |
-| [`debugging/calcite-debugger.md`](debugging/calcite-debugger.md) | HTTP API, endpoints, typical sessions. Points at the [Agent-oriented tooling](../../calcite/docs/debugger.md#agent-oriented-tooling) inventory for the MCP surface agents drive. |
+| [`TESTING.md`](TESTING.md) | **Start here.** The two-entrypoint split: correctness (`tests/harness/`) vs perf (`tests/bench/`). |
+| `../tests/harness/README.md` | Correctness harness — smoke, conformance, ref-machine, fulldiff, screenshot, baseline. |
+| `../tests/bench/README.md` | Perf harness — profiles, page+driver, native+web targets, ensureFresh artifact registry. |
+| [`script-primitives.md`](script-primitives.md) | Watch-spec grammar. The DSL bench profiles use to detect stages and react to engine state. |
+| [`perf-iteration.md`](perf-iteration.md) | Perf-iteration tooling: snapshots, CS:IP sampling, op-distribution profiling, calcite worktrees. Read when you're optimising. |
+| [`agent-briefs/doom-perf-mission.md`](agent-briefs/doom-perf-mission.md) | The Doom8088 perf mission: priority leads, success criteria, where the time is going. |
+| [`debugging/workflow.md`](debugging/workflow.md) | Standard debugging process: find divergence, diagnose, fix, verify. |
+| [`debugging/calcite-debugger.md`](debugging/calcite-debugger.md) | HTTP API, endpoints, typical sessions. Points at [Agent-oriented tooling](../../calcite/docs/debugger.md#agent-oriented-tooling) for the MCP surface. |
 | [`debugging/known-bugs.md`](debugging/known-bugs.md) | Known bugs + patterns to watch for. |
 | [`reference/kernel-boot-sequence.md`](reference/kernel-boot-sequence.md) | What EDR-DOS does during boot; what BIOS services it needs. |
 | [`reference/tick-benchmarks.md`](reference/tick-benchmarks.md) | Rough tick counts for boot milestones — size debugger runs, spot stalls. |
@@ -49,9 +53,10 @@ Start at the top, go as deep as you need.
 
 | Doc | For |
 |---|---|
-| [`logbook/LOGBOOK.md`](logbook/LOGBOOK.md) | **THE source of truth for project status.** |
+| [`logbook/STATUS.md`](logbook/STATUS.md) | Durable handbook (auto-loaded by CLAUDE.md). |
+| [`logbook/LOGBOOK.md`](logbook/LOGBOOK.md) | Chronological entries. |
 | [`logbook/PROTOCOL.md`](logbook/PROTOCOL.md) | How to write logbook entries. |
-| [`../CHANGELOG.md`](../CHANGELOG.md) | Repo-wide changelog, starting from the big rename. |
+| [`../CHANGELOG.md`](../CHANGELOG.md) | Repo-wide changelog. |
 
 ## Plans and archive
 
@@ -59,7 +64,6 @@ Start at the top, go as deep as you need.
 |---|---|
 | `plans/` | Per-workstream task lists. |
 | `archive/` | Completed specs, old plans, historical session notes. |
-| `superpowers/` | Brainstorming and planning artifacts from agent sessions. **Gitignored**; not part of the repo. |
 
 ## Calcite (sibling repo)
 
@@ -67,6 +71,6 @@ Start at the top, go as deep as you need.
 |---|---|
 | `../calcite/CLAUDE.md` | Calcite's architecture and cardinal rule. |
 | `../calcite/docs/debugger.md` | MCP debug server API. |
-| `../calcite/docs/conformance-testing.md` | Conformance concepts. The legacy `tools/fulldiff.mjs` / `diagnose.mjs` / `ref-dos.mjs` are broken — use `tests/harness/pipeline.mjs fulldiff` instead. |
+| `../calcite/docs/conformance-testing.md` | Conformance concepts. (The legacy `tools/fulldiff.mjs` / `diagnose.mjs` / `ref-dos.mjs` are broken — use `tests/harness/pipeline.mjs fulldiff` instead.) |
 | `../calcite/docs/codebug.md` | Co-execution debugger for side-by-side JS/calcite comparison. |
 | `../calcite/docs/benchmarking.md` | Performance numbers, Chrome comparison. |

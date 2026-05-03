@@ -19,7 +19,8 @@ $ node builder/build.mjs mycart -o mycart.css
 [kiln]   emitting CSS to mycart.css...
 [done]   mycart.css (227.3 MB)
 
-$ open player/index.html?cabinet=../mycart.css
+$ node web/scripts/dev.mjs                 # serves on :5173
+$ open http://localhost:5173/build.html    # load mycart.css, then play
 ```
 
 No `program.json`, no flags. Defaults: Corduroy BIOS, 640K, 1.44 MB
@@ -105,8 +106,11 @@ for the exact shape.
 
 Three options:
 
-- **Chrome via the player:** open `player/index.html?cabinet=path/to/cabinet.css`.
-  Pure CSS. Slow. The source-of-truth run.
+- **Chrome via the player:** start the dev server
+  (`node web/scripts/dev.mjs`), open `http://localhost:5173/build.html`,
+  load your cabinet (it goes into the SW cache as `/cabinet.css`),
+  then click through to `calcite.html`. Pure CSS. Slow. The
+  source-of-truth run.
 - **Calcite CLI:** `calcite-cli -i cabinet.css` in the sibling repo.
   Fast. See `../calcite/CLAUDE.md` for flags.
 - **Calcite web:** the calcite-wasm page can load cabinets and run

@@ -15,8 +15,10 @@ node builder/build.mjs carts/rogue -o rogue.css
 
 To run the cabinet:
 
-- Open `player/index.html?cabinet=../rogue.css` in Chrome.
-- Or: `calcite-cli --input rogue.css` (via the Calcite sibling repo).
+- Start the dev server (`node web/scripts/dev.mjs`), open
+  `http://localhost:5173/build.html`, point it at your cabinet, then
+  click through to `calcite.html`. Pure CSS in Chrome.
+- Or run it fast: `../calcite/target/release/calcite-cli -i rogue.css`.
 
 ## Adding your own
 

@@ -18,7 +18,14 @@ Calcite.
 
 ```
 $ node builder/build.mjs carts/rogue -o rogue.css
-$ open player/index.html?cabinet=../rogue.css
+$ node web/scripts/dev.mjs                 # serves on :5173
+$ open http://localhost:5173/build.html    # build/load the cabinet, then play
+```
+
+Or run it fast through Calcite:
+
+```
+$ ../calcite/target/release/calcite-cli -i rogue.css
 ```
 
 ## Vocabulary
@@ -31,7 +38,7 @@ $ open player/index.html?cabinet=../rogue.css
 | **Kiln** | The transpiler. Turns an 8086 memory image into CSS. |
 | **builder** | Orchestrator. Wires up BIOS → floppy → Kiln. |
 | **BIOSes** | Three flavors: **Gossamer** (hack-path shim), **Muslin** (assembly DOS BIOS), **Corduroy** (structured C DOS BIOS, default). |
-| **player** | Static HTML shell. Loads cabinets with `?cabinet=path.css`. |
+| **player** | Static HTML at `web/player/calcite.html`; loads `/cabinet.css` (served from the SW cache via `build.html`). |
 | **Calcite** | Sibling repo: the JIT that runs cabinets fast. |
 
 ## Start here
@@ -49,7 +56,8 @@ bios/
   gossamer/      Hack BIOS
   muslin/        Assembly DOS BIOS
   corduroy/      Structured C DOS BIOS (default)
-player/          Static HTML shell for running cabinets in Chrome
+web/             Front-end: player (calcite.html, raw.html, bench.html), shim, dev server, prebake bins
+                 Build/load page: web/site/build.html. Service worker: web/site/sw.js
 conformance/     Reference emulators for diff testing
 carts/           Example carts
 dos/             DOS kernel + COMMAND.COM
@@ -61,7 +69,7 @@ legacy/          Archived earlier approaches
 
 ## Status
 
-See [`docs/logbook/LOGBOOK.md`](docs/logbook/LOGBOOK.md) for the live
+See [`docs/logbook/STATUS.md`](docs/logbook/STATUS.md) for the live
 project status. Current default cabinet path boots DOS + the cart's
 program end-to-end. Rom-disk mechanism exposes disks outside 8086
 memory, so cabinet size is no longer bounded by a floppy size.

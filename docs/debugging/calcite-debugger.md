@@ -2,12 +2,19 @@
 
 Full documentation: [`../../../calcite/docs/debugger.md`](../../../calcite/docs/debugger.md).
 
-**Driving the debugger from an agent or the test harness? Jump straight
-to the [Agent-oriented tooling](../../../calcite/docs/debugger.md#agent-oriented-tooling)
-section.** It lists the MCP tools added specifically for agentic debugging
-(`inspect_packed_cell`, `compare_paths`, `watchpoint`, async `run_until`,
-multi-session side-by-side diffs, etc.) and the workflow that goes with
-them. Harness wrappers for each tool live in
+**For scripted work, prefer `calcite-cli` over the debugger daemon.**
+The daemon is the right tool for interactive exploration ("what's
+going on at tick X?") but its MCP surface is unreliable enough in
+practice that batch / agentic workflows are better served by
+calcite-cli + `--watch` ([`docs/script-primitives.md`](../script-primitives.md))
+or the harness pipeline.
+
+When you do drive the debugger, jump straight to
+[Agent-oriented tooling](../../../calcite/docs/debugger.md#agent-oriented-tooling)
+in the calcite docs — it lists the MCP tools added for agentic
+debugging (`inspect_packed_cell`, `compare_paths`, `watchpoint`,
+async `run_until`, multi-session side-by-side diffs) and the
+workflow that goes with them. Harness wrappers for each tool live in
 [`tests/harness/lib/debugger-client.mjs`](../../tests/harness/lib/debugger-client.mjs).
 
 ## Starting

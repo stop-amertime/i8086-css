@@ -47,10 +47,10 @@ const ALIASES = [
   ['/builder/',         resolve(repoRoot, 'builder')],
   ['/tools/',           resolve(repoRoot, 'tools')],
   ['/assets/dos/',      resolve(repoRoot, 'dos', 'bin')],
-  // /player/ and /shim/ resolve under web/ — see Chunk C of cleanup-2026-05-01.
+  // /player/ and /shim/ are URL surfaces; they live under web/player/ and web/shim/.
   ['/player/',          resolve(__dirname, '..', 'player')],
   ['/shim/',            resolve(__dirname, '..', 'shim')],
-  // /bench/ — the bench harness (Chunk E). Page + profiles + lib.
+  // /bench/ — the perf bench harness page + profiles + lib (tests/bench/).
   ['/bench/',           resolve(repoRoot, 'tests', 'bench')],
   ['/presets/',         resolve(repoRoot, 'builder', 'presets')],
   ['/calcite/',         resolve(calciteRoot, 'web')],

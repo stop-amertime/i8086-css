@@ -64,8 +64,10 @@ Depth: [`building.md`](building.md) and `builder/README.md`.
 
 Three runtime targets:
 
-- **Chrome**, via the **player** — static HTML at `player/index.html`
-  that loads a cabinet with `?cabinet=path.css`. The source-of-truth
+- **Chrome**, via the **player** — static HTML at
+  `web/player/calcite.html`. Loads `/cabinet.css` from the service
+  worker's Cache Storage; the dev server's `build.html` is the page
+  that builds a cart and stashes the cabinet there. The source-of-truth
   demonstration; slow.
 - **Calcite CLI** — native JIT. Fast.
 - **Calcite web** — WASM-compiled Calcite inside a Web Worker. Fast in
@@ -95,8 +97,9 @@ tools.
                                  │
               ┌──────────────────┼──────────────────┐
               ▼                  ▼                  ▼
-       player/index.html     calcite-cli       calcite-wasm
-       (Chrome direct)       (terminal)        (browser)
+       web/player/           calcite-cli        calcite-wasm
+       calcite.html          (terminal)         (browser)
+       (Chrome direct)
 ```
 
 ## Relationship to Calcite

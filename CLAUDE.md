@@ -7,11 +7,12 @@ makes it fast enough to be usable.
 
 ## Before starting. 
 
-1. Read the logbook and doc index (auto-loaded below via @ links)
-2. Understand the current status, active blocker, and priority list
+1. Read STATUS and the doc index (auto-loaded below via @ links)
+2. Understand current state, sentinel addresses, gotchas, open work
 3. Read the docs relevant to your specific task (the index tells you which)
+4. For history of past work, see `docs/logbook/LOGBOOK.md`
 
-@docs/logbook/LOGBOOK.md
+@docs/logbook/STATUS.md
 @docs/INDEX.md
 
 ## Mandatory rules
@@ -200,23 +201,32 @@ See [`docs/architecture.md`](docs/architecture.md#vocabulary). In short:
 
 ## Testing and debugging infrastructure
 
-When you're about to run tests, diff against a reference emulator, or
-check whether a cart still works: `tests/harness/` is the unified
-entrypoint. Start with `node tests/harness/run.mjs smoke` and read
-[`docs/TESTING.md`](docs/TESTING.md) for the full tool list.
+Two peer entrypoints:
+
+- **Correctness** — `tests/harness/`. Start with
+  `node tests/harness/run.mjs smoke`. Smoke, conformance, fulldiff vs
+  the JS reference 8086, screenshots, baselines.
+- **Performance** — `tests/bench/`. Start with
+  `node tests/bench/driver/run.mjs compile-only`. Timed profiles, web
+  + native targets, ensureFresh-driven artifact rebuild.
+
+See [`docs/TESTING.md`](docs/TESTING.md) for the full split and
+[`docs/script-primitives.md`](docs/script-primitives.md) for the
+watch-spec grammar bench profiles use to compose stage detectors.
 
 For "what's on screen at tick N?" against a fresh cabinet, use
 `pipeline.mjs fast-shoot <cabinet> --tick=N` — drives `calcite-cli`
 directly, ~375K ticks/s, fits boot-completion ticks (2-4M) inside a
 ~10s budget. The older `pipeline.mjs shoot` path goes through
-`calcite-debugger` at ~1500 ticks/s and only terminates for early ticks.
-For raw byte dumps without rendering, `calcite-cli --dump-mem-range=ADDR:LEN:PATH`
-writes guest memory to a file at end-of-run (repeatable for multiple regions).
+`calcite-debugger` at ~1500 ticks/s and only terminates for early
+ticks. For raw byte dumps without rendering,
+`calcite-cli --dump-mem-range=ADDR:LEN:PATH` writes guest memory to a
+file at end-of-run (repeatable for multiple regions).
 
-In particular: **do not reach for the old `fulldiff.mjs` / `ref-dos.mjs`
-/ `compare-dos.mjs` scripts** under `tools/` or `../calcite/tools/` —
-they import the deleted `transpiler/` directory and don't work. The
-replacement is `node tests/harness/pipeline.mjs fulldiff <cabinet>.css`.
+The legacy `fulldiff.mjs` / `ref-dos.mjs` / `compare-dos.mjs` scripts
+under `tools/` and `../calcite/tools/` import a deleted `transpiler/`
+directory and don't work. The replacement is
+`node tests/harness/pipeline.mjs fulldiff <cabinet>.css`.
 
 ## Quick orientation
 
@@ -249,14 +259,14 @@ and `../calcite/docs/conformance-testing.md`.
 # Build a cabinet from a cart
 node builder/build.mjs carts/rogue -o rogue.css
 
-# Play it in Chrome
-open player/index.html?cabinet=../rogue.css
-Or use Playwright! 
+# Play it in Chrome (start the dev server first: node web/scripts/dev.mjs)
+# then open: http://localhost:5173/player/calcite.html?cabinet=/rogue.css
+# Or drive it with Playwright.
 
 # Play it fast via Calcite
 cd ../calcite && target/release/calcite-cli.exe -i ../CSS-DOS/rogue.css
 
-# Debug it - use the Calcite MCP server 
+# Debug it — use the Calcite MCP server
 ```
 
 ## Calcite
@@ -282,9 +292,10 @@ export CALCITE_REPO=/abs/path/to/calcite/.claude/worktrees/foo
 
 - `web/scripts/dev.mjs` — vite aliases (`/calcite/`, `/bench-assets/`)
   and the `_reset` step that rebuilds the calcite WASM.
-- `tests/harness/bench-doom-stages-cli.mjs`, `lib/fast-shoot.mjs`,
-  `lib/debugger-client.mjs` — locate the `calcite-cli` /
-  `calcite-debugger` binaries.
+- `tests/bench/lib/artifacts.mjs` — locating `calcite-cli` and the
+  WASM bundle for ensureFresh rebuilds.
+- `tests/harness/lib/fast-shoot.mjs`, `lib/debugger-client.mjs` —
+  locate the `calcite-cli` / `calcite-debugger` binaries.
 
 `CALCITE_CLI_BIN` and `CALCITE_DEBUGGER_BIN` still take precedence over
 `CALCITE_REPO` if you need to point at a specific binary directly

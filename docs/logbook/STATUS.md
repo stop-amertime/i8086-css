@@ -107,18 +107,18 @@ with any kiln/builder change that moves data).
   bridge tickloop doesn't progress after `bench-run`. Likely
   SW + viewer-port plumbing the bench page bypasses. Once fixed, the
   legacy `tests/harness/bench-doom-stages*.mjs` scripts retire.
-- **Keyboard input via `:active` (cardinal-rule fix).** Cabinets
-  currently have no JS-free keyboard path: raw Chrome can boot a
-  cabinet but can't type into it. Calcite covers this with an
-  `engine.set_keyboard` hook called from the SW link route, which
-  papers over the missing CSS rather than recognising it. Plan: emit
-  per-key `:root:has(.kb-XXXX:active)` rules from kiln, aggregator
-  into the BIOS-polled keyboard slot; raw Chrome works standalone;
-  calcite recognises the `:has(...:active)` shape and the SW
-  intercept becomes a structural override of an existing CSS edge,
-  not a side channel. See LOGBOOK 2026-05-05 for the full plan and
-  the `web/player/experiments/active-input.html` proof. Removes
-  `0x500` literal in `eval.rs::property_to_address`.
+- **Keyboard input via `:active` (Phase A done, Phase B pending).**
+  Cabinet CSS already emits `.cpu { &:has(#kb-X:active) { --keyboard:N }}`
+  per key (kiln/template.mjs::emitKeyboardRules). Raw player
+  (`web/player/raw.html`) has matching `id=kb-X` buttons and renders
+  correctly in Chrome with no JS — verified end-to-end via
+  `web/player/experiments/raw-keyboard-probe.mjs`. Calcite player
+  (`calcite.html`) gained matching `id=kb-X` attributes on its
+  `<a class="kb-key">` keyboard. Calcite-core's `0x500` keyboard
+  literal in `eval.rs::property_to_address` is gone. **Pending**:
+  calcite recogniser for `:has(...:pseudo)` edges + generic
+  `engine.set_pseudo_class_active(pseudo, class, value)` API, then
+  retire `engine.set_keyboard`. See LOGBOOK 2026-05-05.
 
 ## Model gotchas
 

@@ -6,10 +6,37 @@ Chronological work entries. Newest first. The durable handbook
 
 Last updated: 2026-05-05
 
-## 2026-05-05 — plan: JS-free keyboard via `:active`, removes calcite cheat
+## 2026-05-05 — plan + initial cleanup: JS-free keyboard via `:active`
 
-Captures a planned cleanup. **No code shipped yet** — this entry is
-the brief future agents pick up from.
+Captures the plan plus what landed today.
+
+**Done in this session**:
+
+- Architectural proof (`web/player/experiments/active-input.html` +
+  `active-input-probe.mjs`) — verified `:root:has(.kb-XXXX:active)`
+  propagates a custom property in raw Chrome via Playwright. 11/11
+  assertions pass.
+- Discovered the cabinet's CSS *already* emits the right rules
+  (`kiln/template.mjs::emitKeyboardRules` writes
+  `.cpu { &:has(#kb-X:active) { --keyboard: N } }` per kiln-side
+  KEYBOARD_KEYS; `--keyboard` is declared as `@property`). The raw
+  player (`web/player/raw.html`) already has matching `id=kb-X`
+  buttons inside a `.cpu` wrapper. **The cardinal-rule path is
+  already wired in raw.html.**
+- Real-cabinet probe (`raw-keyboard-probe.mjs`) — load `raw.html`,
+  stub `/cabinet.css` with the actual keyboard rules extracted from
+  `doom8088.css`, drive mouse-down/-up on five keys, assert
+  `--keyboard` on `.cpu`. 11/11 green.
+- The calcite player (`web/player/calcite.html`) was missing
+  `id=kb-X` on its `<a class="kb-key">` buttons. Added them so the
+  same DOM surface that works in raw Chrome is exposed to calcite
+  too. Comma/period/slash stay id-less — they aren't in
+  `KEYBOARD_KEYS` (separate gap).
+- Calcite-core: deleted the `0x500` keyboard literal in
+  `crates/calcite-core/src/eval.rs::property_to_address`. Dead code
+  in current cabinets (kiln declares `@property --keyboard`,
+  `load_properties` registers it). Smoke suite (7 carts) passes
+  pre and post deletion. See `../calcite/docs/log.md` 2026-05-05.
 
 ### The cheat being removed
 
@@ -86,47 +113,47 @@ is feasible before any kiln/calcite work commits to it.
 Run: `node web/player/experiments/active-input-probe.mjs`. Headed:
 add `--headed`.
 
-### Work breakdown
+### Work remaining
 
-Phase A — CSS-DOS makes raw player work without JS:
+The CSS-DOS-side cardinal-rule path is wired (kiln rules, raw.html
+DOM, `--keyboard` propagation verified end-to-end). The literal
+calcite cheat is gone (`0x500` deleted). What's still side-channel:
 
-1. Pick where the kiln-emitted keyboard CSS lives (kiln pattern,
-   BIOS, or a separate input-wiring module). The aggregator design
-   is single-key-only initially; chord/modifier support is a
-   follow-up, not on the critical path.
-2. Emit `@property --kb_XXXX` + `:root:has(.kb-XXXX:active)` rules
-   per scancode the cabinet's keyboard table mentions, plus
-   aggregator that feeds the existing BIOS keyboard slot.
-3. Player HTML emits `<a class="kb-key kb-XXXX" href="..." …>` with
-   classes that match the cabinet's selectors. The `<a href>` + SW
-   link stays for the calcite path; the new `:active` rules are
-   what raw Chrome uses.
-4. Verify in raw Chrome with calcite *disabled*: clicking Enter on
-   a doom8088 menu actually advances to the next screen. **This is
-   the cardinal-rule check** — if Chrome can't make it work, the
-   design is wrong.
+The SW link route writes `--keyboard` directly via
+`engine.set_keyboard(scancode)`, short-circuiting the cabinet's
+`:has(#kb-X:active)` rules entirely. Calcite-wasm doesn't currently
+evaluate `:active` selectors; instead the host pushes the scancode in.
+That's *legitimate host plumbing under the no-page-JS constraint* — but
+the principled version is for calcite to recognise the
+`:has(#kb-X:active)` shape and let the host flip the edge generically.
 
-Phase B — calcite recogniser + `0x500` removal:
+Phase B — calcite recogniser for `:has(...:pseudo)` edges:
 
-5. Parser preserves `:has(…:pseudo)` predicates in the assignment
+1. Parser preserves `:has(…:pseudo)` predicates in the assignment
    graph (verify they aren't stripped today).
-6. Compile-time pass enumerates `InputEdge { pseudo, class, slot }`
+2. Compile-time pass enumerates `InputEdge { pseudo, class, slot }`
    triples; expose `input_edges()` on `CalciteEngine`.
-7. Evaluator: when computing an assignment that depends on an
+3. Evaluator: when computing an assignment that depends on an
    input-edge pseudo-class match, consult host-supplied state
    (`set_pseudo_class_active` writes a per-edge bool); fall through
    to false otherwise.
-8. SW link handler switches from `engine.set_keyboard(scancode)` to
+4. SW link handler switches from `engine.set_keyboard(scancode)` to
    parsing `class=` from URL and calling
    `engine.set_pseudo_class_active("active", class, true)` with the
    release scheduled by the existing key queue (KEY_HOLD_BATCHES /
    KEY_GAP_BATCHES in `web/shim/calcite-bridge.js`).
-9. Delete `keyboard / __1keyboard / __2keyboard → 0x500` fallback
-   in `crates/calcite-core/src/eval.rs::property_to_address`.
-   Delete `engine.set_keyboard` once nothing references it.
-10. Verify: doom8088 in calcite-wasm responds to on-screen button
-    clicks identically to today; bench-doom-loading swaps
-    `setvar_pulse` for click-driven input.
+5. Delete `engine.set_keyboard` once nothing references it.
+6. Verify: doom8088 in calcite-wasm responds to on-screen button
+   clicks identically to today; bench-doom-loading swaps
+   `setvar_pulse` for click-driven input.
+
+Polishing items:
+
+- Add comma, period, slash to `kiln/template.mjs::KEYBOARD_KEYS` so
+  those keys also work in raw Chrome.
+- `web/player/calcite-canvas.html` uses `data-key="0xHHHH"` instead
+  of `id=kb-X`; align with `calcite.html`/`raw.html` pattern if it's
+  still in use.
 
 ### Scope notes
 

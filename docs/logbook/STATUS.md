@@ -107,6 +107,18 @@ with any kiln/builder change that moves data).
   bridge tickloop doesn't progress after `bench-run`. Likely
   SW + viewer-port plumbing the bench page bypasses. Once fixed, the
   legacy `tests/harness/bench-doom-stages*.mjs` scripts retire.
+- **Keyboard input via `:active` (cardinal-rule fix).** Cabinets
+  currently have no JS-free keyboard path: raw Chrome can boot a
+  cabinet but can't type into it. Calcite covers this with an
+  `engine.set_keyboard` hook called from the SW link route, which
+  papers over the missing CSS rather than recognising it. Plan: emit
+  per-key `:root:has(.kb-XXXX:active)` rules from kiln, aggregator
+  into the BIOS-polled keyboard slot; raw Chrome works standalone;
+  calcite recognises the `:has(...:active)` shape and the SW
+  intercept becomes a structural override of an existing CSS edge,
+  not a side channel. See LOGBOOK 2026-05-05 for the full plan and
+  the `web/player/experiments/active-input.html` proof. Removes
+  `0x500` literal in `eval.rs::property_to_address`.
 
 ## Model gotchas
 

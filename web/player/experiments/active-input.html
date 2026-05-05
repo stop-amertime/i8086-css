@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>:active → custom property propagation probe</title>
+<style>
+  /* Goal: verify that pressing a button (mouse-down) propagates a value
+     into a custom property visible on :root, so that an unrelated element
+     elsewhere in the DOM can read it via var() and react. No JS.
+
+     Mechanism under test: :has() on :root, scoped to per-key class.
+     Each key contributes its own scancode property; an aggregator on :root
+     collapses them via max() into a single --keyboard value the readout
+     consumes.
+
+     If this works, the readout updates while a key is held and reverts to 0
+     on release. That's the substrate the cabinet's CSS would build on. */
+
+  @property --kb_1c0d { syntax: "<integer>"; initial-value: 0; inherits: true; }
+  @property --kb_1e61 { syntax: "<integer>"; initial-value: 0; inherits: true; }
+  @property --kb_3062 { syntax: "<integer>"; initial-value: 0; inherits: true; }
+  @property --keyboard { syntax: "<integer>"; initial-value: 0; inherits: true; }
+
+  :root { --kb_1c0d: 0; --kb_1e61: 0; --kb_3062: 0; --keyboard: 0; }
+
+  /* Per-key edge: while .kb-XXXX is :active anywhere in the document,
+     :root carries the corresponding scancode. */
+  :root:has(.kb-1c0d:active) { --kb_1c0d: 7181; }   /* 0x1c0d Enter */
+  :root:has(.kb-1e61:active) { --kb_1e61: 7777; }   /* 0x1e61 A */
+  :root:has(.kb-3062:active) { --kb_3062: 12386; }  /* 0x3062 B */
+
+  /* Aggregator: pick the first non-zero (max() works because scancodes are
+     all positive and only one is non-zero at a time when only one key is
+     held; for chord support the cabinet would use a different combiner). */
+  :root {
+    --keyboard: max(var(--kb_1c0d), var(--kb_1e61), var(--kb_3062));
+  }
+
+  body { font-family: ui-monospace, monospace; padding: 24px; background: #111; color: #eee; }
+  h1 { font-size: 14px; font-weight: 600; margin: 0 0 12px; color: #aaa; }
+
+  .keys { display: flex; gap: 8px; margin: 16px 0; }
+  .kb-key {
+    display: inline-block; padding: 12px 18px; background: #222;
+    border: 1px solid #444; border-radius: 4px;
+    color: #eee; text-decoration: none; user-select: none;
+    font: 13px/1 ui-monospace, monospace;
+  }
+  .kb-key:active { background: #4a8; color: #000; }
+
+  /* Readout: lives in a sibling subtree, NOT a descendant of any button.
+     If propagation works, this updates on press regardless of where the
+     button is in the DOM. counter() with var() lets us show the integer. */
+  .readout {
+    margin-top: 32px; padding: 16px; background: #0a0a0a;
+    border: 1px solid #333; border-radius: 4px;
+  }
+  .readout .label { font-size: 11px; color: #888; }
+  .readout .value::before {
+    counter-reset: kb var(--keyboard);
+    content: counter(kb);
+    font-size: 28px; color: #4a8;
+  }
+  /* Sanity strip: each per-key property visible separately so we can tell
+     which rule actually fired (vs the aggregator masking a bug). */
+  .raw { margin-top: 8px; font-size: 11px; color: #777; }
+  .raw span::after { content: ": " counter(v); }
+  .raw .a { counter-reset: v var(--kb_1c0d); }
+  .raw .b { counter-reset: v var(--kb_1e61); }
+  .raw .c { counter-reset: v var(--kb_3062); }
+</style>
+</head>
+<body>
+  <h1>:active → custom property propagation probe (no JS)</h1>
+  <p style="color:#888;font-size:12px;max-width:560px">
+    Hold a button. The readout below should show its scancode while held and
+    revert to 0 on release. If it stays at 0, the <code>:root:has(...:active)</code>
+    propagation isn't reaching the readout, and the design needs to change.
+  </p>
+
+  <div class="keys">
+    <a class="kb-key kb-1c0d" href="#">Enter (0x1c0d → 7181)</a>
+    <a class="kb-key kb-1e61" href="#">A (0x1e61 → 7777)</a>
+    <a class="kb-key kb-3062" href="#">B (0x3062 → 12386)</a>
+  </div>
+
+  <div class="readout">
+    <div class="label">--keyboard (aggregated):</div>
+    <div class="value"></div>
+    <div class="raw">
+      <span class="a">--kb_1c0d</span> &nbsp;
+      <span class="b">--kb_1e61</span> &nbsp;
+      <span class="c">--kb_3062</span>
+    </div>
+  </div>
+</body>
+</html>

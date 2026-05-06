@@ -161,22 +161,13 @@ function handleStream() {
 }
 
 function handleKbd(url) {
-  // Two URL shapes supported:
-  //   /_kbd?class=kb-1     principled path: pulse the (active, kb-1)
-  //                        pseudo-class edge through calcite. The
-  //                        cabinet's own `&:has(#kb-1:active) { --keyboard: N }`
-  //                        rule produces the value via calcite's
-  //                        input-edge recogniser.
-  //   /_kbd?key=0x0231     legacy: side-channel; bridge calls
-  //                        engine.set_keyboard directly.
+  // /_kbd?class=kb-X — pulse the (active, kb-X) pseudo-class edge
+  // through calcite. The cabinet's own
+  // `&:has(#kb-X:active) { --keyboard: V }` rule produces the value
+  // via calcite's input-edge recogniser; the host only flips the gate.
   const klass = url.searchParams.get('class');
   if (klass && bridgePort) {
     bridgePort.postMessage({ type: 'kbd-active', selector: klass });
-  } else {
-    const key = url.searchParams.get('key');
-    if (key && bridgePort) {
-      bridgePort.postMessage({ type: 'kbd', key: parseInt(key, 16) | 0 });
-    }
   }
   // 204 No Content — the target iframe won't re-render, page stays put.
   return new Response(null, {

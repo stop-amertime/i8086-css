@@ -107,23 +107,30 @@ with any kiln/builder change that moves data).
   bridge tickloop doesn't progress after `bench-run`. Likely
   SW + viewer-port plumbing the bench page bypasses. Once fixed, the
   legacy `tests/harness/bench-doom-stages*.mjs` scripts retire.
-- **Keyboard input via `:active` (Phases A + B done).**
-  Cabinet CSS emits `.cpu { &:has(#kb-X:active) { --keyboard:N } }`
-  per key (kiln/template.mjs; 56 rules — full PC layout incl.
-  Ctrl/Shift/Caps/F1–F10/Del). Raw player (`web/player/raw.html`)
-  works no-JS in Chrome — verified via
-  `web/player/experiments/raw-keyboard-probe.mjs`. Calcite player
-  (`calcite.html`) has a full 6×11 PC keyboard grid + responsive
-  640×400 screen, hrefs use `?class=kb-X`. Calcite parses
-  `&:has(#ID:pseudo) { --PROP: V }` rules into `InputEdge`s; host
-  drives `engine.set_pseudo_class_active(pseudo, class, value)`. SW
-  + bridge route the click through that path; doom8088 cabinet
-  recognises 59 input edges. Verified via
-  `web/player/experiments/pseudo-active-api-probe.html` (wasm e2e)
-  and a calcite-core integration test. **Remaining cleanup**:
-  migrate `tests/bench/profiles/doom-loading.mjs` and the legacy
-  `tests/harness/bench-doom-stages*.mjs` off `setvar_pulse=keyboard`,
-  then retire `engine.set_keyboard`. See LOGBOOK 2026-05-05.
+- **Keyboard input via `:active` — done.** Cabinet CSS emits
+  `.cpu { &:has(#kb-X:active) { --keyboard:N } }` per key. Calcite
+  parses these into `InputEdge`s and applies them pre-tick from
+  host-supplied `(pseudo, selector)` state. The host drives
+  `engine.set_pseudo_class_active(pseudo, selector, value)`; the
+  SW route is `/_kbd?class=kb-X`; the bench harness uses
+  `pseudo_pulse=active,kb-enter,HOLD` watch actions and
+  `--press-events=TICK:[+|-]SELECTOR` on calcite-cli. The
+  legacy `engine.set_keyboard`, the `?key=0xHHHH` URL form, the
+  bridge `'kbd'` message kind, and the `--key-events` CLI flag are
+  all gone. Doom8088 cabinet recognises 59 input edges; CLI bench
+  reaches in-game at tick 34.65M via the new path (parity with
+  the prior `setvar_pulse=keyboard` baseline). See LOGBOOK
+  2026-05-06.
+- **`rep_fast_forward` is still upstream-aware.** The other four items
+  on the calcite-genericity audit list (delete `column_drawer_fast_forward`,
+  move `summary.rs`, move CGA renderer to `calcite-pc-video`, strip
+  doom/DOS comments) landed 2026-05-05. `rep_fast_forward` is the
+  remaining cardinal-rule violation in calcite-core: ~341 lines of
+  hardcoded x86 string-op semantics (opcode latch decode, REPE/REPNE,
+  flag-word computation, 0x0500/0xD0000/0xF0000 region carve-outs).
+  Reframing as a generic CSS-shape recogniser is perf-gated
+  (doom8088 web+CLI within 1% of current) and a multi-session mission;
+  not yet started. See LOGBOOK 2026-05-05 entry for scope.
 
 ## Model gotchas
 

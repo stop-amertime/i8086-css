@@ -300,7 +300,7 @@ try {
         }
         const wallS = ((performance.now() - S.pageStart)/1000).toFixed(1);
         const at = `t=${wallS}s gs=${S.lastGs} me=${S.lastMe} cyc=${(S.latest?.cycles ?? 0).toLocaleString()}`;
-        f.contentWindow.fetch('/_kbd?key=0x1C0D', { method: 'GET' })
+        f.contentWindow.fetch('/_kbd?class=kb-enter', { method: 'GET' })
           .then(() => {
             S.enterCount = (S.enterCount ?? 0) + 1;
             if (!silent) {

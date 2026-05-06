@@ -458,17 +458,23 @@
       }
     });
 
-    function sendKey(code) {
+    function press(selector, active) {
       if (!engineReady) return;
-      worker.postMessage({ type: 'keyboard', key: code });
+      worker.postMessage({ type: 'press', selector, active });
     }
     for (const btn of document.querySelectorAll('.kb-key')) {
-      const code = parseInt(btn.dataset.key, 16);
+      // Selector is the id stripped of leading "#"; canvas page used
+      // data-key= for legacy scancode dispatch, so derive from id where
+      // present, falling back to the dataset for older markup.
+      const selector = btn.id || btn.dataset.selector || '';
+      if (!selector) continue;
       btn.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         btn.setPointerCapture(e.pointerId);
-        sendKey(code);
+        press(selector, true);
       });
+      btn.addEventListener('pointerup', () => press(selector, false));
+      btn.addEventListener('pointercancel', () => press(selector, false));
       btn.addEventListener('contextmenu', (e) => e.preventDefault());
     }
 

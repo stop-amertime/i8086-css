@@ -4,7 +4,185 @@ Chronological work entries. Newest first. The durable handbook
 (current state, sentinels, gotchas, how to test) is in
 [`STATUS.md`](STATUS.md).
 
-Last updated: 2026-05-05
+Last updated: 2026-05-06
+
+## 2026-05-06 — Phase B finished: bench harness migrated, set_keyboard retired
+
+Closed out the keyboard-cheat retirement. The Phase B work from
+2026-05-05 left two compatibility shims in place
+(`engine.set_keyboard` on the wasm engine, the legacy `?key=0xHHHH`
+URL form on the SW); both held back so the bench harness and
+in-flight callers could keep working. Today they all moved to the
+pseudo-class API and the shims came out.
+
+**Calcite engine** — see `../calcite/docs/log.md` 2026-05-06 for the
+engine-side details. Summary:
+
+- New script-DSL action `pseudo_pulse=PSEUDO,SELECTOR,HOLD_TICKS`
+  (mirror of `setvar_pulse` but on the pseudo-class surface). Same
+  edge-pair semantics: flip active now, schedule a release after
+  `HOLD_TICKS`. The skip-if-pending check now keys on a typed
+  `PendingReleaseKind` enum (`Var{name}` vs `Pseudo{pseudo,selector}`)
+  so the same registry handles both pulse types cleanly. Three new
+  unit tests; 16/16 script tests green.
+- `--press-events=TICK:[+|-]SELECTOR,...` replaces the legacy
+  `--key-events=TICK:VALUE,...` flag on calcite-cli. Same use-case
+  (script keyboard input at specific ticks for deterministic tests),
+  driven on the pseudo edge instead of the `keyboard` state var.
+  The interactive REPL keyboard handler routes through
+  `set_pseudo_class_active("active", kb-X, true|false)` via a new
+  `key_to_selector` map (mirrors `KEYBOARD_KEYS` from kiln).
+- `engine.set_keyboard` deleted from calcite-wasm. The replacement
+  `engine.set_pseudo_class_active(pseudo, selector, value)` was
+  already exposed in 2026-05-05.
+
+**CSS-DOS-side host migration**:
+
+- `tests/bench/profiles/doom-loading.mjs`: title_tap and menu_tap
+  watches now use `pseudo_pulse=active,kb-enter,50000` instead of
+  `setvar_pulse=keyboard,0x1C0D,50000`. The driver-side `sendKey`
+  fallback (used when the bench page race-conditions out of catching
+  a poll-stride menu transition) switched from `?key=0x...` to
+  `?class=kb-enter`.
+- `tests/harness/bench-doom-stages.mjs` and
+  `bench-doom-gameplay.mjs`: `?key=0x1C0D` → `?class=kb-enter`,
+  `?key=0x4B00` → `?class=kb-left`.
+- `web/site/sw.js::handleKbd`: dropped the `?key=0xHHHH` branch
+  entirely; only `?class=kb-X` is recognised now. URLs pointing at
+  the legacy form will silently no-op (intended — the legacy URLs
+  are gone in our codebase, and external callers should migrate).
+- `web/shim/calcite-bridge.js`: queue items are now plain selector
+  strings (`'kb-X'`); the `kind: 'key' | 'active'` discriminator is
+  gone. The `'kbd'` message type from the SW is no longer accepted —
+  only `'kbd-active'`. Bridge version bumped to `v47-pseudo-only`.
+- `web/player/calcite-canvas.html`: switched from
+  `data-key="0xHHHH"` + `worker.postMessage({type:'keyboard'})` to
+  `id="kb-X"` + `worker.postMessage({type:'press', selector, active})`.
+  pointerup/pointercancel now flip the edge inactive — previous
+  shape was edge-only (push on press, never release).
+- `../calcite/web/calcite-worker.js` and `../calcite/web/index.html`
+  (the calcite playground page, which lives outside this repo's
+  build-UI): same `'press'` message migration. Comments updated to
+  describe the principled path.
+
+### Verification
+
+- Smoke 7/7 PASS pre and post each step of the migration.
+- doom-loading bench (CLI target) reaches in-game at tick 34,650,000
+  — same as the legacy `setvar_pulse=keyboard` baseline. The new
+  `pseudo_pulse=active,kb-enter` watch path drives the cabinet
+  through title and menu identically.
+- Browser e2e `pseudo-active-api-probe.html` PASS in headless Chrome
+  against the fresh wasm (no `set_keyboard` export): 561 → 8338 → 0
+  sequence through `set_pseudo_class_active` + `tick_batch`.
+- 16/16 calcite-core script tests green (3 new); 1 new
+  `pseudo_pulse_make_then_release` evaluator test.
+
+### Cardinal-rule check
+
+The cabinet's CSS pays for itself in calcite the same way it pays for
+itself in raw Chrome. There's no calcite-side knowledge of which
+selectors are "keys" or which property is "the keyboard" — the
+recogniser fires on pure shape (`&:has(#IDENT:IDENT) { --PROP: V }`)
+and the host flips arbitrary `(pseudo, selector)` edges. A 6502
+cabinet that emitted `&:has(#trigger:active) { --gunFiring: 1 }`
+would get the same treatment with no calcite-side change.
+
+The `0x500` literal (CSS-DOS BDA keyboard slot) is gone from
+calcite, the `set_keyboard` wrapper is gone, the `?key=0xHHHH` URL
+is gone, the bridge `'kbd'` message kind is gone, and the
+`--key-events` CLI flag is gone. What remains in the keyboard path:
+the cabinet's own CSS rules (host-agnostic, expressed in CSS-DOS
+vocabulary) plus calcite's structural recogniser
+(upstream-agnostic). Nothing in between speaks both languages.
+
+## 2026-05-05 — calcite-genericity cleanup: tasks 1-4 of the audit list
+
+Worked through the post-keyboard "make calcite not cheat" list (LOGBOOK
+2026-05-05 line 271-278). Four of five items landed; the fifth is its
+own mission, deferred.
+
+**Task 1: delete `column_drawer_fast_forward`.**
+Off by default since 2026-04-29 (net perf loss; doom-specific 21-byte
+ROM body recogniser, fired 159 times across a 35M-tick run). Removed
+the function, its `FusionDiag` thread-local funnel, the
+`CALCITE_FUSION_FASTFWD` and `CALCITE_FUSION_DIAG` env-var gates, and
+the `rom_match` helper from `crates/calcite-core/src/compile.rs`.
+Stripped the corresponding `fusion_diag_enable` /
+`fusion_diag_snapshot` / `fusion_fire_count` plumbing from
+`crates/calcite-cli/src/main.rs`. Smoke 7/7 PASS pre and post.
+
+**Task 2: move `summary.rs` out of `calcite-core`.**
+Per-tick event log + block segmenter for execution diagnostics — every
+field name (CS/IP/opcode/_irqActive) was upstream-aware. New crate
+`calcite-debug-summary` (lib, depends on calcite-core), registered in
+the workspace `Cargo.toml` and as a workspace dependency. The
+`calcite-debugger` consumer was migrated from
+`calcite_core::summary::*` to `calcite_debug_summary::*`. The
+calcite-core integration test for summary moved to a new test in the
+new crate (and updated to bootstrap `State` via `parse_css` +
+`load_properties` rather than poking the `pub(crate) state_var_index`
+directly). 5 unit tests + 1 integration test green; smoke 7/7 PASS.
+
+**Task 3: move CGA renderer + CP437 + DAC palette out of `calcite-core`.**
+`State::render_screen` / `render_screen_ansi` / `render_screen_html` /
+`render_framebuffer` / `read_framebuffer_rgba` / `read_video_memory`,
+the `CGA_PALETTE` and `VGA_DAC_LINEAR` constants, and the
+`cp437_to_unicode` helper all baked PC-video conventions into the
+engine crate. New crate `calcite-pc-video` (lib, depends on
+calcite-core) re-hosts them as free functions taking `&State`.
+Consumers migrated: calcite-wasm (its `pub fn render_screen` /
+`render_framebuffer` / `read_framebuffer_rgba` / `read_video_memory`
+methods now delegate to the new crate, and the wasm public surface is
+unchanged), calcite-cli (CGA palette + render_screen_ansi +
+render_framebuffer call sites), calcite-debugger (its
+`Session::render_screen` helper). Wasm rebuilt via `wasm-pack build
+crates/calcite-wasm --target web --out-dir ../../web/pkg --release` so
+the JS bindings reflect the new build. Smoke 7/7 PASS.
+
+**Task 4: strip doom/DOS comments from non-test calcite-core code.**
+Surgical comment pass — converted `doom8088`/`DOOM`/`x86CSS`/`CSS-DOS`
+references in production-path comments to generic phrasings ("the
+reference cabinet", "measured cabinets", "the cabinet's bytecode").
+Kept calibration citations where they're load-bearing context (e.g.
+"95% of all such pairs in the reference cabinet") and didn't touch
+test code or comments inside `rep_fast_forward` (those describe real
+cardinal-rule violations the *code* makes; reframing them in comments
+without fixing the code would just hide the issue — see task 5).
+Files touched: lib.rs, compile.rs, eval.rs, conformance.rs,
+parser/fast_path.rs, pattern/broadcast_write.rs, pattern/byte_period.rs,
+pattern/fusion_sim.rs, pattern/packed_broadcast_write.rs. Comment-only;
+calcite-core builds clean.
+
+**Task 5: reframe `rep_fast_forward` as a generic CSS-shape recogniser
+— DEFERRED.**
+
+This is the audit's "perf-gated mission" item, not a quick refactor.
+The function (~341 lines + helpers in calcite-core/src/compile.rs)
+inspects an x86 string-op opcode latch (`--opcode` ∈ {0xA4, 0xA5,
+0xAA, 0xAB, 0xA6, 0xA7, 0xAE, 0xAF}), decodes 8086 REPE/REPNE
+semantics, segment overrides, the direction flag, and bulk-applies CX
+iterations. It also encodes a list of "virtual" memory regions
+(0x0500-0x0502 keyboard bridge, 0xD0000-0xD0200 ROM-disk,
+0xF0000-0x100000 BIOS ROM) that the bulk path mustn't trample, and
+panics if it would. None of that knowledge is derivable from CSS
+shape — it's pure upstream awareness encoded in the engine.
+
+Generalising means recognising "function repeats body N times,
+incrementing/decrementing addr, until counter hits 0" as a CSS shape
+without ever spelling 0xA4. That's the design the affine-loop
+fastforward plan (`docs/plans/2026-05-01-affine-loop-fastforward.md`)
+already sketches for non-REP loops, but applying it to REP requires:
+(a) detecting the shape at compile time keyed off the function name
+the cabinet uses, (b) deriving the (init, step, terminator) tuple
+from the body, (c) replacing the hardcoded x86 flag-word semantics
+with whatever the body says, (d) replacing the hardcoded
+virtual-region check with a generic "this address falls outside the
+bulk-writable range" predicate driven by the address-map's dispatch
+exceptions. Plus the perf gate — doom8088 web+CLI must stay within 1%
+of current.
+
+Multi-session work. Punted to its own brief.
 
 ## 2026-05-05 — Phase B landed: pseudo-class input-edge recogniser
 
